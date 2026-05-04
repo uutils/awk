@@ -126,9 +126,12 @@ pub enum Token<'a> {
     RlengthVariable,
     #[token("ENVIRON", accept_expression)]
     EnvironVariable,
-    #[regex("(?&identifier)", Identifier::without_namespace)]
-    #[regex(r"(?&identifier)::(?&identifier)", Identifier::with_namespace)]
+    #[regex("(?&identifier)", |lex| Identifier::without_namespace::<0>(lex))]
+    #[regex(r"(?&identifier)::(?&identifier)", |lex| Identifier::with_namespace::<0>(lex))]
     Identifier(Identifier<'a>),
+    #[regex(r"(?&identifier)\(", |lex| Identifier::without_namespace::<1>(lex))]
+    #[regex(r"(?&identifier)::(?&identifier)\(", |lex| Identifier::with_namespace::<1>(lex))]
+    FunctionCall(Identifier<'a>),
     #[token("+", accept_expression)]
     Plus,
     #[token("-", accept_expression)]
@@ -376,19 +379,19 @@ fn parse_float(lex: &mut Lexer<'_>) -> f64 {
 }
 
 impl<'a> Identifier<'a> {
-    fn without_namespace(lex: &mut Lexer<'a>) -> Self {
+    fn without_namespace<const TRIM: usize>(lex: &mut Lexer<'a>) -> Self {
         Self {
             namespace: None,
-            literal: parse_ident(lex, ..),
+            literal: parse_ident(lex, ..lex.slice().len() - TRIM),
         }
     }
 
-    fn with_namespace(lex: &mut Lexer<'a>) -> Self {
+    fn with_namespace<const TRIM: usize>(lex: &mut Lexer<'a>) -> Self {
         // SAFETY: The regex matching ensures it is present and well-formed.
         let separator = unsafe { memchr(b':', lex.slice()).unwrap_unchecked() };
         Self {
             namespace: Some(parse_ident(lex, ..separator)),
-            literal: parse_ident(lex, separator + 2..),
+            literal: parse_ident(lex, separator + 2..lex.slice().len() - TRIM),
         }
     }
 }

@@ -190,8 +190,10 @@ impl TokenExt for Token<'_> {
     fn is_expr_start(&self) -> bool {
         self.is_atom()
             || self.is_prefix_op()
-            || self == &Token::OpenParent
-            || self == &Token::Getline
+            || matches!(
+                self,
+                Token::OpenParent | Token::FunctionCall(_) | Token::Getline
+            )
     }
     fn is_place(&self) -> bool {
         matches!(

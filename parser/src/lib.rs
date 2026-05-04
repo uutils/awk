@@ -465,7 +465,17 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {
-        let name = lex.expect_identifier()?.qualify(self.namespace);
+        let name = match lex.expect_next()? {
+            Token::FunctionCall(ident) => ident,
+            Token::Identifier(ident) => {
+                lex.expect(&Token::OpenParent, |span| {
+                    ParsingError::NoFunctionSignature(span, ident.literal.to_string())
+                })?;
+                ident
+            }
+            _ => return Err(ParsingError::ExpectedIdentifier(lex.span())),
+        }
+        .qualify(self.namespace);
         let args = self.parse_signature(lex, &name)?;
         lex.consume(&Token::Newline);
         let body = self.parse_body(lex)?;
@@ -481,9 +491,6 @@ impl<'a> Parser<'a> {
         name: &Identifier<'a>,
     ) -> Result<Vec<'a, Identifier<'a>>> {
         let mut args = Vec::new_in(self.arena);
-        lex.expect(&Token::OpenParent, |s| {
-            ParsingError::NoFunctionSignature(s, name.to_string())
-        })?;
 
         if lex.consume(&Token::ClosedParent) {
             return Ok(args);
@@ -567,10 +574,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             let next = lex.expect_next()?;
-            if let Token::Identifier(name) = next
-                && lex.peek_is(&Token::OpenParent)
-            {
-                // TODO: use spans to check there is no space between ident, (.
+            if let Token::FunctionCall(name) = next {
                 self.parse_function_call(lex, name.qualify(self.namespace), lex.span())?
             } else {
                 Expr::leaf(self.parse_atom(lex, next)?)
@@ -691,10 +695,6 @@ impl<'a> Parser<'a> {
         name: Identifier<'a>,
         span: Span,
     ) -> Result<Expr<'a>> {
-        lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
-        if lex.span().start != span.end {
-            return Err(ParsingError::FunctionCallSeparatedIdent(span));
-        }
         let expr = ExprNode::FunctionCall(
             name,
             self.parse_arguments(lex, |t| t == &Token::ClosedParent)?,
@@ -724,9 +724,7 @@ impl<'a> Parser<'a> {
     #[tracing::instrument]
     fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Option<Variable<'a>> {
         match token {
-            Token::Identifier(a) if !lex.peek_is(&Token::OpenParent) => {
-                Some(a.qualify(self.namespace).into())
-            }
+            Token::Identifier(a) => Some(a.qualify(self.namespace).into()),
             Token::NrVariable => Some(Variable::Nr),
             Token::NfVariable => Some(Variable::Nf),
             Token::FsVariable => Some(Variable::Fs),
