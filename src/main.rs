@@ -9,6 +9,7 @@ mod cli;
 mod utils;
 
 use std::env::args_os;
+use std::io::{self, Write};
 
 use bumpalo::Bump;
 use clap::Parser as _;
@@ -45,7 +46,15 @@ fn uu_main() -> Result<()> {
             return Ok(());
         }
     };
-    println!("---\n{ast}");
+    // Avoid `println!`, which panics on broken pipe / ENOSPC (e.g. `>/dev/full`).
+    // Match the uutils convention: silently exit on BrokenPipe, report other I/O
+    // errors to stderr and exit with failure.
+    if let Err(e) = writeln!(io::stdout(), "---\n{ast}") {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        exit_err(Some(format!("awk: error writing to standard output: {e}")));
+    }
     dbg!(arena.chunk_capacity());
 
     // for token in lex {
