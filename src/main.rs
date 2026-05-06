@@ -46,13 +46,9 @@ fn uu_main() -> Result<()> {
             return Ok(());
         }
     };
-    // Avoid `println!`, which panics on broken pipe / ENOSPC (e.g. `>/dev/full`).
-    // Match the uutils convention: silently exit on BrokenPipe, report other I/O
-    // errors to stderr and exit with failure.
-    if let Err(e) = writeln!(io::stdout(), "---\n{ast}") {
-        if e.kind() == io::ErrorKind::BrokenPipe {
-            return Ok(());
-        }
+    if let Err(e) = writeln!(io::stdout(), "---\n{ast}")
+        && e.kind() != io::ErrorKind::BrokenPipe
+    {
         exit_err(Some(format!("awk: error writing to standard output: {e}")));
     }
     dbg!(arena.chunk_capacity());

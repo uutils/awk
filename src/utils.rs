@@ -4,6 +4,7 @@
 // files that was distributed with this source code.
 
 use std::fmt::{Debug, Display};
+use std::io::{self, Write};
 use std::panic::{UnwindSafe, catch_unwind, set_hook, take_hook};
 use std::process::exit;
 
@@ -73,7 +74,7 @@ pub fn exit_with(res: Result<Option<impl Into<ExitCode>>, impl Display + Debug>)
 
 pub fn exit_err(err: Option<impl Display + Debug>) -> ! {
     if let Some(err) = err {
-        eprintln!("{err}");
+        let _ = writeln!(io::stderr(), "{err}");
     }
     exit(EXIT_FAILURE)
 }
