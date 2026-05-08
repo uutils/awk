@@ -9,7 +9,7 @@ use uutests::util::TestScenario;
 
 pub const TESTS_BINARY: &str = env!("CARGO_BIN_EXE_awk");
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     unsafe {
         env::set_var("UUTESTS_BINARY_PATH", TESTS_BINARY);
