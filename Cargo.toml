@@ -47,7 +47,7 @@ tracing-error = "0.2.1"
 clap = { version = "4.6.1", features = ["derive"] }
 
 [dev-dependencies]
-ctor = "0.4"
+ctor = "1.0"
 uutests = "0.8"
 
 [profile.release]
