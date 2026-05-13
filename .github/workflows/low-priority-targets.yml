@@ -1,5 +1,5 @@
 # spell-checker:ignore wasip
-name: WASI
+name: low-priotiry-targets
 
 on:
   pull_request:
@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  test_wasi:
-    name: Tests
+  wasi:
+    name: check wasi
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -26,3 +26,18 @@ jobs:
         targets: wasm32-wasip1
     - name: check
       run: cargo check --target wasm32-wasip1
+
+  cygwin:
+    name: check cygwin
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: setup toolchain
+      shell: 'C:\msys64\usr\bin\bash.exe --login -eo pipefail {0}'
+      run:  pacman -Sy --noconfirm --needed rust
+    - name: check
+      shell: 'C:\msys64\usr\bin\bash.exe --login -eo pipefail {0}'
+      env:
+        CHERE_INVOKING: 1
+        RUSTC_BOOTSTRAP: 1
+      run: cargo check --target x86_64-pc-cygwin
