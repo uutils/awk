@@ -1254,7 +1254,6 @@ dependencies = [
  "interpreter",
  "memchr",
  "parser",
- "rustix",
  "thiserror",
  "tracing",
  "tracing-error",

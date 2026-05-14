@@ -9,13 +9,14 @@ use std::panic::{UnwindSafe, catch_unwind, set_hook, take_hook};
 use std::process::exit;
 
 use color_eyre::config::HookBuilder;
-use rustix::process::{EXIT_FAILURE, EXIT_SUCCESS};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
 type ExitCode = i32;
 
 const AWK_PANIC_CODE: ExitCode = 2;
+const EXIT_FAILURE: ExitCode = 1;
+const EXIT_SUCCESS: ExitCode = 0;
 
 fn install_abort_hook() {
     let run_hook = take_hook();

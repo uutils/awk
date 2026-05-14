@@ -41,7 +41,6 @@ memchr.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bumpalo.workspace = true
-rustix = { version = "1.1.4", default-features = false, features = ["process"]}
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-error = "0.2.1"
 clap = { version = "4.6.1", features = ["derive"] }

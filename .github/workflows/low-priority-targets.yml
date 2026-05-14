@@ -27,6 +27,15 @@ jobs:
     - name: check
       run: cargo check --target wasm32-wasip1
 
+  windows:
+    name: check windows
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: check
+      run: cargo check
+
+  # some unix specific crates might reject windows while it supports this...
   cygwin:
     name: check cygwin
     runs-on: windows-latest
