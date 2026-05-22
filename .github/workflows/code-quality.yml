@@ -1,6 +1,6 @@
 name: Code Quality
 
-# spell-checker:ignore Swatinem dtolnay sccache rustfmt
+# spell-checker:ignore Swatinem sccache
 
 on:
   pull_request:
@@ -24,9 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -43,9 +40,6 @@ jobs:
           - { os: macos-latest }
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.10
