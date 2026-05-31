@@ -47,7 +47,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 
 [dev-dependencies]
 ctor = "1.0"
-uutests = "0.8"
+uutests = "0.9"
 
 [profile.release]
 lto = true
