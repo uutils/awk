@@ -365,6 +365,7 @@ impl<'a> BinaryOperator {
             Token::Minus => Ok(Self::Subtract),
             Token::Star => Ok(Self::Multiply),
             Token::Slash => Ok(Self::Divide),
+            Token::Circumflex => Ok(Self::Raise),
             Token::BooleanAnd => Ok(Self::And),
             Token::BooleanOr => Ok(Self::Or),
             Token::Percent => Ok(Self::Modulo),
@@ -521,7 +522,7 @@ impl BindingPower for BinaryOperator {
             Self::Multiply => binding_powers::BP_MULTI,
             Self::Divide => binding_powers::BP_MULTI,
             Self::Raise => binding_powers::BP_RAISE,
-            Self::Modulo => binding_powers::BP_RAISE,
+            Self::Modulo => binding_powers::BP_MULTI,
         }
     }
 }

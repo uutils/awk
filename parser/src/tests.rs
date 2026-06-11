@@ -195,6 +195,40 @@ fn test_parser_non_assoc() {
 }
 
 #[test]
+fn test_parser_exponentiation() {
+    let source = "
+        { 2 ^ 1 }
+        { 2 ** 1 }
+        { 2 ^ 3 ^ 4 }
+        { 2 * 3 ^ 4 }
+        { 2 ^ 3 * 4 }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Raise 2 1))")),
+            (None, Some("(body (Raise 2 1))")),
+            (None, Some("(body (Raise 2 (Raise 3 4)))")),
+            (None, Some("(body (Multiply 2 (Raise 3 4)))")),
+            (None, Some("(body (Multiply (Raise 2 3) 4))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_multiplicative_precedence() {
+    let source = "
+        { 2 * 3 % 4 }
+        { 2 % 3 * 4 }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Modulo (Multiply 2 3) 4))")),
+            (None, Some("(body (Multiply (Modulo 2 3) 4))")),
+        ],
+    });
+}
+
+#[test]
 fn test_parser_relaxed_assignments() {
     let source = "
         { 1 + 0 && x = 1 }
