@@ -23,7 +23,6 @@ use thiserror::Error;
 pub type Lexer<'a> = logos::Lexer<'a, Token<'a>>;
 pub type Result<T, E = LexingError> = std::result::Result<T, E>;
 
-// TODO: check wnat GNU does about potentially reserved `@ident`; add error branch if so.
 #[derive(Logos, Debug, PartialEq)]
 #[logos(utf8 = false)]
 #[logos(skip(r"(?&ignore)"))]
@@ -34,8 +33,10 @@ pub type Result<T, E = LexingError> = std::result::Result<T, E>;
 #[logos(subpattern ignore_with_nl = r"(?:(?&ignore)|\n)*")]
 #[logos(error(LexingError, callback = |lex| LexingError::unexpected(lex)))]
 pub enum Token<'a> {
-    #[regex("(-128|(-)?(12[0-7]|1[01][0-9]|[1-9]?[0-9]))", parse_i8, priority = 9)]
-    SmallInt(i8),
+    #[regex(r"(-)?\d+", parse_num, priority = 9)]
+    Numeric,
+    // Not emitted by Logos directly.
+    Integer(i32),
     #[regex(r"(-)?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?", parse_float, priority = 8)]
     #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", parse_float)]
     Number(f64),
@@ -484,9 +485,12 @@ fn parse_float(lex: &mut Lexer<'_>) -> f64 {
     parse_ident(lex, ..).parse().unwrap_or(0.)
 }
 
-fn parse_i8(lex: &mut Lexer<'_>) -> i8 {
-    // SAFETY: The regex matchin ensures it is well-formed and in [-128, 127].
-    unsafe { parse_ident(lex, ..).parse().unwrap_unchecked() }
+fn parse_num<'a>(lex: &mut Lexer<'a>) -> Token<'a> {
+    if let Ok(num) = parse_ident(lex, ..).parse() {
+        Token::Integer(num)
+    } else {
+        Token::Number(parse_float(lex))
+    }
 }
 
 fn parse_non_posix_keyword<'a>(lex: &mut Lexer<'a>, other: Token<'a>) -> Token<'a> {

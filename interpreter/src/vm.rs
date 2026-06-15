@@ -19,7 +19,7 @@ use parser::{Command, Identifier, Redirection};
 
 use crate::{
     ir::{
-        Instruction, Label, MaybeImm, NonLocal, Reg,
+        Instruction, Label, NonLocal, Reg,
         lower::{Bytecode, Code},
     },
     types::Value,
@@ -32,7 +32,6 @@ pub enum ExecMode {
     Posix,
 }
 
-#[derive(Debug)]
 pub struct Interpreter<'a> {
     arena: &'a Bump,
     bc: Bytecode<'a>,
@@ -121,20 +120,25 @@ impl<'a> Consts<'a> {
 impl Interpreter<'_> {
     pub fn run(&mut self) {
         macro_rules! rx {
-            ($self:expr, $dest:expr, $src:ident, $e:expr) => {{
-                rx!($self, $src);
+            ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
+                rx!($self, $src: $ty);
                 $self.registers.write($dest, $e);
             }};
-            ($self:expr, $($src:ident),+) => {
-                $(let $src = match $src {
-                    MaybeImm::Reg(src) => $self.registers.get(src),
-                    MaybeImm::Rec(_) => todo!(),
-                    MaybeImm::Imm(src) => &Value::Int(src.into()),
-                    MaybeImm::ImmCnt(src) => &$self.consts.0.get_index(src as _).unwrap().clone(),
-                    MaybeImm::ImmUserVar(src) => {
-                        &$self.symbols.lookup_user_scalar(NonLocal(src.into())).clone()
+            ($self:expr, $dest:expr, $lhs:ident: $tyl:ident, $rhs:ident: $tyr:ident, $e:expr) => {{
+                rx!($self, $lhs: $tyl, $rhs: $tyr);
+                $self.registers.write($dest, $e);
+            }};
+            ($self:expr, $($src:ident: $ty:ident),+) => {
+                use $crate::ir::ArgTy;
+                $(let $src = match $ty {
+                    ArgTy::Reg => $self.registers.get(unsafe { $src.reg }),
+                    ArgTy::Rec => todo!(),
+                    ArgTy::Imm => &Value::Int(unsafe { $src.imm } as _),
+                    ArgTy::Cnt => &$self.consts.0.get_index(unsafe { $src.sym.0 } as _).unwrap().clone(),
+                    ArgTy::UsVal => {
+                        &$self.symbols.lookup_user_scalar(unsafe { $src.sym }).clone()
                     }
-                    MaybeImm::ImmBuiltinVar(_) => todo!(),
+                    _ => todo!()
                 };)+
             };
             ($self:expr, $dest:expr, $lhs:ident, $rhs:ident, $e:expr) => {{
@@ -144,92 +148,102 @@ impl Interpreter<'_> {
         }
         while let Some(&instr) = self.bc.code.get(self.program_counter) {
             match instr {
-                Instruction::Record(_) => todo!(),
-                Instruction::Negation((dest, src)) => {
-                    rx!(self, dest, src, Value::b2f(!src.to_bool()));
+                Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
+                Instruction::Negation { dest, arg, ty } => {
+                    rx!(self, dest, arg: ty, Value::b2f(!arg.to_bool()));
                 }
-                Instruction::ToInt((dest, src)) => {
-                    rx!(self, dest, src, Value::Float(src.to_num().trunc()));
+                Instruction::ToInt { dest, arg, ty } => {
+                    rx!(self, dest, arg: ty, Value::Float(arg.to_num().trunc()));
                 }
-                Instruction::Negative((dest, src)) => {
-                    rx!(self, dest, src, Value::Float(-src.to_num()));
+                Instruction::Negative { dest, arg, ty } => {
+                    rx!(self, dest, arg: ty, Value::Float(-arg.to_num()));
                 }
-                Instruction::Copy((dest, src)) => rx!(self, dest, src, src.clone()),
-                Instruction::Eq((dest, lhs, rhs)) => {
-                    rx!(self, dest, lhs, rhs, Value::b2f(lhs == rhs));
+                Instruction::Copy { dest, arg, ty } => rx!(self, dest, arg: ty, arg.clone()),
+                Instruction::Eq { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs == rhs));
                 }
-                Instruction::NEq((dest, lhs, rhs)) => {
-                    rx!(self, dest, lhs, rhs, Value::b2f(lhs != rhs));
+                Instruction::NEq { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs != rhs));
                 }
-                Instruction::Gt((dest, lhs, rhs)) => {
-                    rx!(self, dest, lhs, rhs, Value::b2f(lhs > rhs));
+                Instruction::Gt { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs > rhs));
                 }
-                Instruction::Lt((dest, lhs, rhs)) => {
-                    rx!(self, dest, lhs, rhs, Value::b2f(lhs < rhs));
+                Instruction::Lt { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs < rhs));
                 }
-                Instruction::LtE((dest, lhs, rhs)) => {
-                    rx!(self, dest, lhs, rhs, Value::b2f(lhs <= rhs));
+                Instruction::LtE { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs <= rhs));
                 }
-                Instruction::GtE((dest, lhs, rhs)) => {
-                    rx!(self, dest, lhs, rhs, Value::b2f(lhs >= rhs));
+                Instruction::GtE { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs >= rhs));
                 }
-                Instruction::And((_dest, _lhs, _rhs)) => todo!(),
-                Instruction::Or((_dest, _lhs, _rhs)) => todo!(),
-                Instruction::Matches((_dest, _lhs, _rhs)) => todo!(),
-                Instruction::MatchesNot((_dest, _lhs, _rhs)) => todo!(),
-                Instruction::Add((dest, lhs, rhs)) => rx!(self, dest, lhs, rhs, lhs + rhs),
-                Instruction::Subtract((dest, lhs, rhs)) => rx!(self, dest, lhs, rhs, lhs - rhs),
-                Instruction::Multiply((dest, lhs, rhs)) => rx!(self, dest, lhs, rhs, lhs * rhs),
-                Instruction::Divide((dest, lhs, rhs)) => rx!(self, dest, lhs, rhs, lhs / rhs),
-                Instruction::Raise((dest, lhs, rhs)) => rx!(self, dest, lhs, rhs, lhs ^ rhs),
-                Instruction::Modulo((dest, lhs, rhs)) => rx!(self, dest, lhs, rhs, lhs % rhs),
-                Instruction::Concat((dest, lhs, rhs)) => {
-                    rx!(self, lhs, rhs);
+                Instruction::And { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
+                Instruction::Or { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
+                Instruction::Matches { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
+                Instruction::MatchesNot { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
+                Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs + rhs);
+                }
+                Instruction::Subtract { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs - rhs);
+                }
+                Instruction::Multiply { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs * rhs);
+                }
+                Instruction::Divide { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs / rhs);
+                }
+                Instruction::Raise { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs ^ rhs);
+                }
+                Instruction::Modulo { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs % rhs);
+                }
+                Instruction::Concat { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, lhs: tyl, rhs: tyr);
                     let mut buf =
                         StdVec::with_capacity(lhs.string_size_hint() + rhs.string_size_hint());
                     lhs.write_string(&mut buf);
                     rhs.write_string(&mut buf);
                     self.registers.write(dest, Value::String(buf.into()));
                 }
-                Instruction::LoadUserScalar((dest, src)) => {
-                    let val = self.symbols.lookup_user_scalar(src);
-                    self.registers.write(dest, val.clone());
+                Instruction::LoadA { dest: _, ty_place: _, start: _, end: _, var: _ } => todo!(),
+                Instruction::StoreS { dest, ty_place, var, arg, ty } => {
+                    rx!(self, arg: ty);
+                    match ty_place {
+                        ArgTy::UsVal => self.symbols.write_user_val(var, arg.clone()),
+                        ArgTy::IsVal => todo!(),
+                        _ => unreachable!(),
+                    }
+                    self.registers.write(dest, arg.clone());
                 }
-                Instruction::LoadUserArray((_dest, _start, _end, _src)) => todo!(),
-                Instruction::LoadUserMDimArray((_dest, _start, _end, _place)) => todo!(),
-                Instruction::LoadBuiltinScalar((_dest, _src)) => todo!(),
-                Instruction::LoadBuiltinArray((_dest, _src, _start, _end)) => todo!(),
-                Instruction::LoadConst((dest, src)) => {
-                    let val = self.consts.0.get_index(src.0 as _).unwrap().clone();
-                    self.registers.write(dest, val);
+                Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
+                    todo!()
                 }
-                Instruction::StoreUserScalar((dest, imm, src)) => {
-                    rx!(self, imm);
-                    self.symbols.write_user_val(src, imm.clone());
-                    self.registers.write(dest, imm.clone());
+                Instruction::StoreA {
+                    dest: _,
+                    ty_place: _,
+                    start: _,
+                    end: _,
+                    var: _,
+                    arg: _,
+                } => todo!(),
+                Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
+                Instruction::OutputCall { start, end, cmd, redir } => {
+                    self.intrinsic_print(start, end, cmd, redir);
                 }
-                Instruction::StoreUserArray((_dest, _src, _start, _end)) => todo!(),
-                Instruction::StoreUserMDimArray((_dest, _start, _end, _place)) => todo!(),
-                Instruction::StoreRecord(_) => todo!(),
-                Instruction::StoreBuiltinScalar((_dest, _imm, _src)) => todo!(),
-                Instruction::StoreBuiltinArray((_dest, _src, _start, _end)) => todo!(),
-                Instruction::IntrinsicCall((_dest, _start, _end, _fun)) => todo!(),
-                Instruction::OutputCall((start, end, fun, redir)) => {
-                    self.intrinsic_print(start, end, fun, redir);
-                }
-                Instruction::UserCall((_dest, _start, _end, _fun)) => todo!(),
-                Instruction::IndirectCall((_dest, _start, _end, _fun)) => todo!(),
-                Instruction::Jump(Label(label)) => {
+                Instruction::UserCall { dest: _, start: _, end: _, name: _ } => todo!(),
+                Instruction::IndirectCall { dest: _, start: _, end: _, name: _, ty: _ } => todo!(),
+                Instruction::Jump { to: Label(label) } => {
                     self.program_counter = label as _;
                     continue;
                 }
-                Instruction::Return(_src) => todo!(),
-                Instruction::Branch((src, Label(true_to), Label(false_to))) => {
-                    rx!(self, src);
-                    if src.to_bool() {
-                        self.program_counter = true_to as _;
+                Instruction::Return { arg: _, ty: _ } => todo!(),
+                Instruction::Branch { then_label, else_label, condition } => {
+                    if self.registers.get(condition).to_bool() {
+                        self.program_counter = then_label.0 as _;
                     } else {
-                        self.program_counter = false_to as _;
+                        self.program_counter = else_label.0 as _;
                     }
                     continue;
                 }

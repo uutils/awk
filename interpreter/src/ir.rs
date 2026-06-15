@@ -12,205 +12,198 @@
 
 pub mod lower;
 
-use std::fmt::{Debug, Display};
+use std::fmt::{self, Debug, Display, Formatter};
 
 pub use lower::test_interpreter;
 use parser::{Command, Redirection};
 
+pub type RegWidth = u8;
+pub type IxWidth = u32;
+
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-pub struct NonLocal(pub u16);
+pub struct NonLocal(pub IxWidth);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct Reg(pub u8);
+pub struct Reg(pub RegWidth);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-pub struct Label(pub u16);
+pub struct Label(pub IxWidth);
 
-#[derive(Clone, Copy, Debug)]
-#[repr(transparent)]
-pub struct ArgCount(u16);
-
-#[repr(u8, C, align(8))]
-#[derive(Clone, Copy, Debug)]
+#[repr(u8, align(16))]
+#[derive(Clone, Copy)]
 pub enum Instruction {
     // Unary operations
-    Record(UnaryArg),
-    Negation(UnaryArg),
-    ToInt(UnaryArg),
-    Negative(UnaryArg),
-    Copy(UnaryArg),
+    Record { dest: Reg, arg: Arg, ty: ArgTy },
+    Negation { dest: Reg, arg: Arg, ty: ArgTy },
+    ToInt { dest: Reg, arg: Arg, ty: ArgTy },
+    Negative { dest: Reg, arg: Arg, ty: ArgTy },
+    Copy { dest: Reg, arg: Arg, ty: ArgTy },
 
     // Binary operations
-    Eq(BinaryArg),
-    NEq(BinaryArg),
-    Gt(BinaryArg),
-    Lt(BinaryArg),
-    LtE(BinaryArg),
-    GtE(BinaryArg),
-    And(BinaryArg),
-    Or(BinaryArg),
-    Matches(BinaryArg),
-    MatchesNot(BinaryArg),
-    Add(BinaryArg),
-    Subtract(BinaryArg),
-    Multiply(BinaryArg),
-    Divide(BinaryArg),
-    Raise(BinaryArg),
-    Modulo(BinaryArg),
-    Concat(BinaryArg),
+    Eq { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    NEq { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Gt { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Lt { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    LtE { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    GtE { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    And { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Or { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Matches { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    MatchesNot { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Add { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Subtract { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Multiply { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Divide { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Raise { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Modulo { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
+    Concat { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
 
     // Intrinsic operations
-    LoadUserScalar(MemArg),
-    LoadUserArray(MemArgRange),
-    LoadUserMDimArray(MemArgRange),
-    LoadBuiltinScalar(MemArg),
-    LoadBuiltinArray(MemArgRange),
-    LoadConst(MemArg),
-    StoreUserScalar(MemArgImm),
-    StoreBuiltinScalar(MemArgImm),
-    StoreUserArray(MemArgRange),
-    StoreUserMDimArray(MemArgRange),
-    StoreBuiltinArray(MemArgRange),
-    StoreRecord(BinaryArg),
-    IntrinsicCall(CallArgs),
-    OutputCall(OutputCallArgs),
-    UserCall(CallArgs),
-    IndirectCall(CallArgs),
-    Jump(JumpArg),
-    Return(RetArg),
-    Branch(BranchArg),
+    StoreS { dest: Reg, ty_place: ArgTy, var: NonLocal, arg: Arg, ty: ArgTy },
+    StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
+    StoreA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal, arg: Reg },
+    LoadA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal },
+    IntrinsicCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
+    OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
+    UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
+    IndirectCall { dest: Reg, start: Reg, end: Reg, name: Arg, ty: ArgTy },
+    Jump { to: Label },
+    Return { arg: Arg, ty: ArgTy },
+    Branch { then_label: Label, else_label: Label, condition: Reg },
 }
 
-const _: () = const { assert!(size_of::<Instruction>() <= 8) };
+const _: () = const { assert!(size_of::<Instruction>() <= size_of::<u128>()) };
 
-pub type UnaryArg = (Reg, MaybeImm);
-pub type BinaryArg = (Reg, MaybeImm, MaybeImm);
-pub type MemArgImm = (Reg, MaybeImm, NonLocal);
-pub type MemArgRange = (Reg, Reg, Reg, NonLocal);
-pub type MemArg = (Reg, NonLocal);
-pub type JumpArg = Label;
-pub type RetArg = MaybeImm;
-pub type BranchArg = (MaybeImm, Label, Label);
-pub type CallArgs = (Reg, Reg, Reg, NonLocal);
-pub type OutputCallArgs = (Reg, Reg, Command, Option<Redirection>);
-pub type IndCallArgs = (Reg, Reg, Reg, Reg);
+#[derive(Clone, Copy)]
+pub union Arg {
+    pub reg: Reg,
+    pub imm: i32,
+    pub sym: NonLocal,
+}
 
-#[repr(u8)]
+#[derive(Clone, Copy)]
+struct Imm(u32);
+
 #[derive(Clone, Copy, Debug)]
-pub enum MaybeImm {
-    Reg(Reg),
-    Rec(i8),
-    Imm(i8),
-    ImmCnt(u8),
-    ImmUserVar(u8),
-    ImmBuiltinVar(u8),
+pub enum ArgTy {
+    Reg,
+    Imm,
+    ImmF,
+    Rec,
+    Cnt,
+    UsVal,
+    UaVal,
+    UmVal,
+    IsVal,
+    IaVal,
+    ImVal,
 }
 
 impl Instruction {
     fn set_label(&mut self, label: Label) {
         match self {
-            Self::Jump(lx) | Self::Branch((_, _, lx)) => *lx = label,
+            Self::Jump { to } | Self::Branch { else_label: to, then_label: _, condition: _ } => {
+                *to = label;
+            }
             _ => debug_assert!(false, "Incorrect label set!"),
         }
     }
 
     fn push_end_label(&mut self) {
-        if let Self::Branch((_, _, label)) = self {
-            label.0 += 1;
+        if let Self::Branch { else_label, then_label: _, condition: _ } = self {
+            else_label.0 += 1;
         } else {
             debug_assert!(false, "Incorrect label set!");
         }
     }
 
-    fn br(cond: MaybeImm, then: Label) -> Self {
-        Self::Branch((cond, then, Label(0)))
+    fn br(condition: Reg, then_label: Label) -> Self {
+        Self::Branch { then_label, else_label: Label(0), condition }
     }
 }
 
 impl Display for Instruction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let op = self.display_name();
+        let fmt_arg = |f: &mut Formatter, arg: &Arg, ty: &ArgTy, sep| match ty {
+            ArgTy::Reg => write!(f, "{sep}{}", unsafe { arg.reg }),
+            ArgTy::Imm => write!(f, "{sep}{ty}({})", unsafe { arg.imm }),
+            _ => write!(f, "{sep}{ty}({})", unsafe { arg.sym }),
+        };
         match self {
-            Self::Record((dest, data))
-            | Self::Negation((dest, data))
-            | Self::ToInt((dest, data))
-            | Self::Negative((dest, data))
-            | Self::Copy((dest, data)) => {
-                write!(f, "{dest} <- {op} {data}")
+            Self::Record { dest, arg, ty }
+            | Self::Negation { dest, arg, ty }
+            | Self::ToInt { dest, arg, ty }
+            | Self::Negative { dest, arg, ty }
+            | Self::Copy { dest, arg, ty } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, arg, ty, " ")
             }
-            Self::Eq((dest, lhs, rhs))
-            | Self::NEq((dest, lhs, rhs))
-            | Self::Gt((dest, lhs, rhs))
-            | Self::Lt((dest, lhs, rhs))
-            | Self::LtE((dest, lhs, rhs))
-            | Self::GtE((dest, lhs, rhs))
-            | Self::And((dest, lhs, rhs))
-            | Self::Or((dest, lhs, rhs))
-            | Self::Matches((dest, lhs, rhs))
-            | Self::MatchesNot((dest, lhs, rhs))
-            | Self::Add((dest, lhs, rhs))
-            | Self::Subtract((dest, lhs, rhs))
-            | Self::Multiply((dest, lhs, rhs))
-            | Self::Divide((dest, lhs, rhs))
-            | Self::Raise((dest, lhs, rhs))
-            | Self::Concat((dest, lhs, rhs))
-            | Self::Modulo((dest, lhs, rhs)) => {
-                write!(f, "{dest} <- {op} {lhs}, {rhs}")
+            Self::Eq { dest, lhs, rhs, tyl, tyr }
+            | Self::NEq { dest, lhs, rhs, tyl, tyr }
+            | Self::Gt { dest, lhs, rhs, tyl, tyr }
+            | Self::Lt { dest, lhs, rhs, tyl, tyr }
+            | Self::LtE { dest, lhs, rhs, tyl, tyr }
+            | Self::GtE { dest, lhs, rhs, tyl, tyr }
+            | Self::And { dest, lhs, rhs, tyl, tyr }
+            | Self::Or { dest, lhs, rhs, tyl, tyr }
+            | Self::Matches { dest, lhs, rhs, tyl, tyr }
+            | Self::MatchesNot { dest, lhs, rhs, tyl, tyr }
+            | Self::Add { dest, lhs, rhs, tyl, tyr }
+            | Self::Subtract { dest, lhs, rhs, tyl, tyr }
+            | Self::Multiply { dest, lhs, rhs, tyl, tyr }
+            | Self::Divide { dest, lhs, rhs, tyl, tyr }
+            | Self::Raise { dest, lhs, rhs, tyl, tyr }
+            | Self::Concat { dest, lhs, rhs, tyl, tyr }
+            | Self::Modulo { dest, lhs, rhs, tyl, tyr } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, lhs, tyl, " ")?;
+                fmt_arg(f, rhs, tyr, ", ")
             }
-            Self::LoadUserScalar((dest, src)) => {
-                write!(f, "{dest} <- {op} user[{src}]")
+            Self::StoreS { dest, ty_place, var, arg, ty } => {
+                write!(f, "{dest} <- {op} {ty_place}({var})")?;
+                fmt_arg(f, arg, ty, ", ")
             }
-            Self::StoreUserScalar((dest, imm, src)) => {
-                write!(f, "{dest} <- {op} user[{src}], {imm}")
+            Self::StoreR { dest, src, arg, ty, tys } => {
+                write!(f, "{dest} <- {op} $(")?;
+                fmt_arg(f, src, tys, "")?;
+                fmt_arg(f, arg, ty, "), ")
             }
-            Self::LoadUserArray((dest, start, end, src))
-            | Self::StoreUserArray((dest, start, end, src)) => {
-                write!(f, "{dest} <- {op} user[{start}..{end}], {src}")
+            Self::StoreA { dest, ty_place, start, end, var, arg } => {
+                write!(f, "{dest} <- {op} {ty_place}({var}), {start}..{end}, {arg}")
             }
-            Self::LoadUserMDimArray((dest, start, end, src))
-            | Self::StoreUserMDimArray((dest, start, end, src)) => {
-                write!(f, "{dest} <- {op} user[{src}], {start}..{end}")
+            Self::LoadA { dest, ty_place, start, end, var } => {
+                write!(f, "{dest} <- {op} {ty_place}({var}), {start}..{end})")
             }
-            Self::LoadConst((dest, src)) => {
-                write!(f, "{dest} <- {op} mem[{src}]")
+            Self::Branch { condition, then_label, else_label } => {
+                write!(f, "{op} {condition}, {then_label}, {else_label}")
             }
-            Self::StoreBuiltinScalar((dest, imm, src)) => {
-                write!(f, "{dest} <- {op} intrinsic[{src}], {imm}")
+            Self::Jump { to } => {
+                write!(f, "{op} {to}")
             }
-            Self::LoadBuiltinScalar((dest, src)) => {
-                write!(f, "{dest} <- {op} intrinsic[{src}]")
+            Self::Return { arg, ty } => {
+                write!(f, "{op}")?;
+                fmt_arg(f, arg, ty, " ")
             }
-            Self::StoreRecord((dest, src, imm)) => {
-                write!(f, "{dest} <- {op} {src}, {imm}")
+            Self::IntrinsicCall { dest, start, end, name } => {
+                write!(f, "{dest} <- {op} {name}, {start}..{end}")
             }
-            Self::LoadBuiltinArray((dest, start, end, src))
-            | Self::StoreBuiltinArray((dest, start, end, src)) => {
-                write!(f, "{dest} <- {op} intrinsic[{src}], {start}..{end}")
+            Self::IndirectCall { dest, start, end, name, ty } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, name, ty, " ")?;
+                write!(f, ", {start}..{end}")
             }
-            Self::Branch((cond, label_then, label_else)) => {
-                write!(f, "{op} {cond}, {label_then}, {label_else}")
+            Self::OutputCall { start, end, cmd, redir: Some(redir) } => {
+                write!(f, "{cmd}{redir:?} {start}..{end}")
             }
-            Self::Jump(label) => {
-                write!(f, "{op} {label}")
+            Self::OutputCall { start, end, cmd, redir: None } => {
+                write!(f, "{cmd} {start}..{end}")
             }
-            Self::Return(src) => {
-                write!(f, "{op} {src}")
-            }
-            Self::IntrinsicCall((dest, start, end, fun))
-            | Self::IndirectCall((dest, start, end, fun)) => {
-                write!(f, "{dest} <- {op} {fun}, {start}..{end}")
-            }
-            Self::OutputCall((start, end, call, Some(redir))) => {
-                write!(f, "{call}{redir:?} {start}..{end}")
-            }
-            Self::OutputCall((start, end, call, None)) => {
-                write!(f, "{call} {start}..{end}")
-            }
-            Self::UserCall((dest, start, end, fun)) => {
-                write!(f, "{dest} <- {op} {fun}, {start}..{end}")
+            Self::UserCall { dest, start, end, name } => {
+                write!(f, "{dest} <- {op} {name}, {start}..{end}")
             }
         }
     }
@@ -219,84 +212,82 @@ impl Display for Instruction {
 impl Instruction {
     fn display_name(self) -> &'static str {
         match self {
-            Self::Record(_) => "rec",
-            Self::Negation(_) => "not",
-            Self::ToInt(_) => "int",
-            Self::Negative(_) => "neg",
-            Self::Concat(_) => "cat",
-            Self::Eq(_) => "eq",
-            Self::NEq(_) => "neq",
-            Self::Gt(_) => "gt",
-            Self::Lt(_) => "lt",
-            Self::LtE(_) => "le",
-            Self::GtE(_) => "ge",
-            Self::And(_) => "and",
-            Self::Or(_) => "or",
-            Self::Matches(_) => "mtch",
-            Self::MatchesNot(_) => "nmtch",
-            Self::Add(_) => "add",
-            Self::Subtract(_) => "sub",
-            Self::Multiply(_) => "mul",
-            Self::Divide(_) => "div",
-            Self::Raise(_) => "pow",
-            Self::Modulo(_) => "mod",
-            Self::LoadUserScalar(_) => "vsload",
-            Self::LoadBuiltinScalar(_) => "isload",
-            Self::LoadUserArray(_) => "vaload",
-            Self::LoadUserMDimArray(_) => "vvload",
-            Self::LoadBuiltinArray(_) => "iaload",
-            Self::LoadConst(_) => "cload",
-            Self::StoreUserScalar(_) => "vsstore",
-            Self::StoreRecord(_) => "rsstore",
-            Self::StoreBuiltinScalar(_) => "isstore",
-            Self::StoreUserArray(_) => "vastore",
-            Self::StoreUserMDimArray(_) => "vvstore",
-            Self::StoreBuiltinArray(_) => "iastore",
-            Self::Copy(_) => "cpy",
-            Self::IntrinsicCall(_) => "icall",
-            Self::UserCall(_) => "ucall",
-            Self::IndirectCall(_) => "vcall",
-            Self::OutputCall(_) => "out",
-            Self::Jump(_) => "jmp",
-            Self::Return(_) => "ret",
-            Self::Branch(_) => "brif",
+            Self::Record { dest: _, arg: _, ty: _ } => "rec",
+            Self::Negation { dest: _, arg: _, ty: _ } => "not",
+            Self::ToInt { dest: _, arg: _, ty: _ } => "int",
+            Self::Negative { dest: _, arg: _, ty: _ } => "neg",
+            Self::Concat { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "cat",
+            Self::Eq { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "eq",
+            Self::NEq { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "neq",
+            Self::Gt { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "gt",
+            Self::Lt { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "lt",
+            Self::LtE { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "le",
+            Self::GtE { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "ge",
+            Self::And { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "and",
+            Self::Or { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "or",
+            Self::Matches { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "mtch",
+            Self::MatchesNot { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "nmtch",
+            Self::Add { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "add",
+            Self::Subtract { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "sub",
+            Self::Multiply { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "mul",
+            Self::Divide { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "div",
+            Self::Raise { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "pow",
+            Self::Modulo { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => "mod",
+            Self::StoreS { dest: _, ty_place: _, var: _, arg: _, ty: _ } => "sstore",
+            Self::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => "rstore",
+            Self::StoreA {
+                dest: _,
+                ty_place: _,
+                start: _,
+                end: _,
+                var: _,
+                arg: _,
+            } => "astore",
+            Self::LoadA { dest: _, ty_place: _, start: _, end: _, var: _ } => "aload",
+            Self::Copy { dest: _, arg: _, ty: _ } => "cpy",
+            Self::IntrinsicCall { dest: _, start: _, end: _, name: _ } => "icall",
+            Self::UserCall { dest: _, start: _, end: _, name: _ } => "ucall",
+            Self::IndirectCall { dest: _, start: _, end: _, name: _, ty: _ } => "vcall",
+            Self::OutputCall { start: _, end: _, cmd: _, redir: _ } => "out",
+            Self::Jump { to: _ } => "jmp",
+            Self::Return { arg: _, ty: _ } => "ret",
+            Self::Branch { then_label: _, else_label: _, condition: _ } => "brif",
         }
     }
 }
 
 impl Display for Label {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         <_ as Display>::fmt(&self.0, f)
     }
 }
 
 impl Display for Reg {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "r{}", self.0)
     }
 }
 
 impl Display for NonLocal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         <_ as Display>::fmt(&self.0, f)
     }
 }
 
-impl Display for ArgCount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <_ as Display>::fmt(&self.0, f)
-    }
-}
-
-impl Display for MaybeImm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ArgTy {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Reg(reg) => <_ as Display>::fmt(reg, f),
-            Self::Rec(rec) => write!(f, "rec[{rec}]"),
-            Self::Imm(imm) => write!(f, "imm({imm})"),
-            Self::ImmCnt(imm) => write!(f, "mem[{imm}]"),
-            Self::ImmUserVar(imm) => write!(f, "user[{imm}]"),
-            Self::ImmBuiltinVar(imm) => write!(f, "intrinsic[{imm}]"),
+            Self::Reg => write!(f, "r"),
+            Self::Imm => write!(f, "imm"),
+            Self::ImmF => write!(f, "immf"),
+            Self::Rec => write!(f, "$"),
+            Self::Cnt => write!(f, "mem"),
+            Self::UsVal => write!(f, "us"),
+            Self::UaVal => write!(f, "ua"),
+            Self::UmVal => write!(f, "um"),
+            Self::IsVal => write!(f, "is"),
+            Self::IaVal => write!(f, "ia"),
+            Self::ImVal => write!(f, "im"),
         }
     }
 }

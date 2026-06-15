@@ -636,7 +636,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Atom<'a>> {
         match token {
             Token::Number(n) => Ok(Atom::Number(n)),
-            Token::SmallInt(n) => Ok(Atom::SmallInt(n)),
+            Token::Integer(n) => Ok(Atom::Integer(n)),
             Token::String(s) => Ok(Atom::String(s)),
             Token::Regex(r) => Ok(Atom::Regex(r)),
             Token::TypedRegex(r) if typed_regex => Ok(Atom::TypedRegex(r)),
