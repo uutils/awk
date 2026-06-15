@@ -6,7 +6,7 @@
 use std::fmt::{Debug, Display, Formatter, Result, Write};
 
 use crate::{
-    Ast, Function,
+    Ast, BuiltinFunction, Function,
     ast::{
         ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Command,
         Expr, ExprNode, Getline, Place, Redirection, Rule, RulePattern, SimpleStatement, Statement,
@@ -264,6 +264,11 @@ impl Display for ExprNode<'_> {
                 write_args(f, args, indent)?;
                 write!(f, ")")
             }
+            Self::BuiltinCall(fun, args) => {
+                write!(f, "{fun}(")?;
+                write_args(f, args, indent)?;
+                write!(f, ")")
+            }
             Self::UnaryOperation(op, x) => {
                 let bp = op.binding_power();
                 let child_w = encode(indent, bp.saturating_add(1));
@@ -421,6 +426,52 @@ impl Display for Command {
             Self::Print => write!(f, "print"),
             Self::Printf => write!(f, "printf"),
         }
+    }
+}
+
+impl Display for BuiltinFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let name = match self {
+            Self::Length => "length",
+            Self::Substr => "substr",
+            Self::Split => "split",
+            Self::Sub => "sub",
+            Self::Gsub => "gsub",
+            Self::Match => "match",
+            Self::Index => "index",
+            Self::Sprintf => "sprintf",
+            Self::Toupper => "toupper",
+            Self::Tolower => "tolower",
+            Self::Gensub => "gensub",
+            Self::Patsplit => "patsplit",
+            Self::Strtonum => "strtonum",
+            Self::Close => "close",
+            Self::Fflush => "fflush",
+            Self::System => "system",
+            Self::Int => "int",
+            Self::Sqrt => "sqrt",
+            Self::Exp => "exp",
+            Self::Log => "log",
+            Self::Sin => "sin",
+            Self::Cos => "cos",
+            Self::Atan2 => "atan2",
+            Self::Rand => "rand",
+            Self::Srand => "srand",
+            Self::Systime => "systime",
+            Self::Mktime => "mktime",
+            Self::Strftime => "strftime",
+            Self::Typeof => "typeof",
+            Self::Isarray => "isarray",
+            Self::Asort => "asort",
+            Self::Asorti => "asorti",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::Compl => "compl",
+            Self::Lshift => "lshift",
+            Self::Rshift => "rshift",
+        };
+        write!(f, "{name}")
     }
 }
 

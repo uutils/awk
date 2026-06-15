@@ -11,7 +11,7 @@ use lexer::{Identifier, LexingError, Slice, Span, SpannedIter, Token};
 use super::Result;
 use crate::{
     ParsingError,
-    ast::{Command, SpecialPattern},
+    ast::{BuiltinFunction, Command, SpecialPattern},
 };
 
 pub struct Lexer<'a> {
@@ -200,6 +200,7 @@ pub trait TokenExt {
     fn is_place(&self) -> bool;
     fn is_pattern_start(&self) -> bool;
     fn maps_to_command(&self) -> Option<Command>;
+    fn maps_to_builtin(&self) -> Option<BuiltinFunction>;
     fn maps_to_special_pat(&self) -> Option<SpecialPattern>;
     fn is_stmnt_end(&self) -> bool;
     fn is_stmnt_or_block_end(&self) -> bool;
@@ -261,6 +262,50 @@ impl TokenExt for Token<'_> {
         match self {
             Token::Print => Some(Command::Print),
             Token::Printf => Some(Command::Printf),
+            _ => None,
+        }
+    }
+
+    fn maps_to_builtin(&self) -> Option<BuiltinFunction> {
+        match self {
+            Token::Length => Some(BuiltinFunction::Length),
+            Token::Substr => Some(BuiltinFunction::Substr),
+            Token::Split => Some(BuiltinFunction::Split),
+            Token::Sub => Some(BuiltinFunction::Sub),
+            Token::Gsub => Some(BuiltinFunction::Gsub),
+            Token::MatchFn => Some(BuiltinFunction::Match),
+            Token::Index => Some(BuiltinFunction::Index),
+            Token::Sprintf => Some(BuiltinFunction::Sprintf),
+            Token::Toupper => Some(BuiltinFunction::Toupper),
+            Token::Tolower => Some(BuiltinFunction::Tolower),
+            Token::Gensub => Some(BuiltinFunction::Gensub),
+            Token::Patsplit => Some(BuiltinFunction::Patsplit),
+            Token::Strtonum => Some(BuiltinFunction::Strtonum),
+            Token::Close => Some(BuiltinFunction::Close),
+            Token::Fflush => Some(BuiltinFunction::Fflush),
+            Token::System => Some(BuiltinFunction::System),
+            Token::Int => Some(BuiltinFunction::Int),
+            Token::Sqrt => Some(BuiltinFunction::Sqrt),
+            Token::Exp => Some(BuiltinFunction::Exp),
+            Token::Log => Some(BuiltinFunction::Log),
+            Token::Sin => Some(BuiltinFunction::Sin),
+            Token::Cos => Some(BuiltinFunction::Cos),
+            Token::Atan2 => Some(BuiltinFunction::Atan2),
+            Token::Rand => Some(BuiltinFunction::Rand),
+            Token::Srand => Some(BuiltinFunction::Srand),
+            Token::Systime => Some(BuiltinFunction::Systime),
+            Token::Mktime => Some(BuiltinFunction::Mktime),
+            Token::Strftime => Some(BuiltinFunction::Strftime),
+            Token::Typeof => Some(BuiltinFunction::Typeof),
+            Token::Isarray => Some(BuiltinFunction::Isarray),
+            Token::Asort => Some(BuiltinFunction::Asort),
+            Token::Asorti => Some(BuiltinFunction::Asorti),
+            Token::And => Some(BuiltinFunction::And),
+            Token::Or => Some(BuiltinFunction::Or),
+            Token::Xor => Some(BuiltinFunction::Xor),
+            Token::Compl => Some(BuiltinFunction::Compl),
+            Token::Lshift => Some(BuiltinFunction::Lshift),
+            Token::Rshift => Some(BuiltinFunction::Rshift),
             _ => None,
         }
     }

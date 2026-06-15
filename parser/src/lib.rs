@@ -235,6 +235,10 @@ impl<'a> Parser<'a> {
                     lex.next();
                     Some(self.parse_command(lex, name))
                 }
+                token if let Some(builtin) = token.maps_to_builtin() => {
+                    lex.next();
+                    Some(self.parse_builtin_call(lex, builtin))
+                }
                 Token::Delete => {
                     lex.next();
                     Some(self.parse_delete(lex))
@@ -479,6 +483,17 @@ impl<'a> Parser<'a> {
         };
         let redirection = self.parse_command_redirection(lex)?;
         Ok(SimpleStatement::Command { name, args, redirection })
+    }
+
+    #[tracing::instrument]
+    fn parse_builtin_call(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        builtin: BuiltinFunction,
+    ) -> Result<SimpleStatement<'a>> {
+        let expr =
+            self.parse_function_call(lex, |args| ExprNode::BuiltinCall(builtin, args), lex.span())?;
+        Ok(SimpleStatement::Expression(expr))
     }
 
     /// Parses arguments to command or function calls; consumes to the end of

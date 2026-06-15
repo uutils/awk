@@ -96,6 +96,7 @@ pub type Pattern<'a> = Either<RulePattern<'a>, SpecialPattern>;
 pub enum ExprNode<'a> {
     FunctionCall(Identifier<'a>, Vec<'a, Expr<'a>>),
     IndirectCall(Variable<'a>, Vec<'a, Expr<'a>>),
+    BuiltinCall(BuiltinFunction, Vec<'a, Expr<'a>>),
     UnaryOperation(UnaryOperator, Expr<'a>),
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
@@ -250,6 +251,49 @@ pub enum SimpleStatement<'a> {
 pub struct Function<'a> {
     pub args: Vec<'a, Identifier<'a>>,
     pub body: Body<'a>,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum BuiltinFunction {
+    Length,
+    Substr,
+    Split,
+    Sub,
+    Gsub,
+    Match,
+    Index,
+    Sprintf,
+    Toupper,
+    Tolower,
+    Gensub,
+    Patsplit,
+    Strtonum,
+    Close,
+    Fflush,
+    System,
+    Int,
+    Sqrt,
+    Exp,
+    Log,
+    Sin,
+    Cos,
+    Atan2,
+    Rand,
+    Srand,
+    Systime,
+    Mktime,
+    Strftime,
+    Typeof,
+    Isarray,
+    Asort,
+    Asorti,
+    And,
+    Or,
+    Xor,
+    Compl,
+    Lshift,
+    Rshift,
 }
 
 #[derive(Debug, Clone, Copy)]
