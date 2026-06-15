@@ -190,6 +190,13 @@ impl Debug for Expr<'_> {
                     }
                     write!(f, ")")
                 }
+                ExprNode::BuiltinCall(ident, args) => {
+                    write!(f, "({ident:?}")?;
+                    for arg in args {
+                        write!(f, " {arg:?}")?;
+                    }
+                    write!(f, ")")
+                }
                 ExprNode::UnaryOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::BinaryPlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),

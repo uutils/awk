@@ -101,6 +101,82 @@ pub enum Token<'a> {
     #[token("function", accept_expression)]
     #[token("func", |lex| parse_non_posix_keyword(lex, Token::Function))]
     Function,
+    #[token("length", accept_expression)]
+    Length,
+    #[token("substr", accept_expression)]
+    Substr,
+    #[token("split", accept_expression)]
+    Split,
+    #[token("sub", accept_expression)]
+    Sub,
+    #[token("gsub", accept_expression)]
+    Gsub,
+    #[token("match", accept_expression)]
+    MatchFn,
+    #[token("index", accept_expression)]
+    Index,
+    #[token("sprintf", accept_expression)]
+    Sprintf,
+    #[token("toupper", accept_expression)]
+    Toupper,
+    #[token("tolower", accept_expression)]
+    Tolower,
+    #[token("gensub", |lex| parse_non_posix_keyword(lex, Token::Gensub))]
+    Gensub,
+    #[token("patsplit", |lex| parse_non_posix_keyword(lex, Token::Patsplit))]
+    Patsplit,
+    #[token("strtonum", |lex| parse_non_posix_keyword(lex, Token::Strtonum))]
+    Strtonum,
+    #[token("close", accept_expression)]
+    Close,
+    #[token("fflush", accept_expression)]
+    Fflush,
+    #[token("system", accept_expression)]
+    System,
+    #[token("int", accept_expression)]
+    Int,
+    #[token("sqrt", accept_expression)]
+    Sqrt,
+    #[token("exp", accept_expression)]
+    Exp,
+    #[token("log", accept_expression)]
+    Log,
+    #[token("sin", accept_expression)]
+    Sin,
+    #[token("cos", accept_expression)]
+    Cos,
+    #[token("atan2", accept_expression)]
+    Atan2,
+    #[token("rand", accept_expression)]
+    Rand,
+    #[token("srand", accept_expression)]
+    Srand,
+    #[token("systime", |lex| parse_non_posix_keyword(lex, Token::Systime))]
+    Systime,
+    #[token("mktime", |lex| parse_non_posix_keyword(lex, Token::Mktime))]
+    Mktime,
+    #[token("strftime", |lex| parse_non_posix_keyword(lex, Token::Strftime))]
+    Strftime,
+    #[token("typeof", |lex| parse_non_posix_keyword(lex, Token::Typeof))]
+    Typeof,
+    #[token("isarray", |lex| parse_non_posix_keyword(lex, Token::Isarray))]
+    Isarray,
+    #[token("asort", |lex| parse_non_posix_keyword(lex, Token::Asort))]
+    Asort,
+    #[token("asorti", |lex| parse_non_posix_keyword(lex, Token::Asorti))]
+    Asorti,
+    #[token("and", |lex| parse_non_posix_keyword(lex, Token::And))]
+    And,
+    #[token("or", |lex| parse_non_posix_keyword(lex, Token::Or))]
+    Or,
+    #[token("xor", |lex| parse_non_posix_keyword(lex, Token::Xor))]
+    Xor,
+    #[token("compl", |lex| parse_non_posix_keyword(lex, Token::Compl))]
+    Compl,
+    #[token("lshift", |lex| parse_non_posix_keyword(lex, Token::Lshift))]
+    Lshift,
+    #[token("rshift", |lex| parse_non_posix_keyword(lex, Token::Rshift))]
+    Rshift,
     #[token("NR", accept_expression)]
     NrVariable,
     #[token("NF", accept_expression)]
