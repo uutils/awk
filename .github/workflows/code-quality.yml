@@ -23,7 +23,7 @@ jobs:
     name: cargo fmt --all -- --check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -39,7 +39,7 @@ jobs:
           - { os: ubuntu-latest }
           - { os: macos-latest }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.10
