@@ -396,7 +396,7 @@ fn lexer_test_slash_assign() {
         &[
             Token::Identifier(Identifier { namespace: None, literal: "a" }),
             Token::SlashAssign,
-            Token::SmallInt(1),
+            Token::Integer(1),
         ]
     );
 }
@@ -468,10 +468,10 @@ fn lexer_test_comments() {
         &lex(str, &arena, false, false),
         &[
             Token::Print,
-            Token::SmallInt(1),
+            Token::Integer(1),
             Token::Newline,
             Token::Print,
-            Token::SmallInt(2),
+            Token::Integer(2),
         ]
     );
 }
@@ -542,7 +542,7 @@ fn lexer_test_regex_literals() {
 #[test]
 fn lexer_test_switch_snippet() {
     let arena = Bump::new();
-    let str = br#"switch (x) { case 1: print; default: break }"#;
+    let str = br"switch (x) { case 1: print; default: break }";
     assert_eq!(
         &lex(str, &arena, false, false),
         &[
@@ -552,7 +552,7 @@ fn lexer_test_switch_snippet() {
             Token::ClosedParent,
             Token::OpenBrace,
             Token::Case,
-            Token::SmallInt(1),
+            Token::Integer(1),
             Token::Colon,
             Token::Print,
             Token::Semicolon,

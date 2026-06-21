@@ -732,7 +732,7 @@ fn test_parser_unary_and_divide() {
                     "(Divide awk::a awk::b) (Subtract (Add awk::a awk::b) awk::c))"
                 ))
             ),
-            (None, Some("(body (awk::int awk::a))")),
+            (None, Some("(body (Int awk::a))")),
         ],
     });
 }
