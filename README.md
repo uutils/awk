@@ -47,6 +47,42 @@ version, that is, 1.95.0 at the time of writing.
 
 Check out https://github.com/uutils/awk/issues/16.
 
+## Testing
+
+### GNU awk (gawk) Compatibility Testing
+
+Track compatibility against GNU awk by running the upstream gawk testsuite
+against our Rust binary. Rather than reimplement gawk's test harness, we drive
+gawk's own (GPL) test Makefile with `make check AWK=<wrapper>`, where the wrapper
+execs our `awk` — the gawk sources are fetched fresh at test time and never
+copied into this repo.
+
+```bash
+# Fetch the gawk testsuite (one-time setup)
+mkdir -p ../gnu.awk && (cd ../gnu.awk && bash ../awk/util/fetch-gnu.sh)
+
+# Run compatibility tests
+./util/run-gnu-testsuite.sh
+
+# Verbose mode shows the diff for each failing test
+./util/run-gnu-testsuite.sh -v
+
+# Generate JSON results for CI
+./util/run-gnu-testsuite.sh --json-output results.json
+```
+
+The harness builds our `awk`, runs gawk's `make check` with a wrapper named
+`gawk`, and classifies each test the way gawk's own `pass-fail` target does: a
+leftover `_<name>` file is a failure, its absence a pass, and tests that never
+run (group-skipped because of missing locales, MPFR, or shared-library support)
+are reported as skipped.
+
+### Unit Tests
+
+```bash
+cargo test --workspace
+```
+
 ## Contributing
 
 To contribute to uutils AWK, please see [CONTRIBUTING](https://github.com/uutils/coreutils/blob/main/CONTRIBUTING.md).
