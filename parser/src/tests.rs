@@ -879,3 +879,65 @@ fn test_parser_unary_and_divide() {
         ],
     });
 }
+
+#[test]
+fn test_pretty_print_omits_default_namespace() {
+    use std::fmt::Write;
+
+    let arena = Bump::new();
+    let parser = arena.alloc(Parser::new(&arena));
+    let source = "{ print a + b }";
+    let ast = parser.parse("test", source.as_bytes()).unwrap();
+    let mut printed = String::new();
+    write!(printed, "{ast}").unwrap();
+    assert!(
+        !printed.contains("awk::"),
+        "pretty-print should omit the default awk namespace: {printed}"
+    );
+    assert!(printed.contains("print a"));
+}
+
+#[test]
+fn test_pretty_print_namespace_directive() {
+    use std::fmt::Write;
+
+    let arena = Bump::new();
+    let parser = arena.alloc(Parser::new(&arena));
+    let source = r#"
+        @namespace "myns";
+        function bar(x) { print x }
+    "#;
+    let ast = parser.parse("test", source.as_bytes()).unwrap();
+    let mut printed = String::new();
+    write!(printed, "{ast}").unwrap();
+    assert!(
+        printed.contains("@namespace \"myns\""),
+        "pretty-print should restore @namespace directive: {printed}"
+    );
+    assert!(
+        !printed.contains("myns::"),
+        "pretty-print should use unqualified names under @namespace: {printed}"
+    );
+}
+
+#[test]
+fn test_pretty_print_namespace_roundtrip() {
+    use std::fmt::Write;
+
+    let arena = Bump::new();
+    let parser = arena.alloc(Parser::new(&arena));
+    let source = r#"
+        @namespace "myns";
+        function bar() { x = 1 }
+        { print y }
+    "#;
+    let ast = parser.parse("test", source.as_bytes()).unwrap();
+    let mut printed = String::new();
+    write!(printed, "{ast}").unwrap();
+
+    let arena2 = Bump::new();
+    let parser2 = arena2.alloc(Parser::new(&arena2));
+    let reparsed = parser2.parse("test", printed.as_bytes()).unwrap();
+    assert_eq!(ast.functions.len(), reparsed.functions.len());
+    assert_eq!(ast.rules.len(), reparsed.rules.len());
+}
