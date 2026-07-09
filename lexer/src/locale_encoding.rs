@@ -78,7 +78,7 @@ impl LocaleEncoding {
         let c = match char::try_from(codepoint) {
             Ok(c) if !self.ascii_only || c.is_ascii() => c,
             _ => {
-                out.extend([b'?']);
+                out.extend(*b"?");
                 return;
             }
         };
@@ -97,7 +97,7 @@ impl LocaleEncoding {
             (EncoderResult::InputEmpty, _, written) if written > 0 => {
                 out.extend(buf[..written].iter().copied());
             }
-            _ => out.extend([b'?']),
+            _ => out.extend(*b"?"),
         }
     }
 }
