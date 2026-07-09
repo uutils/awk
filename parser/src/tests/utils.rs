@@ -152,7 +152,7 @@ pub fn ast_signature(ast: &Ast<'_>) -> String {
     for body in &ast.end {
         let _ = writeln!(out, "end:{body:?}");
     }
-    for (name, fun) in ast.functions.iter() {
+    for (name, fun) in &ast.functions {
         let _ = writeln!(out, "function:{name:?}:{fun:?}");
     }
     out
