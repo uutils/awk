@@ -311,6 +311,6 @@ fn text_slice<'a>(arena: &'a Bump, content: &str) -> lexer::Slice<'a> {
     arena.alloc_str(content).as_bytes().into()
 }
 
-fn regex_slice<'a>(arena: &'a Bump, index: u8) -> lexer::Slice<'a> {
+fn regex_slice(arena: &Bump, index: u8) -> lexer::Slice<'_> {
     text_slice(arena, &format!("p{index}"))
 }
