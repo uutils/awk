@@ -51,10 +51,10 @@ pub enum GenStatement {
 #[derive(Clone, Debug)]
 pub enum GenExpr {
     Atom(GenAtom),
-    Unary(UnaryOperator, Box<GenExpr>),
-    Binary(BinaryOperator, Box<GenExpr>, Box<GenExpr>),
-    Assign(GenPlace, Box<GenExpr>),
-    Index(u8, Box<GenExpr>),
+    Unary(UnaryOperator, Box<Self>),
+    Binary(BinaryOperator, Box<Self>, Box<Self>),
+    Assign(GenPlace, Box<Self>),
+    Index(u8, Box<Self>),
 }
 
 #[derive(Clone, Debug)]
