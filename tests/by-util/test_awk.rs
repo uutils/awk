@@ -248,3 +248,68 @@ fn write_to_dev_full_does_not_panic() {
         "awk panicked on write to /dev/full: stderr={stderr}"
     );
 }
+
+#[test]
+fn array_single_index_get_set() {
+    ucmd()
+        .arg("BEGIN { a[1] = 42; print a[1] }")
+        .succeeds()
+        .stdout_only("42\n");
+}
+
+#[test]
+fn array_string_index() {
+    ucmd()
+        .arg(r#"BEGIN { a["foo"] = "bar"; print a["foo"] }"#)
+        .succeeds()
+        .stdout_only("bar\n");
+}
+
+#[test]
+fn array_unset_element_prints_empty() {
+    ucmd()
+        .arg("BEGIN { print a[1]; print \"x\" }")
+        .succeeds()
+        .stdout_only("\nx\n");
+}
+
+#[test]
+fn array_prefix_increment() {
+    ucmd()
+        .arg("BEGIN { ++a[1]; print a[1] }")
+        .succeeds()
+        .stdout_only("1\n");
+}
+
+#[test]
+fn array_add_assign() {
+    ucmd()
+        .arg("BEGIN { a[1] = 10; a[1] += 5; print a[1] }")
+        .succeeds()
+        .stdout_only("15\n");
+}
+
+#[test]
+fn array_multi_index_uses_subsep() {
+    // Multidimensional `a[i,j]` is stored under key i SUBSEP j (default SUBSEP = "\034").
+    ucmd()
+        .arg("BEGIN { a[1, 2] = 9; print a[1, 2] }")
+        .succeeds()
+        .stdout_only("9\n");
+}
+
+#[test]
+fn array_independent_keys() {
+    ucmd()
+        .arg("BEGIN { a[1] = 1; a[2] = 2; print a[1], a[2] }")
+        .succeeds()
+        .stdout_only("1 2\n");
+}
+
+#[test]
+fn array_overwrite_element() {
+    ucmd()
+        .arg("BEGIN { a[1] = 1; a[1] = 2; print a[1] }")
+        .succeeds()
+        .stdout_only("2\n");
+}

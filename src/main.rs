@@ -98,7 +98,7 @@ fn uu_main() -> Result<()> {
         writeln!(out, "{table}")?;
     }
 
-    AwkRt::new(intrp, &bc, &args.read_queue).main_event_loop()?;
+    AwkRt::new(intrp, bc, &args.read_queue).main_event_loop()?;
 
     Ok(())
 }

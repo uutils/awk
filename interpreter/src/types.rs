@@ -5,15 +5,21 @@
 
 use std::{
     borrow::Cow,
+    cell::RefCell,
     fmt::Display,
     hash::Hash,
     io::Write,
     mem::discriminant,
     ops::{Add, BitXor, Div, Mul, Rem, Sub},
+    rc::Rc,
 };
 
 use ahash::RandomState;
 use hashbrown::HashMap;
+
+/// Shared array storage. AWK arrays are reference-counted (assignment of array
+/// names is not a deep copy); `Rc`/`RefCell` is enough while the VM is single-threaded.
+pub type ArrayMap<'a> = HashMap<String, Value<'a>, RandomState>;
 
 #[derive(Debug, Clone)]
 pub enum Value<'a> {
@@ -21,10 +27,18 @@ pub enum Value<'a> {
     Float(f64),
     String(Cow<'a, [u8]>),
     Regex(Cow<'a, [u8]>),
-    Array(HashMap<String, Self, RandomState>),
+    Array(Rc<RefCell<ArrayMap<'a>>>),
     Bool(bool),
     Untyped,
     Unassigned,
+}
+
+impl Value<'_> {
+    pub fn empty_array() -> Self {
+        Self::Array(Rc::new(RefCell::new(HashMap::with_hasher(
+            RandomState::new(),
+        ))))
+    }
 }
 
 impl Value<'_> {
@@ -41,9 +55,9 @@ impl Value<'_> {
     }
 
     pub fn array_context(&mut self) -> &mut Self {
-        // TODO: Exit "nicely" on Self::Array(_).
+        // TODO: Exit "nicely" on non-array scalars.
         match self {
-            Self::Untyped => *self = Self::Array(HashMap::with_hasher(RandomState::new())),
+            Self::Untyped => *self = Self::empty_array(),
             Self::Array(_) => {}
             _ => panic!("Attempted to use scalar as array!"),
         }
@@ -297,6 +311,24 @@ impl Display for Value<'_> {
             Value::Regex(s) => write!(f, "/{}/", String::from_utf8_lossy(s)),
             &Value::Bool(b) => write!(f, "{}", b as usize),
             Value::Array(_) | Value::Untyped | Value::Unassigned => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn array_clone_shares_backing_storage() {
+        let a = Value::empty_array();
+        let b = a.clone();
+        match (&a, &b) {
+            (Value::Array(left), Value::Array(right)) => {
+                left.borrow_mut().insert("k".into(), Value::Int(1));
+                assert_eq!(right.borrow().get("k"), Some(&Value::Int(1)));
+            }
+            _ => panic!("expected Array values"),
         }
     }
 }

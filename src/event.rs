@@ -16,12 +16,14 @@ use crate::cli::{ArgQueueItem, KeyValue};
 
 pub struct AwkRt<'a> {
     intrp: Interpreter<'a>,
-    bc: &'a Bytecode<'a>,
+    // Owned (not `&'a Bytecode<'a>`) so arena-invariant values like
+    // `Rc<RefCell<_>>` arrays do not force a self-borrow of a local.
+    bc: Bytecode<'a>,
     queue: &'a [ArgQueueItem],
 }
 
 impl<'a> AwkRt<'a> {
-    pub fn new(intrp: Interpreter<'a>, bc: &'a Bytecode<'a>, queue: &'a [ArgQueueItem]) -> Self {
+    pub fn new(intrp: Interpreter<'a>, bc: Bytecode<'a>, queue: &'a [ArgQueueItem]) -> Self {
         Self { intrp, bc, queue }
     }
 
@@ -32,14 +34,14 @@ impl<'a> AwkRt<'a> {
 
     /// Runs `code` to completion, dispatching I/O signals from the VM.
     fn drive(&mut self, code: CodeRange) -> Result<CtrlSig> {
-        let mut sig = self.intrp.run_code(self.bc, code.clone())?;
+        let mut sig = self.intrp.run_code(&self.bc, code.clone())?;
         loop {
             let req = match sig {
                 Signal::Suspend(req) => req,
                 Signal::Terminal(t) => return Ok(t),
             };
             let res = self.perform_io(&req);
-            sig = self.intrp.resume(self.bc, code.clone(), req, res)?;
+            sig = self.intrp.resume(&self.bc, code.clone(), req, res)?;
         }
     }
 

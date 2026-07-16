@@ -9,8 +9,8 @@ use bumpalo::{Bump, collections::Vec};
 use either::Either;
 use indexmap_allocator_api::IndexSet;
 use parser::{
-    Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode, Identifier,
-    MetaId, Place, Rule, RulePattern, SimpleStatement, Statement, UnaryOperator,
+    ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
+    Identifier, MetaId, Place, Rule, RulePattern, SimpleStatement, Statement, UnaryOperator,
     UnaryPlaceOperator, Variable,
 };
 
@@ -579,6 +579,9 @@ impl<'a> CodeGen<'a> {
                             }
                         }
                         ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
+                        ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
+                            this.load_index(dest, var, index);
+                        }
                         _ => todo!(),
                     }
                 });
@@ -593,20 +596,23 @@ impl<'a> CodeGen<'a> {
             }
             Place::Variable(Variable::User(ident)) => TypedArg::new_us(self, ident),
             Place::Variable(var) => TypedArg::new_is(var),
-            Place::Index(Variable::User(ident), index) => {
-                let var = self.symbols.register_user_var(ident, self.arena);
-                let (start, end, _) = self.gen_call_convention(index, |_| ());
-                self.emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
-                TypedArg(Arg { sym: var }, ArgTy::UaVal)
-            }
-            Place::Index(var, index) => {
-                let (start, end, _) = self.gen_call_convention(index, |_| ());
-                let var = var_index(var);
-                self.emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
-                TypedArg(Arg { sym: var }, ArgTy::IaVal)
-            }
+            Place::Index(var, index) => self.load_index(dest, var, index),
             Place::ChainedIndex(_, _) => todo!(),
         }
+    }
+
+    fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedArg {
+        if let Variable::User(ident) = var {
+            let var = self.symbols.register_user_var(ident, self.arena);
+            let (start, end, _) = self.gen_call_convention(index, |_| ());
+            self.emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
+        } else {
+            let (start, end, _) = self.gen_call_convention(index, |_| ());
+            let var = var_index(var);
+            self.emit(Instruction::LoadA { dest, ty_place: ArgTy::IaVal, start, end, var });
+        }
+        // Element value was written to `dest`; subsequent ops must use the register.
+        dest.into()
     }
 
     fn store_place(&mut self, place: &Place<'_>, dest: Reg, src: TypedArg) {
@@ -1356,5 +1362,40 @@ mod tests {
                 );
             },
         );
+    }
+
+    #[test]
+    fn array_index_assignment_lowers_storea() {
+        with_lower("BEGIN { a[1] = 2 }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
+            assert!(bc.contains("ua("), "expected user-array place:\n{bc}");
+        });
+    }
+
+    #[test]
+    fn array_index_read_lowers_loada() {
+        with_lower("BEGIN { print a[1] }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(bc.contains("aload"), "expected LoadA:\n{bc}");
+            assert!(bc.contains("ua("), "expected user-array place:\n{bc}");
+        });
+    }
+
+    #[test]
+    fn array_index_increment_lowers_load_and_store() {
+        with_lower("BEGIN { ++a[1] }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(bc.contains("aload"), "expected LoadA:\n{bc}");
+            assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
+        });
+    }
+
+    #[test]
+    fn array_multi_index_assignment_lowers_storea() {
+        with_lower("BEGIN { a[1, 2] = 3 }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
+        });
     }
 }

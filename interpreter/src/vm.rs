@@ -4,10 +4,12 @@
 // files that was distributed with this source code.
 
 use std::{
+    cell::RefCell,
     fmt::{self, Display},
     io::{self, Write},
     mem::replace,
     ops::Range,
+    rc::Rc,
     vec::Vec as StdVec,
 };
 
@@ -19,10 +21,10 @@ use parser::{Command, Identifier, Redirection};
 
 use crate::{
     ir::{
-        Instruction, IxWidth, Label, NonLocal, Reg,
+        ArgTy, Instruction, IxWidth, Label, NonLocal, Reg,
         lower::{Bytecode, CodeGen},
     },
-    types::Value,
+    types::{ArrayMap, Value},
 };
 
 #[derive(Debug)]
@@ -75,6 +77,8 @@ pub struct SymbolTable<'a> {
     records: HashMap<usize, Value<'a>, RandomState, &'a Bump>,
     ofs: Value<'a>,
     rfs: Value<'a>,
+    /// Default AWK `SUBSEP` (`"\034"`).
+    subsep: Value<'a>,
     // etc
 }
 
@@ -105,6 +109,7 @@ impl<'a> SymbolTable<'a> {
             records: HashMap::with_hasher_in(RandomState::new(), arena),
             ofs: Value::String(b" ".into()),
             rfs: Value::String(b"\n".into()),
+            subsep: Value::String(b"\x1c".into()),
         }
     }
 
@@ -115,6 +120,27 @@ impl<'a> SymbolTable<'a> {
 
     fn write_user_val(&mut self, var: NonLocal, value: Value<'a>) {
         *self.user.get_index_mut(var.0 as _).unwrap().1 = value;
+    }
+
+    fn user_array(&mut self, var: NonLocal) -> Rc<RefCell<ArrayMap<'a>>> {
+        let v = self.user.get_index_mut(var.0 as _).unwrap().1;
+        v.array_context();
+        match v {
+            Value::Array(arr) => Rc::clone(arr),
+            _ => unreachable!("array_context must leave an Array"),
+        }
+    }
+
+    fn load_user_array_elem(&mut self, var: NonLocal, key: &str) -> Value<'a> {
+        self.user_array(var)
+            .borrow()
+            .get(key)
+            .cloned()
+            .unwrap_or(Value::Unassigned)
+    }
+
+    fn store_user_array_elem(&mut self, var: NonLocal, key: String, value: Value<'a>) {
+        self.user_array(var).borrow_mut().insert(key, value);
     }
 
     pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> NonLocal {
@@ -268,7 +294,15 @@ impl Interpreter<'_> {
                     rhs.write_string(&mut buf);
                     self.registers.write(dest, Value::String(buf.into()));
                 }
-                Instruction::LoadA { dest: _, ty_place: _, start: _, end: _, var: _ } => todo!(),
+                Instruction::LoadA { dest, ty_place, start, end, var } => {
+                    let key = self.make_array_key(start, end);
+                    let value = match ty_place {
+                        ArgTy::UaVal => self.symbols.load_user_array_elem(var, &key),
+                        ArgTy::IaVal => todo!("intrinsic array load"),
+                        _ => unreachable!(),
+                    };
+                    self.registers.write(dest, value);
+                }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
                     rx!(self, arg: ty);
                     match ty_place {
@@ -281,14 +315,18 @@ impl Interpreter<'_> {
                 Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
                     todo!()
                 }
-                Instruction::StoreA {
-                    dest: _,
-                    ty_place: _,
-                    start: _,
-                    end: _,
-                    var: _,
-                    arg: _,
-                } => todo!(),
+                Instruction::StoreA { dest, ty_place, start, end, var, arg } => {
+                    let key = self.make_array_key(start, end);
+                    let value = self.registers.get(arg).clone();
+                    match ty_place {
+                        ArgTy::UaVal => {
+                            self.symbols.store_user_array_elem(var, key, value.clone());
+                        }
+                        ArgTy::IaVal => todo!("intrinsic array store"),
+                        _ => unreachable!(),
+                    }
+                    self.registers.write(dest, value);
+                }
                 Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
                 Instruction::OutputCall { start, end, cmd, redir } => {
                     return Ok(Signal::Suspend(self.print_req(start, end, cmd, redir)));
@@ -366,6 +404,19 @@ impl Interpreter<'_> {
         let _ = write!(buf, "{rfs}", rfs = self.symbols.rfs);
 
         IoRequest::WriteStdout(buf)
+    }
+
+    /// Join index register values with `SUBSEP` into an array key (gawk-compatible).
+    fn make_array_key(&self, start: Reg, end: Reg) -> String {
+        let range = self.registers.get_range(start..end);
+        let mut buf = StdVec::new();
+        for (i, value) in range.iter().enumerate() {
+            if i > 0 {
+                self.symbols.subsep.write_string(&mut buf);
+            }
+            value.write_string(&mut buf);
+        }
+        String::from_utf8_lossy(&buf).into_owned()
     }
 }
 
