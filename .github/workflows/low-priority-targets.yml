@@ -1,5 +1,5 @@
 # spell-checker:ignore wasip
-name: low-priotiry-targets
+name: low-priority-targets
 
 on:
   pull_request:
