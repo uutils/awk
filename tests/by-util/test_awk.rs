@@ -313,3 +313,14 @@ fn array_overwrite_element() {
         .succeeds()
         .stdout_only("2\n");
 }
+
+#[test]
+fn user_functions_fib() {
+    ucmd()
+        .arg(
+            "function fib(n) { if (n <= 1) return n; return fib(n - 1) + fib(n - 2) } \
+              BEGIN { for (i = 0; i < 10; i++) print fib(i) }",
+        )
+        .succeeds()
+        .stdout_only("0\n1\n1\n2\n3\n5\n8\n13\n21\n34\n");
+}
