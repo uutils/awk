@@ -3,6 +3,8 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
+pub mod types;
+
 use std::{
     cell::RefCell,
     fmt::{self, Display},
@@ -24,7 +26,7 @@ use crate::{
         ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
         lower::{Bytecode, CodeGen},
     },
-    types::{ArrayMap, Value},
+    vm::types::{ArrayMap, Value},
 };
 
 #[derive(Debug)]

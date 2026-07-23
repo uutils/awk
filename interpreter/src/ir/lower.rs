@@ -17,8 +17,7 @@ use parser::{
 use crate::{
     CodeRange,
     ir::{Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth},
-    types::Value,
-    vm::{Consts, Function, SymbolTable},
+    vm::{Consts, Function, SymbolTable, types::Value},
 };
 
 pub struct CodeGen<'a> {
