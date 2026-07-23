@@ -11,6 +11,8 @@
 //! shenanigans; _even_ if it was possible, good luck maintaining that.
 
 pub mod lower;
+#[cfg(test)]
+mod tests;
 
 use std::fmt::{self, Debug, Display, Formatter};
 
