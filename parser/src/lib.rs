@@ -539,6 +539,9 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_statement_body(&mut self, lex: &mut Lexer<'a>) -> Result<Body<'a>> {
+        // Ignore newlines in this position.
+        lex.consume(&Token::Newline);
+
         // Braced body, with >=1 statements.
         if lex.peek_is(&Token::OpenBrace) {
             return self.parse_body(lex);
