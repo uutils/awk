@@ -19,7 +19,7 @@ use parser::{Command, Redirection};
 pub type RegWidth = u8;
 pub type IxWidth = u32;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct NonLocal(pub IxWidth);
 

@@ -23,10 +23,12 @@ pub struct Ast<'a> {
     pub end_file: Vec<'a, Body<'a>>,
     pub rules: Vec<'a, Rule<'a>>,
     pub concurrent: Vec<'a, Rule<'a>>,
-    pub functions: HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>,
+    pub functions: FunctionTable<'a>,
     pub ns_metadata: MetadataStore<&'a str, usize>,
     pub loc_metadata: MetadataStore<(Span, Option<Rc<PathBuf>>)>,
 }
+
+pub type FunctionTable<'a> = HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>;
 
 #[derive(Debug)]
 pub struct Rule<'a> {

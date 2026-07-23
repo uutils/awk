@@ -10,15 +10,15 @@ use either::Either;
 use indexmap_allocator_api::IndexSet;
 use parser::{
     ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
-    Identifier, MetaId, Place, Rule, RulePattern, SimpleStatement, Statement, UnaryOperator,
-    UnaryPlaceOperator, Variable,
+    Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
+    SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
 
 use crate::{
     CodeRange,
     ir::{Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth},
     types::Value,
-    vm::{Consts, SymbolTable},
+    vm::{Consts, Function, SymbolTable},
 };
 
 pub struct CodeGen<'a> {
@@ -31,6 +31,7 @@ pub struct CodeGen<'a> {
     current_metadata: MetaId,
     break_exits: Option<StdVec<Label>>,
     continue_label: Option<Label>,
+    local_args: StdVec<NonLocal>,
 }
 
 #[must_use]
@@ -66,10 +67,14 @@ impl<'a> CodeGen<'a> {
             current_metadata: MetaId::default(),
             break_exits: None,
             continue_label: None,
+            local_args: StdVec::new(),
         }
     }
 
     pub fn lower_ast(&mut self, ast: &Ast) {
+        self.bc.funs_label = Label(self.bc.len());
+        self.lower_functions(&ast.functions);
+
         self.bc.begin_label = self.lower_special_rules(&ast.begin);
         self.bc.begin_file_label = self.lower_special_rules(&ast.begin_file);
         self.bc.end_file_label = self.lower_special_rules(&ast.end_file);
@@ -122,6 +127,45 @@ impl<'a> CodeGen<'a> {
 
             self.free_reg(reg);
         }
+    }
+
+    fn lower_functions(&mut self, functions: &FunctionTable) {
+        for (name, AstFunction { args, body }) in functions {
+            let start = self.bc.len();
+            let (arity, hwm_regs) = self.lower_fun_body(args, body);
+
+            if !matches!(
+                self.bc.code.last(),
+                Some(Instruction::Return { .. } | Instruction::ReturnUnassigned)
+            ) {
+                self.emit(Instruction::ReturnUnassigned);
+            }
+
+            let code = CodeRange(start..self.bc.len());
+
+            self.symbols
+                .register_user_fun(name, Function { arity, hwm_regs, code }, self.arena);
+        }
+    }
+
+    fn lower_fun_body(&mut self, args: &[Identifier], body: &Body) -> (RegWidth, RegWidth) {
+        debug_assert_eq!(self.reg_pointer, 0);
+        debug_assert!(self.local_args.is_empty());
+
+        // intern the arguments
+        self.local_args.extend(
+            args.iter()
+                .map(|arg| self.symbols.register_user_var(arg, self.arena)),
+        );
+
+        let arity = RegWidth::try_from(args.len()).expect("Too many args!");
+        let (state, ()) = RegsState::new(self).scope(self, |this| {
+            this.reg_pointer += RegWidth::try_from(arity).expect("Too many args!");
+            this.lower_body(body);
+        });
+
+        self.local_args.clear();
+        (arity, state.reg_pointer)
     }
 
     pub fn set_value(&mut self, var: &Identifier<'_>, value: &str) {
@@ -427,8 +471,7 @@ impl<'a> CodeGen<'a> {
     fn lower_atom(&mut self, atom: &Atom) -> Operand {
         let dest = self.alloc_reg();
         match self.lower_atom_arg(atom, *dest) {
-            TypedArg(arg, ArgTy::Reg) => {
-                let reg = unsafe { arg.reg };
+            arg if let Some(reg) = arg.as_reg() => {
                 debug_assert_eq!(reg, *dest);
                 Operand::Reg(dest)
             }
@@ -441,7 +484,18 @@ impl<'a> CodeGen<'a> {
 
     fn lower_atom_arg(&mut self, atom: &Atom, dest: Reg) -> TypedArg {
         match atom {
-            Atom::Variable(Variable::User(ident)) => TypedArg::new_us(self, ident),
+            Atom::Variable(Variable::User(ident)) => match TypedArg::new_us(self, ident) {
+                // If the atom is a function local, we get its register instead.
+                // So, we force it to the provided destination.
+                x if let Some(reg) = x.as_reg()
+                    && reg != dest =>
+                {
+                    let TypedArg(arg, ty) = TypedArg::from(reg);
+                    self.emit(Instruction::Copy { dest, arg, ty });
+                    dest.into()
+                }
+                value => value,
+            },
             Atom::Variable(var) => TypedArg::new_is(var),
             &Atom::Integer(n) => TypedArg::new_imm(n),
             &Atom::Number(n) => TypedArg::new_immf(self, n),
@@ -466,12 +520,10 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_atom_into(&mut self, atom: &Atom, dest: Reg) {
-        let arg = self.lower_atom_arg(atom, dest);
-        match arg {
-            TypedArg(arg, ArgTy::Reg) if unsafe { arg.reg } == dest => {}
-            TypedArg(arg, ty) => {
-                self.emit(Instruction::Copy { dest, arg, ty });
-            }
+        let t_arg @ TypedArg(arg, ty) = self.lower_atom_arg(atom, dest);
+
+        if t_arg.as_reg().is_none_or(|reg| reg != dest) {
+            self.emit(Instruction::Copy { dest, arg, ty });
         }
     }
 
@@ -582,6 +634,11 @@ impl<'a> CodeGen<'a> {
                         ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
                             this.load_index(dest, var, index);
                         }
+                        ExprNode::FunctionCall(name, args) => {
+                            let name = this.symbols.get_user_fun(name, self.arena);
+                            let (start, end, ()) = this.gen_call_convention(args, |_| ());
+                            this.emit(Instruction::UserCall { dest, start, end, name });
+                        }
                         _ => todo!(),
                     }
                 });
@@ -625,8 +682,20 @@ impl<'a> CodeGen<'a> {
                 rec.free(self);
             }
             Place::Variable(Variable::User(ident)) => {
-                let var = self.symbols.register_user_var(ident, self.arena);
-                self.emit(Instruction::StoreS { dest, ty_place: ArgTy::UsVal, var, arg, ty });
+                let t_arg @ TypedArg(var, ty_place) = TypedArg::new_us(self, ident);
+
+                if t_arg.as_reg().is_some_and(|reg| reg == dest) {
+                    return; // Value already on destination.
+                }
+
+                let store = match ty_place {
+                    ArgTy::Reg => Instruction::Copy { dest, arg, ty },
+                    ArgTy::UsVal => {
+                        Instruction::StoreS { dest, ty_place, var: unsafe { var.sym }, arg, ty }
+                    }
+                    _ => unreachable!(),
+                };
+                self.emit(store);
             }
             Place::Variable(var) => {
                 let var = var_index(var);
@@ -758,9 +827,9 @@ impl<'a> CodeGen<'a> {
         ret
     }
 
-    fn spill_to_reg(&mut self, TypedArg(arg, ty): TypedArg) -> Either<Reg, LinearReg> {
-        if matches!(ty, ArgTy::Reg) {
-            Either::Left(unsafe { arg.reg })
+    fn spill_to_reg(&mut self, t_arg @ TypedArg(arg, ty): TypedArg) -> Either<Reg, LinearReg> {
+        if let Some(reg) = t_arg.as_reg() {
+            Either::Left(reg)
         } else {
             let dest = self.alloc_reg();
             self.emit(Instruction::Copy { dest: *dest, arg, ty });
@@ -813,12 +882,21 @@ impl<'a> CodeGen<'a> {
         self.continue_label = prev;
         ret
     }
+
+    fn get_local_arg(&self, sym: NonLocal) -> Option<Reg> {
+        self.local_args
+            .iter()
+            .enumerate()
+            .find_map(|(i, &nl)| (nl == sym).then_some(Reg(i as RegWidth)))
+    }
 }
 
 #[derive(Debug)]
 pub struct Bytecode<'a> {
     pub code: Vec<'a, Instruction>,
+    pub functions: SymbolTable<'a>,
     pub metadata: StdVec<MetaId>,
+    pub(crate) funs_label: Label,
     pub(crate) begin_label: Label,
     pub(crate) begin_file_label: Label,
     pub(crate) end_file_label: Label,
@@ -836,12 +914,14 @@ impl<'a> Bytecode<'a> {
     fn with_capacity_in(cap: usize, arena: &'a Bump) -> Self {
         Self {
             code: Vec::with_capacity_in(cap, arena),
+            functions: SymbolTable::new_in(arena),
             metadata: StdVec::with_capacity(cap),
             begin_label: Label(0),
             begin_file_label: Label(0),
             end_file_label: Label(0),
             end_label: Label(0),
             rules_label: Label(0),
+            funs_label: Label(0),
         }
     }
 
@@ -871,6 +951,10 @@ impl<'a> Bytecode<'a> {
 
     pub fn rules_code(&self) -> CodeRange {
         CodeRange(self.rules_label.0..self.len())
+    }
+
+    pub fn funs_code(&self) -> CodeRange {
+        CodeRange(self.funs_label.0..self.begin_label.0)
     }
 }
 
@@ -974,7 +1058,11 @@ impl Operand {
 impl TypedArg {
     fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
         let sym = code.symbols.register_user_var(ident, code.arena);
-        Self(Arg { sym }, ArgTy::UsVal)
+        if let Some(reg) = code.get_local_arg(sym) {
+            Self(Arg { reg }, ArgTy::Reg)
+        } else {
+            Self(Arg { sym }, ArgTy::UsVal)
+        }
     }
 
     fn new_is(var: &Variable<'_>) -> Self {
@@ -993,6 +1081,15 @@ impl TypedArg {
     fn new_cnt<'a>(code: &mut CodeGen<'a>, val: Value<'a>) -> Self {
         let sym = code.register_const(val);
         Self(Arg { sym }, ArgTy::Cnt)
+    }
+
+    fn as_reg(self) -> Option<Reg> {
+        if matches!(self.1, ArgTy::Reg) {
+            // SAFETY: has been type-checked.
+            Some(unsafe { self.0.reg })
+        } else {
+            None
+        }
     }
 }
 
@@ -1217,7 +1314,7 @@ mod tests {
             let max = *targets.iter().max().expect("jumps");
             // Break must land at/after the last emitted instruction index (past loop-back).
             assert!(
-                targets.iter().any(|&t| t == max),
+                targets.contains(&max),
                 "break should jump to the loop exit:\n{}",
                 cg.bc
             );

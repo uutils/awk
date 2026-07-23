@@ -21,7 +21,7 @@ use parser::{Command, Identifier, Redirection};
 
 use crate::{
     ir::{
-        ArgTy, Instruction, IxWidth, Label, NonLocal, Reg,
+        ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
         lower::{Bytecode, CodeGen},
     },
     types::{ArrayMap, Value},
@@ -34,13 +34,23 @@ pub enum ExecMode {
     Posix,
 }
 
+// TODO struct ReentrantPoint that contains PC, code_end, frames and regs.
 pub struct Interpreter<'a> {
     arena: &'a Bump,
-    program_counter: usize,
+    program_counter: IxWidth,
+    code_end: IxWidth,
     registers: Registers<'a>,
     symbols: SymbolTable<'a>,
     consts: Consts<'a>,
     compat: ExecMode,
+    frames: StdVec<CallFrame>,
+}
+
+pub struct CallFrame {
+    reg_offset: IxWidth,
+    ret_addr: IxWidth,
+    prev_code_end: IxWidth,
+    ret_dest: Reg,
 }
 
 #[derive(Debug)]
@@ -71,8 +81,12 @@ pub enum IoResponse {
 pub struct Registers<'a>(Vec<'a, Value<'a>>);
 
 #[derive(Debug)]
+pub struct RawSymbolTable<'a, T>(IndexMap<Identifier<'a>, T, RandomState, &'a Bump>);
+
+#[derive(Debug)]
 pub struct SymbolTable<'a> {
-    user: IndexMap<Identifier<'a>, Value<'a>, RandomState, &'a Bump>,
+    user: RawSymbolTable<'a, Value<'a>>,
+    functions: RawSymbolTable<'a, Option<Function>>,
     // separate table for cheap invalidation. It's an arena _visibly shrugs_.
     records: HashMap<usize, Value<'a>, RandomState, &'a Bump>,
     ofs: Value<'a>,
@@ -80,6 +94,13 @@ pub struct SymbolTable<'a> {
     /// Default AWK `SUBSEP` (`"\034"`).
     subsep: Value<'a>,
     // etc
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub arity: RegWidth,
+    pub hwm_regs: RegWidth,
+    pub code: CodeRange,
 }
 
 #[derive(Debug)]
@@ -94,18 +115,61 @@ impl<'a> Interpreter<'a> {
         Self {
             arena: code.arena,
             program_counter: 0,
+            code_end: 0,
             registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs]),
             symbols: code.symbols,
             consts: code.consts,
             compat,
+            frames: StdVec::new(),
         }
+    }
+}
+
+impl<'a, T> RawSymbolTable<'a, T> {
+    pub fn new_in(arena: &'a Bump) -> Self {
+        Self(IndexMap::new_in(arena))
+    }
+
+    pub fn register(&mut self, ident: &Identifier, value: T, bump: &'a Bump) -> NonLocal {
+        if let Some(index) = self.0.get_index_of(ident) {
+            NonLocal(index as _)
+        } else {
+            let ident = Identifier {
+                namespace: bump.alloc_str(ident.namespace),
+                literal: bump.alloc_str(ident.literal),
+            };
+            NonLocal(self.0.insert_full(ident, value).0 as _)
+        }
+    }
+
+    pub fn get_index(&self, var: NonLocal) -> Option<&T> {
+        self.0.get_index(var.0 as _).map(|x| x.1)
+    }
+
+    pub fn get_index_mut(&mut self, var: NonLocal) -> Option<&mut T> {
+        self.0.get_index_mut(var.0 as _).map(|x| x.1)
+    }
+
+    pub fn insert(&mut self, ident: Identifier<'a>, value: T) -> Option<T> {
+        self.0.insert(ident, value)
+    }
+
+    pub fn lookup(&mut self, ident: &Identifier) -> Option<(NonLocal, &mut T)> {
+        self.0
+            .get_index_of(ident)
+            .map(|ix| (NonLocal(ix as _), &mut self.0[ix]))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Identifier<'a>, &T)> {
+        self.0.iter()
     }
 }
 
 impl<'a> SymbolTable<'a> {
     pub fn new_in(arena: &'a Bump) -> Self {
         Self {
-            user: IndexMap::new_in(arena),
+            user: RawSymbolTable::new_in(arena),
+            functions: RawSymbolTable::new_in(arena),
             records: HashMap::with_hasher_in(RandomState::new(), arena),
             ofs: Value::String(b" ".into()),
             rfs: Value::String(b"\n".into()),
@@ -114,16 +178,16 @@ impl<'a> SymbolTable<'a> {
     }
 
     fn lookup_user_scalar(&mut self, var: NonLocal) -> &Value<'a> {
-        let v = self.user.get_index_mut(var.0 as _).unwrap().1;
+        let v = self.user.get_index_mut(var).unwrap();
         v.scalar_context()
     }
 
     fn write_user_val(&mut self, var: NonLocal, value: Value<'a>) {
-        *self.user.get_index_mut(var.0 as _).unwrap().1 = value;
+        *self.user.get_index_mut(var).unwrap() = value;
     }
 
     fn user_array(&mut self, var: NonLocal) -> Rc<RefCell<ArrayMap<'a>>> {
-        let v = self.user.get_index_mut(var.0 as _).unwrap().1;
+        let v = self.user.get_index_mut(var).unwrap();
         v.array_context();
         match v {
             Value::Array(arr) => Rc::clone(arr),
@@ -144,15 +208,7 @@ impl<'a> SymbolTable<'a> {
     }
 
     pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> NonLocal {
-        if let Some(index) = self.user.get_index_of(var) {
-            NonLocal(index as _)
-        } else {
-            let ident = Identifier {
-                namespace: bump.alloc_str(var.namespace),
-                literal: bump.alloc_str(var.literal),
-            };
-            NonLocal(self.user.insert_full(ident, Value::Untyped).0 as _)
-        }
+        self.user.register(var, Value::Untyped, bump)
     }
 
     pub fn register_user_var_with(&mut self, var: &Identifier, val: &str, bump: &'a Bump) {
@@ -171,6 +227,24 @@ impl<'a> SymbolTable<'a> {
         );
     }
 
+    pub fn register_user_fun(
+        &mut self,
+        name: &Identifier,
+        fun: Function,
+        bump: &'a Bump,
+    ) -> NonLocal {
+        if let Some((nl, f)) = self.functions.lookup(name) {
+            *f = Some(fun);
+            nl
+        } else {
+            self.functions.register(name, Some(fun), bump)
+        }
+    }
+
+    pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> NonLocal {
+        self.functions.register(name, None, bump)
+    }
+
     pub fn record(&self, value: Value<'a>) -> &Value<'a> {
         self.records
             .get(&(value.to_num() as usize))
@@ -184,27 +258,29 @@ impl<'a> Consts<'a> {
     }
 }
 
-impl Interpreter<'_> {
+impl<'a> Interpreter<'a> {
     pub fn run_code(&mut self, bytecode: &Bytecode, range: CodeRange) -> io::Result<Signal> {
         self.program_counter = range.0.start as _;
-        self.run_chunk(&bytecode.code, range.0.end)
+        self.code_end = range.0.end as _;
+
+        self.run_chunk(&bytecode.code)
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn run_chunk(&mut self, bytecode: &[Instruction], end: IxWidth) -> io::Result<Signal> {
+    fn run_chunk(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
         macro_rules! rx {
             ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
                 rx!($self, $src: $ty);
-                $self.registers.write($dest, $e);
+                $self.registers.write($dest, $self.reg_offset(), $e);
             }};
             ($self:expr, $dest:expr, $lhs:ident: $tyl:ident, $rhs:ident: $tyr:ident, $e:expr) => {{
                 rx!($self, $lhs: $tyl, $rhs: $tyr);
-                $self.registers.write($dest, $e);
+                $self.registers.write($dest, $self.reg_offset(), $e);
             }};
             ($self:expr, $($src:ident: $ty:ident),+) => {
                 use $crate::ir::ArgTy;
                 $(let $src = match $ty {
-                    ArgTy::Reg => $self.registers.get(unsafe { $src.reg }),
+                    ArgTy::Reg => $self.registers.get(unsafe { $src.reg }, $self.reg_offset()),
                     ArgTy::Rec => todo!(),
                     ArgTy::Imm => &Value::Int(unsafe { $src.imm } as _),
                     ArgTy::Cnt => &$self.consts.0.get_index(unsafe { $src.sym.0 } as _).unwrap().clone(),
@@ -219,8 +295,8 @@ impl Interpreter<'_> {
                 $self.registers.write($dest, $e);
             }};
         }
-        while let Some(&instr) = bytecode.get(self.program_counter)
-            && self.program_counter < end as _
+        while let Some(&instr) = bytecode.get(self.program_counter as usize)
+            && self.program_counter < self.code_end
         {
             match instr {
                 Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
@@ -258,7 +334,8 @@ impl Interpreter<'_> {
                         Value::Regex(pat) => lhs.matches_regex(pat),
                         _ => false,
                     };
-                    self.registers.write(dest, Value::b2f(matched));
+                    self.registers
+                        .write(dest, self.reg_offset(), Value::b2f(matched));
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
                     rx!(self, lhs: tyl, rhs: tyr);
@@ -266,7 +343,8 @@ impl Interpreter<'_> {
                         Value::Regex(pat) => lhs.matches_regex(pat),
                         _ => false,
                     };
-                    self.registers.write(dest, Value::b2f(!matched));
+                    self.registers
+                        .write(dest, self.reg_offset(), Value::b2f(!matched));
                 }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
                     rx!(self, dest, lhs: tyl, rhs: tyr, lhs + rhs);
@@ -292,7 +370,8 @@ impl Interpreter<'_> {
                         StdVec::with_capacity(lhs.string_size_hint() + rhs.string_size_hint());
                     lhs.write_string(&mut buf);
                     rhs.write_string(&mut buf);
-                    self.registers.write(dest, Value::String(buf.into()));
+                    self.registers
+                        .write(dest, self.reg_offset(), Value::String(buf.into()));
                 }
                 Instruction::LoadA { dest, ty_place, start, end, var } => {
                     let key = self.make_array_key(start, end);
@@ -301,7 +380,7 @@ impl Interpreter<'_> {
                         ArgTy::IaVal => todo!("intrinsic array load"),
                         _ => unreachable!(),
                     };
-                    self.registers.write(dest, value);
+                    self.registers.write(dest, self.reg_offset(), value);
                 }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
                     rx!(self, arg: ty);
@@ -310,14 +389,14 @@ impl Interpreter<'_> {
                         ArgTy::IsVal => todo!(),
                         _ => unreachable!(),
                     }
-                    self.registers.write(dest, arg.clone());
+                    self.registers.write(dest, self.reg_offset(), arg.clone());
                 }
                 Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
                     todo!()
                 }
                 Instruction::StoreA { dest, ty_place, start, end, var, arg } => {
                     let key = self.make_array_key(start, end);
-                    let value = self.registers.get(arg).clone();
+                    let value = self.registers.get(arg, self.reg_offset()).clone();
                     match ty_place {
                         ArgTy::UaVal => {
                             self.symbols.store_user_array_elem(var, key, value.clone());
@@ -325,39 +404,83 @@ impl Interpreter<'_> {
                         ArgTy::IaVal => todo!("intrinsic array store"),
                         _ => unreachable!(),
                     }
-                    self.registers.write(dest, value);
+                    self.registers.write(dest, self.reg_offset(), value);
                 }
                 Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
                 Instruction::OutputCall { start, end, cmd, redir } => {
                     return Ok(Signal::Suspend(self.print_req(start, end, cmd, redir)));
                 }
-                Instruction::UserCall { dest: _, start: _, end: _, name: _ } => todo!(),
+                Instruction::UserCall { dest, start, end, name } => {
+                    let reg_offset = start.0 as IxWidth + self.reg_offset();
+                    let Some(&Some(Function { arity, hwm_regs, ref code })) =
+                        self.symbols.functions.get_index(name)
+                    else {
+                        todo!()
+                    };
+
+                    self.registers.reserve(reg_offset + hwm_regs as IxWidth);
+                    for reg in (end.0 - start.0)..arity {
+                        self.registers.write(Reg(reg), reg_offset, Value::Untyped);
+                    }
+
+                    // TODO: add a recursion depth check.
+                    self.frames.push(CallFrame {
+                        reg_offset,
+                        ret_addr: self.program_counter + 1,
+                        prev_code_end: self.code_end,
+                        ret_dest: dest,
+                    });
+                    self.code_end = code.0.end;
+                    self.program_counter = code.0.start;
+                    continue;
+                }
                 Instruction::IndirectCall { dest: _, start: _, end: _, name: _, ty: _ } => todo!(),
                 Instruction::Jump { to: Label(label) } => {
                     self.program_counter = label as _;
                     continue;
                 }
                 Instruction::Branch { then_label, else_label, condition } => {
-                    if self.registers.get(condition).to_bool() {
+                    if self.registers.get(condition, self.reg_offset()).to_bool() {
                         self.program_counter = then_label.0 as _;
                     } else {
                         self.program_counter = else_label.0 as _;
                     }
                     continue;
                 }
-                // TODO resolve return/exit args.
                 Instruction::Exit { arg, ty } => {
                     rx!(self, arg: ty);
                     return Ok(Signal::Terminal(CtrlSig::Exit(arg.to_int() as i32)));
                 }
-                Instruction::Return { arg: _, ty: _ } => todo!(),
-                Instruction::ReturnUnassigned => todo!(),
+                Instruction::Return { arg, ty } => {
+                    rx!(self, arg: ty);
+                    self.ret(arg.clone());
+                    continue;
+                }
+                Instruction::ReturnUnassigned => {
+                    self.ret(Value::Unassigned);
+                    continue;
+                }
                 Instruction::Next => return Ok(Signal::Terminal(CtrlSig::Next)),
                 Instruction::NextFile => return Ok(Signal::Terminal(CtrlSig::NextFile)),
             }
             self.program_counter += 1;
         }
         Ok(Signal::Terminal(CtrlSig::End))
+    }
+
+    fn ret(&mut self, val: Value<'a>) {
+        let Some(CallFrame { reg_offset: _, ret_addr, prev_code_end, ret_dest }) =
+            self.frames.pop()
+        else {
+            unreachable!()
+        };
+        self.registers.write(ret_dest, self.reg_offset(), val);
+        self.program_counter = ret_addr;
+        self.code_end = prev_code_end;
+    }
+
+    fn reg_offset(&self) -> IxWidth {
+        self.frames.last().map_or(0, |frame| frame.reg_offset)
     }
 
     /// Resumes execution from a suspend/yield point. Receives the request
@@ -369,12 +492,11 @@ impl Interpreter<'_> {
     pub fn resume(
         &mut self,
         bytecode: &Bytecode,
-        range: CodeRange,
         _req: IoRequest,
         _res: io::Result<IoResponse>,
     ) -> io::Result<Signal> {
         self.program_counter += 1;
-        self.run_chunk(&bytecode.code, range.0.end)
+        self.run_chunk(&bytecode.code)
     }
 
     fn print_req(
@@ -387,7 +509,7 @@ impl Interpreter<'_> {
         let Command::Print = fun else { todo!() };
         let None = redir else { todo!() };
         let mut buf = StdVec::with_capacity(64);
-        let range = self.registers.get_range(start..end);
+        let range = self.registers.get_range(start..end, self.reg_offset());
 
         if range.is_empty() {
             let record = self.symbols.record(Value::Float(0.));
@@ -407,8 +529,8 @@ impl Interpreter<'_> {
     }
 
     /// Join index register values with `SUBSEP` into an array key (gawk-compatible).
-    fn make_array_key(&self, start: Reg, end: Reg) -> String {
-        let range = self.registers.get_range(start..end);
+    fn make_array_key(&mut self, start: Reg, end: Reg) -> String {
+        let range = self.registers.get_range(start..end, self.reg_offset());
         let mut buf = StdVec::new();
         for (i, value) in range.iter().enumerate() {
             if i > 0 {
@@ -421,21 +543,34 @@ impl Interpreter<'_> {
 }
 
 impl<'a> Registers<'a> {
-    fn replace(&mut self, src: Reg, f: impl FnOnce(Value<'a>) -> Value<'a>) {
-        let val = replace(self.get_mut(src), Value::Untyped);
-        self.write(src, f(val));
+    fn replace(&mut self, src: Reg, offset: IxWidth, f: impl FnOnce(Value<'a>) -> Value<'a>) {
+        let val = replace(self.get_mut(src, offset), Value::Untyped);
+        self.write(src, offset, f(val));
     }
-    fn get(&self, src: Reg) -> &Value<'a> {
-        &self.0[src.0 as usize]
+    fn reserve(&mut self, len: IxWidth) {
+        let len = len as usize;
+        if self.0.len() < len {
+            self.0.resize(len, Value::Untyped);
+        }
     }
-    fn get_mut(&mut self, src: Reg) -> &mut Value<'a> {
-        &mut self.0[src.0 as usize]
+    fn index_of(reg: Reg, offset: IxWidth) -> usize {
+        reg.0 as usize + offset as usize
     }
-    fn write(&mut self, dest: Reg, src: Value<'a>) {
-        self.0[dest.0 as usize] = src;
+    fn get(&self, src: Reg, offset: IxWidth) -> &Value<'a> {
+        let ix = Self::index_of(src, offset);
+        &self.0[ix]
     }
-    fn get_range(&self, regs: Range<Reg>) -> &[Value<'a>] {
-        &self.0[regs.start.0 as usize..regs.end.0 as _]
+    fn get_mut(&mut self, src: Reg, offset: IxWidth) -> &mut Value<'a> {
+        let ix = Self::index_of(src, offset);
+        &mut self.0[ix]
+    }
+    fn write(&mut self, dest: Reg, offset: IxWidth, src: Value<'a>) {
+        self.0[dest.0 as usize + offset as usize] = src;
+    }
+    fn get_range(&mut self, regs: Range<Reg>, offset: IxWidth) -> &[Value<'a>] {
+        let start = Self::index_of(regs.start, offset);
+        let end = Self::index_of(regs.end, offset);
+        &self.0[start..end]
     }
 }
 

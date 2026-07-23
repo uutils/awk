@@ -41,7 +41,7 @@ impl<'a> AwkRt<'a> {
                 Signal::Terminal(t) => return Ok(t),
             };
             let res = self.perform_io(&req);
-            sig = self.intrp.resume(&self.bc, code.clone(), req, res)?;
+            sig = self.intrp.resume(&self.bc, req, res)?;
         }
     }
 
