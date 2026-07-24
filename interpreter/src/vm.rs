@@ -311,6 +311,36 @@ impl<'a> Interpreter<'a> {
                 Instruction::Negative { dest, arg, ty } => {
                     rx!(self, dest, arg: ty, Value::Float(-arg.to_num()));
                 }
+                Instruction::IncrementPost { dest, arg, ty }
+                | Instruction::IncrementPre { dest, arg, ty }
+                | Instruction::DecrementPost { dest, arg, ty }
+                | Instruction::DecrementPre { dest, arg, ty } => {
+                    let raw_arg = arg;
+                    let rhs = &Value::Int(match instr {
+                        Instruction::IncrementPost { .. } | Instruction::IncrementPre { .. } => 1,
+                        _ => -1,
+                    });
+                    let is_post = matches!(
+                        instr,
+                        Instruction::IncrementPost { .. } | Instruction::DecrementPost { .. }
+                    );
+
+                    rx!(self, arg: ty);
+                    let added = arg + rhs;
+                    let res = arg + if is_post { &Value::Int(0) } else { rhs };
+                    self.registers.write(dest, self.reg_offset(), res);
+
+                    // TODO: refactor generic writes into a helper
+                    match ty {
+                        ArgTy::Reg => {
+                            self.registers
+                                .write(unsafe { raw_arg.reg }, self.reg_offset(), added);
+                        }
+                        ArgTy::UsVal => self.symbols.write_user_val(unsafe { raw_arg.sym }, added),
+                        ArgTy::IsVal => todo!(),
+                        _ => unreachable!(),
+                    }
+                }
                 Instruction::Copy { dest, arg, ty } => rx!(self, dest, arg: ty, arg.clone()),
                 Instruction::Eq { dest, lhs, rhs, tyl, tyr } => {
                     rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs == rhs));

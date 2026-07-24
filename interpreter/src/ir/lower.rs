@@ -586,6 +586,28 @@ impl<'a> CodeGen<'a> {
                             this.free_reg(lhs_reg);
                             val.free(this);
                         }
+                        // Use optimized path for variables and records. Cannot
+                        // be used for arrays because the stores aren't trivial.
+                        ExprNode::UnaryPlaceOperation(op, place)
+                            if matches!(place, Place::Record(_) | Place::Variable(_)) =>
+                        {
+                            let TypedArg(arg, ty) = this.load_place(dest, place);
+                            match op {
+                                UnaryPlaceOperator::IncrementL => {
+                                    this.emit(Instruction::IncrementPre { dest, arg, ty });
+                                }
+                                UnaryPlaceOperator::IncrementR => {
+                                    this.emit(Instruction::IncrementPost { dest, arg, ty });
+                                }
+                                UnaryPlaceOperator::DecrementL => {
+                                    this.emit(Instruction::DecrementPre { dest, arg, ty });
+                                }
+                                UnaryPlaceOperator::DecrementR => {
+                                    this.emit(Instruction::DecrementPost { dest, arg, ty });
+                                }
+                            }
+                        }
+                        // Unoptimized path for values in arrays.
                         ExprNode::UnaryPlaceOperation(op, place) => {
                             // Note: val may alias with dest.
                             let lhs = this.load_place(dest, place);

@@ -41,6 +41,10 @@ pub enum Instruction {
     Negation { dest: Reg, arg: Arg, ty: ArgTy },
     ToInt { dest: Reg, arg: Arg, ty: ArgTy },
     Negative { dest: Reg, arg: Arg, ty: ArgTy },
+    IncrementPost { dest: Reg, arg: Arg, ty: ArgTy },
+    DecrementPost { dest: Reg, arg: Arg, ty: ArgTy },
+    IncrementPre { dest: Reg, arg: Arg, ty: ArgTy },
+    DecrementPre { dest: Reg, arg: Arg, ty: ArgTy },
     Copy { dest: Reg, arg: Arg, ty: ArgTy },
 
     // Binary operations
@@ -232,6 +236,13 @@ impl Display for Instruction {
             Self::LoadA { dest, ty_place, start, end, var } => {
                 write!(f, "{dest} <- {op} {ty_place}({var}), {start}..{end})")
             }
+            Self::IncrementPost { dest, arg, ty }
+            | Self::IncrementPre { dest, arg, ty }
+            | Self::DecrementPost { dest, arg, ty }
+            | Self::DecrementPre { dest, arg, ty } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, arg, ty, " ")
+            }
             Self::Branch { condition, then_label, else_label } => {
                 write!(f, "{op} {condition}, {then_label}, {else_label}")
             }
@@ -274,6 +285,10 @@ impl Instruction {
             Self::ToInt { .. } => "int",
             Self::Negative { .. } => "neg",
             Self::Concat { .. } => "cat",
+            Self::IncrementPost { .. } => "incpst",
+            Self::IncrementPre { .. } => "incpre",
+            Self::DecrementPost { .. } => "decpst",
+            Self::DecrementPre { .. } => "decpre",
             Self::Eq { .. } => "eq",
             Self::NEq { .. } => "neq",
             Self::Gt { .. } => "gt",
