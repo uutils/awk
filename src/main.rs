@@ -48,7 +48,7 @@ fn uu_main() -> Result<()> {
         let ast_arena = Bump::with_capacity(4000);
         let code = args.code.as_ref().unwrap(); // TODO: handle other forms of code input.
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
-        let ast = match parser.parse(None, code.as_encoded_bytes()) {
+        let ast = match parser.parse(FileCache(None), code.as_encoded_bytes()) {
             Ok(ast) => ast,
             Err((report, source)) => {
                 report.eprint((FileCache(None), source)).unwrap();

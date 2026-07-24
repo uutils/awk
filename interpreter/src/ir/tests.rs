@@ -1,12 +1,14 @@
 use bumpalo::Bump;
-use parser::Parser;
+use parser::{FileCache, Parser};
 
 use super::{lower::CodeGen, *};
 
 fn with_lower(source: &str, f: impl FnOnce(&CodeGen<'_>)) {
     let arena = Bump::new();
     let mut parser = Parser::new(&arena, false);
-    let ast = parser.parse(None, source.as_bytes()).expect("parse");
+    let ast = parser
+        .parse(FileCache(None), source.as_bytes())
+        .expect("parse");
     let mut cg = CodeGen::new(&arena);
     cg.lower_ast(ast);
     f(&cg);

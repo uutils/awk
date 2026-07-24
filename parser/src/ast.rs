@@ -3,7 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{fmt::Debug, path::PathBuf, rc::Rc, vec::Vec as StdVec};
+use std::{fmt::Debug, vec::Vec as StdVec};
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec};
@@ -12,7 +12,7 @@ use either::Either;
 use hashbrown::HashMap;
 use lexer::{Slice, Span, Token};
 
-use crate::{Parser, ParsingError, Result, lex::TokenExt};
+use crate::{FileCache, Parser, ParsingError, Result, lex::TokenExt};
 
 #[derive(Debug)]
 pub struct Ast<'a> {
@@ -25,7 +25,7 @@ pub struct Ast<'a> {
     pub concurrent: Vec<'a, Rule<'a>>,
     pub functions: FunctionTable<'a>,
     pub ns_metadata: MetadataStore<&'a str, usize>,
-    pub loc_metadata: MetadataStore<(Span, Option<Rc<PathBuf>>)>,
+    pub loc_metadata: MetadataStore<(Span, FileCache)>,
 }
 
 pub type FunctionTable<'a> = HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>;

@@ -12,7 +12,7 @@ mod sexpr;
 #[cfg(test)]
 mod tests;
 
-use std::{mem::replace, path::PathBuf, rc::Rc};
+use std::mem::replace;
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
@@ -38,7 +38,7 @@ pub struct Parser<'a> {
     #[debug(ignore)]
     preprocessor: Preprocessor,
     #[debug(ignore)]
-    file: Option<Rc<PathBuf>>,
+    file: FileCache,
     namespace: &'a str,
     concurrent: bool,
     // Disables file include materialization ands enables metadata recording.
@@ -63,7 +63,7 @@ impl<'a> Parser<'a> {
             ast: Ast::new(arena),
             arena,
             preprocessor: Preprocessor {},
-            file: None,
+            file: FileCache(None),
             namespace: "awk",
             concurrent: false,
             dry,
@@ -73,11 +73,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(
-        &mut self,
-        file: Option<Rc<PathBuf>>,
-        source: &'a [u8],
-    ) -> Result<&Ast<'a>, AriadneErr<'a>> {
+    pub fn parse(&mut self, file: FileCache, source: &'a [u8]) -> Result<&Ast<'a>, AriadneErr<'a>> {
         let source = self.arena.alloc_slice_copy(source);
         self.file.clone_from(&file);
         let mut lex = Lexer::new(source, self.arena);
