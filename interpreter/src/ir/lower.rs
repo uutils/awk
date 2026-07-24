@@ -43,8 +43,8 @@ struct TypedArg(Arg, ArgTy);
 
 #[must_use]
 enum Operand {
-    Imm(TypedArg),
-    Reg(LinearReg),
+    Imm(TypedArg),  // carries data inline
+    Reg(LinearReg), // needs to be freed
 }
 
 impl<'a> CodeGen<'a> {
@@ -471,8 +471,13 @@ impl<'a> CodeGen<'a> {
         let dest = self.alloc_reg();
         match self.lower_atom_arg(atom, *dest) {
             arg if let Some(reg) = arg.as_reg() => {
-                debug_assert_eq!(reg, *dest);
-                Operand::Reg(dest)
+                if reg == *dest {
+                    Operand::Reg(dest)
+                } else {
+                    // If the atom is a function local, we get its register instead.
+                    self.free_reg(dest);
+                    Operand::Imm(reg.into())
+                }
             }
             imm => {
                 self.free_reg(dest);
@@ -483,18 +488,7 @@ impl<'a> CodeGen<'a> {
 
     fn lower_atom_arg(&mut self, atom: &Atom, dest: Reg) -> TypedArg {
         match atom {
-            Atom::Variable(Variable::User(ident)) => match TypedArg::new_us(self, ident) {
-                // If the atom is a function local, we get its register instead.
-                // So, we force it to the provided destination.
-                x if let Some(reg) = x.as_reg()
-                    && reg != dest =>
-                {
-                    let TypedArg(arg, ty) = TypedArg::from(reg);
-                    self.emit(Instruction::Copy { dest, arg, ty });
-                    dest.into()
-                }
-                value => value,
-            },
+            Atom::Variable(Variable::User(ident)) => TypedArg::new_us(self, ident),
             Atom::Variable(var) => TypedArg::new_is(var),
             &Atom::Integer(n) => TypedArg::new_imm(n),
             &Atom::Number(n) => TypedArg::new_immf(self, n),
