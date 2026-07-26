@@ -158,7 +158,7 @@ impl ParsingError {
                 "This operand must modify the value of a variable. Consider alternatives like `+` or `-`.",
             ),
             Self::MissingTernaryOr(_) => Some(
-                "Ternaries select between to expression based on a condition, like `bool ? foo : bar`.",
+                "Ternaries select between two expressions based on a condition, like `bool ? foo : bar`.",
             ),
             Self::LexingError(LexingError::UnavailableOnPosix(_, _)) => {
                 Some("This item is not available in POSIX-strict or traditional modes.")

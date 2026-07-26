@@ -268,6 +268,14 @@ fn duplicated_parameter_names_the_function() {
 }
 
 #[test]
+fn incomplete_ternary_reports_help_text() {
+    ucmd()
+        .arg("BEGIN { v = 1 ? 2 }")
+        .run()
+        .stderr_contains("Ternaries select between two expressions");
+}
+
+#[test]
 fn array_single_index_get_set() {
     ucmd()
         .arg("BEGIN { a[1] = 42; print a[1] }")
