@@ -276,6 +276,14 @@ fn incomplete_ternary_reports_help_text() {
 }
 
 #[test]
+fn spaced_function_call_reports_the_space() {
+    ucmd()
+        .arg("function scale(n) { return n } BEGIN { scale (3) }")
+        .run()
+        .stderr_contains("must not have a space between the name and the parenthesis");
+}
+
+#[test]
 fn array_single_index_get_set() {
     ucmd()
         .arg("BEGIN { a[1] = 42; print a[1] }")
