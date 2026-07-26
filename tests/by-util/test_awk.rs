@@ -258,6 +258,15 @@ fn chained_comparison_reports_help_text() {
         .stderr_contains("Some operators cannot be chained");
 }
 
+// The report must name the enclosing function, not repeat the argument.
+#[test]
+fn duplicated_parameter_names_the_function() {
+    ucmd()
+        .arg("function shuffle(seed, seed) { } BEGIN { shuffle(1, 2) }")
+        .run()
+        .stderr_contains("Duplicated argument `awk::seed` to function `awk::shuffle`.");
+}
+
 #[test]
 fn array_single_index_get_set() {
     ucmd()
