@@ -249,6 +249,15 @@ fn write_to_dev_full_does_not_panic() {
     );
 }
 
+// Chaining non-associative operators must report the diagnostic's help text.
+#[test]
+fn chained_comparison_reports_help_text() {
+    ucmd()
+        .arg("BEGIN { p < q < r }")
+        .run()
+        .stderr_contains("Some operators cannot be chained");
+}
+
 #[test]
 fn array_single_index_get_set() {
     ucmd()
