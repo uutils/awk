@@ -170,7 +170,7 @@ impl ParsingError {
                 "This is only valid in some contexts, like a right-hand assignment or a function argument.",
             ),
             Self::NonAssociativeOperator(_) => Some(
-                "Some operators can't be chained to avoid logical errors, such as comparison ones.\n\
+                "Some operators cannot be chained because doing so could lead to logical errors. Comparison operators are one example.\n\
                 Example: write `a == b && b == c` instead of `a == b == c`.",
             ),
             Self::ExpectedIdentifier(_, _) => Some(
