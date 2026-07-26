@@ -715,16 +715,16 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
+            let arg = lex.expect_identifier()?.qualify(lex, self.namespace)?;
             // Linear search is fine for the numbers we are working with.
-            if let Some(arg) = args.iter().find(|&a| a == &name) {
+            if args.contains(&arg) {
                 return Err(ParsingError::DuplicatedArgument(
                     lex.span(),
-                    format!("{name:?}"),
                     format!("{arg:?}"),
+                    format!("{name:?}"),
                 ));
             }
-            args.push(name);
+            args.push(arg);
 
             if !lex.consume(&Token::Comma) {
                 lex.expect(
