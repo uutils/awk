@@ -58,7 +58,7 @@ pub enum ParsingError {
     MissingTernaryOr(Span),
     #[error("Missing closing parenthesis in function call.")]
     FunctionCallMissingParenthesis(Span),
-    #[error("Functions calls must have their name yuxtaposed to the parenthesis `(`.")]
+    #[error("Function calls must not have a space between the name and the parenthesis `(`.")]
     FunctionCallSeparatedIdent(Span),
     #[error("Missing closing parenthesis `(` in function call to `{}`.", .1)]
     FunctionCallUnclosed(Span, String),
