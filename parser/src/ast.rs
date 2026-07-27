@@ -12,7 +12,7 @@ use either::Either;
 use hashbrown::HashMap;
 use lexer::{Slice, Span, Token};
 
-use crate::{DiagnosticStore, FileCache, Parser, ParsingError, Result, lex::TokenExt};
+use crate::{AriadneSpan, DiagnosticStore, Parser, ParsingError, Result, lex::TokenExt};
 
 #[derive(Debug)]
 pub struct Ast<'a> {
@@ -25,8 +25,8 @@ pub struct Ast<'a> {
     pub concurrent: Vec<'a, Rule<'a>>,
     pub functions: FunctionTable<'a>,
     pub ns_metadata: MetadataStore<&'a str, usize>,
-    pub loc_metadata: MetadataStore<(Span, FileCache)>,
-    pub diagnostics: DiagnosticStore<'a>,
+    pub loc_metadata: MetadataStore<AriadneSpan>,
+    pub diagnostics: DiagnosticStore,
 }
 
 pub type FunctionTable<'a> = HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>;
@@ -321,12 +321,12 @@ pub enum Command {
 
 impl<'a> Expr<'a> {
     pub fn leaf(from: impl Into<Atom<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
-        let metadata = parser.ast.loc_metadata.store((span, parser.file.clone()));
+        let metadata = parser.ast.loc_metadata.store((parser.file.clone(), span));
         Self::Leaf(from.into(), metadata)
     }
 
     pub fn node(op: impl Into<ExprNode<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
-        let metadata = parser.ast.loc_metadata.store((span, parser.file.clone()));
+        let metadata = parser.ast.loc_metadata.store((parser.file.clone(), span));
         Self::Node(Box::new_in(op.into(), parser.arena), metadata)
     }
 }
@@ -580,10 +580,10 @@ impl<T, E: std::ops::AddAssign + From<u8>> MetadataStore<T, E> {
 }
 
 impl<T, E> std::ops::Index<MetaId> for MetadataStore<T, E> {
-    type Output = (E, T);
+    type Output = T;
 
     fn index(&self, index: MetaId) -> &Self::Output {
-        &self.storage[index.0]
+        &self.storage[index.0].1
     }
 }
 

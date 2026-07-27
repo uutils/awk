@@ -3,7 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{borrow::Cow, error::Error, fmt::Display, path::Path, rc::Rc};
+use std::{error::Error, fmt::Display, path::Path, rc::Rc};
 
 use ariadne::{Color, Label, Report, ReportBuilder, ReportKind, Source};
 use either::Either;
@@ -13,34 +13,33 @@ use thiserror::Error;
 pub type AriadneSpan = (FileCache, Span);
 
 #[derive(Debug, Default)]
-pub struct DiagnosticStore<'a> {
-    storage: Vec<Report<'a, AriadneSpan>>,
-    cache: Cache<'a>,
+pub struct DiagnosticStore {
+    storage: Vec<Report<'static, AriadneSpan>>,
+    cache: Cache,
     unrecoverable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InnerSource<'a>(Rc<Cow<'a, str>>);
+pub struct InnerSource(Rc<str>);
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Cache<'a>(Vec<(FileCache, Source<InnerSource<'a>>)>);
+struct Cache(Vec<(FileCache, Source<InnerSource>)>);
 
 pub trait Diagnostic: Error {
-    fn add_diagnostic<'a>(
-        &self,
-        store: &mut DiagnosticStore<'a>,
-        file: FileCache,
-        source: &'a [u8],
-    ) {
+    fn add_diagnostic(&self, store: &mut DiagnosticStore, file: FileCache, source: &[u8]) {
         let span = self.span().unwrap_or(source.len()..source.len());
+        store.cache(file.clone(), source);
+        self.add_diagnostic_cached(store, (file, span));
+    }
+    fn add_diagnostic_cached(&self, store: &mut DiagnosticStore, (file, span): AriadneSpan) {
         let mut report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
             .with_message(self.message());
 
-        self.add_labels((file.clone(), span), &mut report);
+        self.add_labels((file.clone(), span.clone()), &mut report);
         self.add_help(&mut report);
 
         store.unrecoverable |= self.is_unrecoverable();
-        store.push(report.finish(), file, source);
+        store.push(report.finish());
     }
     fn span(&self) -> Option<Span>;
     fn message(&self) -> &'static str;
@@ -49,24 +48,21 @@ pub trait Diagnostic: Error {
     fn is_unrecoverable(&self) -> bool;
 }
 
-impl<'a> DiagnosticStore<'a> {
+impl DiagnosticStore {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn push(
-        &mut self,
-        report: Report<'a, (FileCache, Span)>,
-        file: FileCache,
-        source: &'a [u8],
-    ) {
+    pub fn cache(&mut self, file: FileCache, source: &[u8]) {
         // Cache UTF-8 validated file source. Given we have one for each opened
-        // file _with_ generated diagnostics, it's much better to use a vector.
+        // file (which are very few), it's much better to use a vector.
         if !self.cache.0.iter().any(|(f, _)| *f == file) {
-            let cached = Source::from(InnerSource(Rc::new(String::from_utf8_lossy(source))));
+            let cached = Source::from(InnerSource(Rc::from(&*String::from_utf8_lossy(source))));
             self.cache.0.push((file, cached));
         }
+    }
 
+    pub fn push(&mut self, report: Report<'static, (FileCache, Span)>) {
         self.storage.push(report);
     }
 
@@ -74,10 +70,15 @@ impl<'a> DiagnosticStore<'a> {
         for diag in &self.storage {
             diag.eprint(&mut self.cache)?;
         }
+        self.storage.clear();
         Ok(())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Report<'a, AriadneSpan>> {
+    pub fn is_unrecoverable(&self) -> bool {
+        self.unrecoverable
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Report<'static, AriadneSpan>> {
         self.storage.iter()
     }
 }
@@ -324,8 +325,8 @@ impl Diagnostic for ParsingError {
     }
 }
 
-impl<'a> ariadne::Cache<FileCache> for Cache<'a> {
-    type Storage = InnerSource<'a>;
+impl ariadne::Cache<FileCache> for Cache {
+    type Storage = InnerSource;
 
     fn fetch(&mut self, id: &FileCache) -> Result<&Source<Self::Storage>, impl std::fmt::Debug> {
         match self.0.iter().find_map(|(f, c)| (f == id).then_some(c)) {
@@ -339,7 +340,7 @@ impl<'a> ariadne::Cache<FileCache> for Cache<'a> {
     }
 }
 
-impl AsRef<str> for InnerSource<'_> {
+impl AsRef<str> for InnerSource {
     fn as_ref(&self) -> &str {
         self.0.as_ref()
     }

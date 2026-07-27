@@ -13,6 +13,7 @@ use std::{
     env::args_os,
     fs,
     io::{BufWriter, Write, stdout},
+    mem::take,
 };
 
 use bumpalo::Bump;
@@ -44,7 +45,7 @@ fn uu_main() -> Result<()> {
     };
 
     let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
-    let (mut cg, metadata) = {
+    let (mut cg, metadata, diagnostics) = {
         let ast_arena = Bump::with_capacity(4000);
         let code = args.code.as_ref().unwrap(); // TODO: handle other forms of code input.
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
@@ -63,7 +64,7 @@ fn uu_main() -> Result<()> {
 
         let mut cg = CodeGen::new(&rt_arena);
         cg.lower_ast(ast);
-        (cg, ast.loc_metadata.clone())
+        (cg, take(&mut ast.loc_metadata), take(&mut ast.diagnostics))
     };
 
     for KeyValue { .. } in args.assign {
@@ -71,22 +72,24 @@ fn uu_main() -> Result<()> {
     }
 
     let bc = cg.bytecode();
-    let intrp = Interpreter::new(ExecMode::Uu, cg);
 
+    // TODO: do away with this and get the actual debugger running.
     #[cfg(not(target_arch = "wasm32"))]
     if args.debug.is_some() {
         use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
 
-        let source = args.code.as_ref().unwrap().as_encoded_bytes();
+        let code = args.code.unwrap();
+        let source = String::from_utf8_lossy(code.as_encoded_bytes());
         let mut out = BufWriter::new(stdout().lock());
         assert_eq!(bc.code.len(), bc.metadata.len());
 
         let bytecode = bc.code.iter().zip(bc.metadata.iter()).map(|(&x, &m)| {
-            let (_, (span, file)) = &metadata[m];
-            let span = String::from_utf8_lossy(&source[span.clone()]);
-            let span = span
+            let (file, span) = &metadata[m];
+            let span = source[span.clone()].to_string();
+
+            let span = source
                 .split_once('\n')
-                .map_or(span.to_string(), |(s, _)| format!("{s}..."));
+                .map_or(span, |(s, _)| format!("{s}..."));
             [format!("{x:?}"), x.to_string(), span, format!("{file:?}")]
         });
 
@@ -99,7 +102,8 @@ fn uu_main() -> Result<()> {
         writeln!(out, "{table}")?;
     }
 
-    AwkRt::new(intrp, bc, &args.read_queue).main_event_loop()?;
+    let intrp = Interpreter::new(ExecMode::Uu, cg, metadata);
+    AwkRt::new(intrp, bc, &args.read_queue, diagnostics).main_event_loop()?;
 
     Ok(())
 }

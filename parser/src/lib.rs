@@ -19,7 +19,8 @@ use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
 use derive_more::Debug;
 use either::Either::{Left, Right};
 use hashbrown::HashMap;
-use lexer::{Span, Token};
+pub use lexer::Span;
+use lexer::Token;
 
 pub use crate::{
     ast::*,
@@ -72,9 +73,10 @@ impl<'a> Parser<'a> {
         &mut self,
         file: FileCache,
         source: &'a [u8],
-    ) -> Result<&mut Ast<'a>, DiagnosticStore<'a>> {
+    ) -> Result<&mut Ast<'a>, DiagnosticStore> {
         let source = self.arena.alloc_slice_copy(source);
         self.file.clone_from(&file);
+        self.ast.diagnostics.cache(self.file.clone(), source);
         let mut lex = Lexer::new(source, self.arena);
         match &self.parse_top(&mut lex, true) {
             Ok(_) => Ok(&mut self.ast),
@@ -868,7 +870,7 @@ impl<'a> Parser<'a> {
     }
 
     fn gen_metadata(&mut self, span: Span) -> MetaId {
-        self.ast.loc_metadata.store((span, self.file.clone()))
+        self.ast.loc_metadata.store((self.file.clone(), span))
     }
 }
 

@@ -19,9 +19,10 @@ use ahash::RandomState;
 use bumpalo::{Bump, collections::Vec};
 use hashbrown::HashMap;
 use indexmap_allocator_api::{IndexMap, IndexSet};
-use parser::{Command, Identifier, Redirection};
+use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection};
 
 use crate::{
+    InterpreterError,
     ir::{
         ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
         lower::{Bytecode, CodeGen},
@@ -46,6 +47,7 @@ pub struct Interpreter<'a> {
     consts: Consts<'a>,
     compat: ExecMode,
     frames: StdVec<CallFrame>,
+    metadata: MetadataStore<AriadneSpan>,
 }
 
 pub struct CallFrame {
@@ -59,6 +61,7 @@ pub struct CallFrame {
 pub enum Signal {
     Suspend(IoRequest),
     Terminal(CtrlSig),
+    Error(InterpreterError),
 }
 
 #[derive(Debug)]
@@ -112,7 +115,7 @@ pub struct Consts<'a>(pub IndexSet<Value<'a>, RandomState, &'a Bump>);
 pub struct CodeRange(pub(crate) Range<IxWidth>);
 
 impl<'a> Interpreter<'a> {
-    pub fn new(compat: ExecMode, code: CodeGen<'a>) -> Self {
+    pub fn new(compat: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
         let n_regs = code.reg_pointer as usize + 1;
         Self {
             arena: code.arena,
@@ -123,6 +126,7 @@ impl<'a> Interpreter<'a> {
             consts: code.consts,
             compat,
             frames: StdVec::new(),
+            metadata,
         }
     }
 }
@@ -262,14 +266,20 @@ impl<'a> Consts<'a> {
 
 impl<'a> Interpreter<'a> {
     pub fn run_code(&mut self, bytecode: &Bytecode, range: CodeRange) -> io::Result<Signal> {
-        self.program_counter = range.0.start as _;
-        self.code_end = range.0.end as _;
+        self.program_counter = range.0.start;
+        self.code_end = range.0.end;
 
-        self.run_chunk(&bytecode.code)
+        match self.run_chunk(&bytecode.code, &bytecode.metadata) {
+            Ok(s) => Ok(s),
+            Err(err) => Ok(Signal::Error(err)),
+        }
     }
 
-    #[allow(clippy::unnecessary_wraps)]
-    fn run_chunk(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
+    fn run_chunk(
+        &mut self,
+        bytecode: &[Instruction],
+        metadata: &[MetaId],
+    ) -> Result<Signal, InterpreterError> {
         macro_rules! rx {
             ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
                 rx!($self, $src: $ty);
@@ -447,7 +457,9 @@ impl<'a> Interpreter<'a> {
                     let Some(&Some(Function { arity, hwm_regs, ref code })) =
                         self.symbols.functions.get_index(name)
                     else {
-                        todo!()
+                        return Err(InterpreterError::UnknownFunction(
+                            self.metadata[metadata[self.program_counter as usize]].clone(),
+                        ));
                     };
 
                     self.registers.reserve(reg_offset + hwm_regs as IxWidth);
@@ -528,7 +540,10 @@ impl<'a> Interpreter<'a> {
         _res: io::Result<IoResponse>,
     ) -> io::Result<Signal> {
         self.program_counter += 1;
-        self.run_chunk(&bytecode.code)
+        match self.run_chunk(&bytecode.code, &bytecode.metadata) {
+            Ok(s) => Ok(s),
+            Err(e) => Ok(Signal::Error(e)),
+        }
     }
 
     fn print_req(

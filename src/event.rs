@@ -11,6 +11,7 @@ use std::{
 };
 
 use interpreter::{Bytecode, CodeRange, CtrlSig, Interpreter, IoRequest, IoResponse, Signal};
+use parser::DiagnosticStore;
 
 use crate::cli::{ArgQueueItem, KeyValue};
 
@@ -20,11 +21,17 @@ pub struct AwkRt<'a> {
     // `Rc<RefCell<_>>` arrays do not force a self-borrow of a local.
     bc: Bytecode<'a>,
     queue: &'a [ArgQueueItem],
+    diagnostics: DiagnosticStore,
 }
 
 impl<'a> AwkRt<'a> {
-    pub fn new(intrp: Interpreter<'a>, bc: Bytecode<'a>, queue: &'a [ArgQueueItem]) -> Self {
-        Self { intrp, bc, queue }
+    pub fn new(
+        intrp: Interpreter<'a>,
+        bc: Bytecode<'a>,
+        queue: &'a [ArgQueueItem],
+        diagnostics: DiagnosticStore,
+    ) -> Self {
+        Self { intrp, bc, queue, diagnostics }
     }
 
     pub fn main_event_loop(&mut self) -> Result<()> {
@@ -39,6 +46,15 @@ impl<'a> AwkRt<'a> {
             let req = match sig {
                 Signal::Suspend(req) => req,
                 Signal::Terminal(t) => return Ok(t),
+                Signal::Error(ref err) => {
+                    err.emit_diagnostic(&mut self.diagnostics);
+                    self.diagnostics.flush()?;
+                    if self.diagnostics.is_unrecoverable() {
+                        self.end_event_loop(1)?;
+                        continue;
+                    }
+                    continue;
+                }
             };
             let res = self.perform_io(&req);
             sig = self.intrp.resume(&self.bc, req, res)?;
