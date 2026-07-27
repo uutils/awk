@@ -24,12 +24,15 @@ pub enum InterpreterError {
     ArityMismatch(AriadneSpan, u8, u8),
     #[error("Maximum recursion/stack depth reached here!")]
     RecursionDepth(AriadneSpan),
+    #[error("Indirect call to an undefined function!")]
+    UnknownIndFunction(AriadneSpan, String),
 }
 
 impl InterpreterError {
     pub fn emit_diagnostic(&self, store: &mut DiagnosticStore) {
         match self {
-            Self::RecursionDepth(span)
+            Self::UnknownIndFunction(span, _)
+            | Self::RecursionDepth(span)
             | Self::ArityMismatch(span, _, _)
             | Self::UnknownFunction(span) => self.add_diagnostic_cached(store, span.clone()),
         }
@@ -42,7 +45,8 @@ impl Diagnostic for InterpreterError {
     }
     fn span(&self) -> Option<Span> {
         match self {
-            Self::RecursionDepth((_, span))
+            Self::UnknownIndFunction((_, span), _)
+            | Self::RecursionDepth((_, span))
             | Self::ArityMismatch((_, span), _, _)
             | Self::UnknownFunction((_, span)) => Some(span.clone()),
         }
@@ -69,6 +73,9 @@ impl Diagnostic for InterpreterError {
                 "The maximum stack depth is 4096. If you find this too limiting, please open an \
                 issue so we can help!\nCurrently, GNU AWK does not provide an user-configurable \
                 limit, but we are considering supporting this."
+            }
+            Self::UnknownIndFunction(_, name) => {
+                &format!("This code tried to call the unknown function `{name}` indirectly.")
             }
         };
         report.set_help(note);

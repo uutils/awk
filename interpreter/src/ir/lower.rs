@@ -654,6 +654,12 @@ impl<'a> CodeGen<'a> {
                             let (start, end, ()) = this.gen_call_convention(args, |_| ());
                             this.emit(Instruction::UserCall { dest, start, end, name });
                         }
+                        ExprNode::IndirectCall(place, args) => {
+                            let (start, end, ()) = this.gen_call_convention(args, |_| ());
+                            let TypedArg(name, ty) =
+                                this.load_place(dest, &Place::Variable(*place));
+                            this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
+                        }
                         _ => todo!(),
                     }
                 });

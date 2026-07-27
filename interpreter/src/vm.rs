@@ -453,44 +453,29 @@ impl<'a> Interpreter<'a> {
                     return Ok(Signal::Suspend(self.print_req(start, end, cmd, redir)));
                 }
                 Instruction::UserCall { dest, start, end, name } => {
-                    let reg_offset = start.0 as IxWidth + self.reg_offset();
-                    let Some(&Some(Function { arity, hwm_regs, ref code })) =
-                        self.symbols.functions.get_index(name)
-                    else {
-                        return Err(InterpreterError::UnknownFunction(self.get_span(metadata)));
-                    };
-                    let call_arity = end.0 - start.0;
-
-                    if arity < call_arity {
-                        return Err(InterpreterError::ArityMismatch(
-                            self.get_span(metadata),
-                            arity,
-                            call_arity,
-                        ));
-                    }
-
-                    self.registers.reserve(reg_offset + hwm_regs as IxWidth);
-                    for reg in call_arity..arity {
-                        // Fill in remaining arguments / local variables.
-                        self.registers.write(Reg(reg), reg_offset, Value::Untyped);
-                    }
-
-                    // Avoid infinite recursion
-                    if self.frames.len() > 4096 {
-                        return Err(InterpreterError::RecursionDepth(self.get_span(metadata)));
-                    }
-
-                    self.frames.push(CallFrame {
-                        reg_offset,
-                        ret_addr: self.program_counter + 1,
-                        prev_code_end: self.code_end,
-                        ret_dest: dest,
-                    });
-                    self.code_end = code.0.end;
-                    self.program_counter = code.0.start;
+                    self.user_call(dest, start, end, name, metadata)?;
                     continue;
                 }
-                Instruction::IndirectCall { dest: _, start: _, end: _, name: _, ty: _ } => todo!(),
+                Instruction::IndirectCall { dest, start, end, name, ty } => {
+                    rx!(self, name: ty);
+                    let name = name.to_string();
+                    // TODO: Proper parsing, catch indirect calls to built-ins,
+                    //       native funs and namespace tracking in metadata.
+                    let (namespace, literal) = name.split_once("::").unwrap_or(("", &name));
+                    let Some((name, _)) = self
+                        .symbols
+                        .functions
+                        .lookup(&Identifier { namespace, literal })
+                    else {
+                        return Err(InterpreterError::UnknownIndFunction(
+                            self.get_span(metadata),
+                            name,
+                        ));
+                    };
+
+                    self.user_call(dest, start, end, name, metadata)?;
+                    continue;
+                }
                 Instruction::Jump { to: Label(label) } => {
                     self.program_counter = label as _;
                     continue;
@@ -598,6 +583,52 @@ impl<'a> Interpreter<'a> {
             value.write_string(&mut buf);
         }
         String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn user_call(
+        &mut self,
+        dest: Reg,
+        start: Reg,
+        end: Reg,
+        name: NonLocal,
+        metadata: &[MetaId],
+    ) -> Result<(), InterpreterError> {
+        let reg_offset = start.0 as IxWidth + self.reg_offset();
+        let Some(&Some(Function { arity, hwm_regs, ref code })) =
+            self.symbols.functions.get_index(name)
+        else {
+            return Err(InterpreterError::UnknownFunction(self.get_span(metadata)));
+        };
+        let call_arity = end.0 - start.0;
+
+        if arity < call_arity {
+            return Err(InterpreterError::ArityMismatch(
+                self.get_span(metadata),
+                arity,
+                call_arity,
+            ));
+        }
+
+        self.registers.reserve(reg_offset + hwm_regs as IxWidth);
+        for reg in call_arity..arity {
+            // Fill in remaining arguments / local variables.
+            self.registers.write(Reg(reg), reg_offset, Value::Untyped);
+        }
+
+        // Avoid infinite recursion
+        if self.frames.len() > 4096 {
+            return Err(InterpreterError::RecursionDepth(self.get_span(metadata)));
+        }
+
+        self.frames.push(CallFrame {
+            reg_offset,
+            ret_addr: self.program_counter + 1,
+            prev_code_end: self.code_end,
+            ret_dest: dest,
+        });
+        self.code_end = code.0.end;
+        self.program_counter = code.0.start;
+        Ok(())
     }
 
     fn get_span(&self, metadata: &[MetaId]) -> AriadneSpan {
