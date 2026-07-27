@@ -20,12 +20,18 @@ pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, IoRequest, IoResponse, S
 pub enum InterpreterError {
     #[error("Call to an undefined function!")]
     UnknownFunction(AriadneSpan),
+    #[error("Call with too many arguments!")]
+    ArityMismatch(AriadneSpan, u8, u8),
+    #[error("Maximum recursion/stack depth reached here!")]
+    RecursionDepth(AriadneSpan),
 }
 
 impl InterpreterError {
     pub fn emit_diagnostic(&self, store: &mut DiagnosticStore) {
         match self {
-            Self::UnknownFunction(span) => self.add_diagnostic_cached(store, span.clone()),
+            Self::RecursionDepth(span)
+            | Self::ArityMismatch(span, _, _)
+            | Self::UnknownFunction(span) => self.add_diagnostic_cached(store, span.clone()),
         }
     }
 }
@@ -36,7 +42,9 @@ impl Diagnostic for InterpreterError {
     }
     fn span(&self) -> Option<Span> {
         match self {
-            Self::UnknownFunction((_, span)) => Some(span.clone()),
+            Self::RecursionDepth((_, span))
+            | Self::ArityMismatch((_, span), _, _)
+            | Self::UnknownFunction((_, span)) => Some(span.clone()),
         }
     }
     fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {
@@ -53,6 +61,14 @@ impl Diagnostic for InterpreterError {
                 "This code called an undefined function. Although functions are statically \
                 defined,\nthis error is emitted at runtime and may only occur on rarely executed \
                 code paths."
+            }
+            &Self::ArityMismatch(_, expected, given) => &format!(
+                "This function accepts up to {expected} arguments, but {given} were provided."
+            ),
+            Self::RecursionDepth(_) => {
+                "The maximum stack depth is 4096. If you find this too limiting, please open an \
+                issue so we can help!\nCurrently, GNU AWK does not provide an user-configurable \
+                limit, but we are considering supporting this."
             }
         };
         report.set_help(note);

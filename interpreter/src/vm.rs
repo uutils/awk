@@ -457,17 +457,29 @@ impl<'a> Interpreter<'a> {
                     let Some(&Some(Function { arity, hwm_regs, ref code })) =
                         self.symbols.functions.get_index(name)
                     else {
-                        return Err(InterpreterError::UnknownFunction(
-                            self.metadata[metadata[self.program_counter as usize]].clone(),
-                        ));
+                        return Err(InterpreterError::UnknownFunction(self.get_span(metadata)));
                     };
+                    let call_arity = end.0 - start.0;
+
+                    if arity < call_arity {
+                        return Err(InterpreterError::ArityMismatch(
+                            self.get_span(metadata),
+                            arity,
+                            call_arity,
+                        ));
+                    }
 
                     self.registers.reserve(reg_offset + hwm_regs as IxWidth);
-                    for reg in (end.0 - start.0)..arity {
+                    for reg in call_arity..arity {
+                        // Fill in remaining arguments / local variables.
                         self.registers.write(Reg(reg), reg_offset, Value::Untyped);
                     }
 
-                    // TODO: add a recursion depth check.
+                    // Avoid infinite recursion
+                    if self.frames.len() > 4096 {
+                        return Err(InterpreterError::RecursionDepth(self.get_span(metadata)));
+                    }
+
                     self.frames.push(CallFrame {
                         reg_offset,
                         ret_addr: self.program_counter + 1,
@@ -586,6 +598,10 @@ impl<'a> Interpreter<'a> {
             value.write_string(&mut buf);
         }
         String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn get_span(&self, metadata: &[MetaId]) -> AriadneSpan {
+        self.metadata[metadata[self.program_counter as usize]].clone()
     }
 }
 
