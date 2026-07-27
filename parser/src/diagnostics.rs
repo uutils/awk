@@ -3,12 +3,84 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{fmt::Display, path::Path, rc::Rc};
+use std::{borrow::Cow, error::Error, fmt::Display, path::Path, rc::Rc};
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Label, Report, ReportBuilder, ReportKind, Source};
 use either::Either;
 use lexer::{LexingError, Span};
 use thiserror::Error;
+
+pub type AriadneSpan = (FileCache, Span);
+
+#[derive(Debug, Default)]
+pub struct DiagnosticStore<'a> {
+    storage: Vec<Report<'a, AriadneSpan>>,
+    cache: Cache<'a>,
+    unrecoverable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InnerSource<'a>(Rc<Cow<'a, str>>);
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Cache<'a>(Vec<(FileCache, Source<InnerSource<'a>>)>);
+
+pub trait Diagnostic: Error {
+    fn add_diagnostic<'a>(
+        &self,
+        store: &mut DiagnosticStore<'a>,
+        file: FileCache,
+        source: &'a [u8],
+    ) {
+        let span = self.span().unwrap_or(source.len()..source.len());
+        let mut report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
+            .with_message(self.message());
+
+        self.add_labels((file.clone(), span), &mut report);
+        self.add_help(&mut report);
+
+        store.unrecoverable |= self.is_unrecoverable();
+        store.push(report.finish(), file, source);
+    }
+    fn span(&self) -> Option<Span>;
+    fn message(&self) -> &'static str;
+    fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>);
+    fn add_help(&self, report: &mut ReportBuilder<AriadneSpan>);
+    fn is_unrecoverable(&self) -> bool;
+}
+
+impl<'a> DiagnosticStore<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(
+        &mut self,
+        report: Report<'a, (FileCache, Span)>,
+        file: FileCache,
+        source: &'a [u8],
+    ) {
+        // Cache UTF-8 validated file source. Given we have one for each opened
+        // file _with_ generated diagnostics, it's much better to use a vector.
+        if !self.cache.0.iter().any(|(f, _)| *f == file) {
+            let cached = Source::from(InnerSource(Rc::new(String::from_utf8_lossy(source))));
+            self.cache.0.push((file, cached));
+        }
+
+        self.storage.push(report);
+    }
+
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        for diag in &self.storage {
+            diag.eprint(&mut self.cache)?;
+        }
+        Ok(())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Report<'a, AriadneSpan>> {
+        self.storage.iter()
+    }
+}
 
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum ParsingError {
@@ -214,31 +286,63 @@ impl Display for FileCache {
     }
 }
 
-pub fn report_error(error: ParsingError, name: FileCache, source: &[u8]) -> super::AriadneErr<'_> {
-    // TODO: invert the interface, so error types set the diagnostic labels.
-    // TODO: use a shared ariadne instance so we can also emit warnings.
-    let span = error.span().unwrap_or(source.len()..source.len());
-    let source = str::from_utf8(source).unwrap();
-    let mut report = Report::build(ReportKind::Error, (name.clone(), span.clone()))
-        .with_message("Syntax error")
-        .with_label(
-            Label::new((name.clone(), span.clone()))
-                .with_message(format!("{error}"))
+impl Diagnostic for ParsingError {
+    fn span(&self) -> Option<Span> {
+        self.span()
+    }
+
+    fn message(&self) -> &'static str {
+        "Syntax error"
+    }
+
+    fn add_labels(&self, (file, span): AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {
+        report.add_label(
+            Label::new((file.clone(), span))
+                .with_message(self.to_string())
                 .with_color(Color::Red)
                 .with_order(1),
         );
-    if let Some((str, span, order)) = error.secondary() {
-        report.add_label(
-            Label::new((name, span))
-                .with_message(str)
-                .with_color(Color::Yellow)
-                .with_order(order),
-        );
+
+        if let Some((str, span, order)) = self.secondary() {
+            report.add_label(
+                Label::new((file, span))
+                    .with_message(str)
+                    .with_color(Color::Yellow)
+                    .with_order(order),
+            );
+        }
     }
-    if let Some(str) = error.hint() {
-        report.set_help(str);
+
+    fn add_help(&self, report: &mut ReportBuilder<AriadneSpan>) {
+        if let Some(str) = self.hint() {
+            report.set_help(str);
+        }
     }
-    (Box::new(report.finish()), Source::from(source))
+
+    fn is_unrecoverable(&self) -> bool {
+        true
+    }
+}
+
+impl<'a> ariadne::Cache<FileCache> for Cache<'a> {
+    type Storage = InnerSource<'a>;
+
+    fn fetch(&mut self, id: &FileCache) -> Result<&Source<Self::Storage>, impl std::fmt::Debug> {
+        match self.0.iter().find_map(|(f, c)| (f == id).then_some(c)) {
+            Some(x) => Ok(x),
+            None => Err("Internal error while preparing diagnostics!"),
+        }
+    }
+
+    fn display<'b>(&self, id: &'b FileCache) -> Option<impl Display + 'b> {
+        Some(id)
+    }
+}
+
+impl AsRef<str> for InnerSource<'_> {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
 }
 
 impl<T> From<(T, Self)> for ParsingError {

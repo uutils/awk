@@ -12,7 +12,7 @@ use either::Either;
 use hashbrown::HashMap;
 use lexer::{Slice, Span, Token};
 
-use crate::{FileCache, Parser, ParsingError, Result, lex::TokenExt};
+use crate::{DiagnosticStore, FileCache, Parser, ParsingError, Result, lex::TokenExt};
 
 #[derive(Debug)]
 pub struct Ast<'a> {
@@ -26,6 +26,7 @@ pub struct Ast<'a> {
     pub functions: FunctionTable<'a>,
     pub ns_metadata: MetadataStore<&'a str, usize>,
     pub loc_metadata: MetadataStore<(Span, FileCache)>,
+    pub diagnostics: DiagnosticStore<'a>,
 }
 
 pub type FunctionTable<'a> = HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>;

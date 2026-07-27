@@ -21,12 +21,12 @@ use either::Either::{Left, Right};
 use hashbrown::HashMap;
 use lexer::{Span, Token};
 
-pub use crate::{ast::*, diagnostics::FileCache, lex::Lexer};
-use crate::{
-    diagnostics::{ParsingError, report_error},
-    lex::TokenExt,
-    pratt::Pratt,
+pub use crate::{
+    ast::*,
+    diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError},
+    lex::Lexer,
 };
+use crate::{lex::TokenExt, pratt::Pratt};
 
 type Result<T, E = ParsingError> = std::result::Result<T, E>;
 
@@ -51,11 +51,6 @@ pub struct Parser<'a> {
     return_allowed: bool,
 }
 
-type AriadneErr<'a> = (
-    std::boxed::Box<ariadne::Report<'a, (FileCache, Span)>>,
-    ariadne::Source<&'a str>,
-);
-
 impl<'a> Parser<'a> {
     #[tracing::instrument]
     pub fn new(arena: &'a Bump, dry: bool) -> Self {
@@ -73,12 +68,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self, file: FileCache, source: &'a [u8]) -> Result<&Ast<'a>, AriadneErr<'a>> {
+    pub fn parse(
+        &mut self,
+        file: FileCache,
+        source: &'a [u8],
+    ) -> Result<&mut Ast<'a>, DiagnosticStore<'a>> {
         let source = self.arena.alloc_slice_copy(source);
         self.file.clone_from(&file);
         let mut lex = Lexer::new(source, self.arena);
-        let parsed = self.parse_top(&mut lex, true);
-        parsed.map_err(|error| report_error(error, file, source))
+        match &self.parse_top(&mut lex, true) {
+            Ok(_) => Ok(&mut self.ast),
+            Err(error) => {
+                let mut store = DiagnosticStore::new();
+                error.add_diagnostic(&mut store, file, source);
+                Err(store)
+            }
+        }
     }
 
     #[tracing::instrument]
@@ -880,6 +885,7 @@ impl<'a> Ast<'a> {
             functions: HashMap::with_hasher_in(RandomState::new(), arena),
             ns_metadata: MetadataStore::new(),
             loc_metadata: MetadataStore::new(),
+            diagnostics: DiagnosticStore::new(),
         }
     }
 }
