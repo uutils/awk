@@ -74,7 +74,6 @@ impl<'a> Parser<'a> {
         file: FileCache,
         source: &'a [u8],
     ) -> Result<&mut Ast<'a>, DiagnosticStore> {
-        let source = self.arena.alloc_slice_copy(source);
         self.file.clone_from(&file);
         self.ast.diagnostics.cache(self.file.clone(), source);
         let mut lex = Lexer::new(source, self.arena);
