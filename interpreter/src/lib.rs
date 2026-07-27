@@ -50,9 +50,9 @@ impl Diagnostic for InterpreterError {
     fn add_help(&self, report: &mut ReportBuilder<AriadneSpan>) {
         let note = match self {
             Self::UnknownFunction(_) => {
-                "This code called a function that wasn't defined. Note \
-            that, despite functions being statically defined,\nthis is emitted at runtime, \
-            so the error may be seldomly generated if the code path is hard to reach."
+                "This code called an undefined function. Although functions are statically \
+                defined,\nthis error is emitted at runtime and may only occur on rarely executed \
+                code paths."
             }
         };
         report.set_help(note);
