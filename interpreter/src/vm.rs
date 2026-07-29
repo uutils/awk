@@ -286,15 +286,15 @@ impl<'a> Interpreter<'a> {
                 Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
                 Instruction::Negation { dest, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_bool();
-                    self.registers.write(dest, self.reg_offset(), !val);
+                    self.write_reg(dest, !val);
                 }
                 Instruction::ToInt { dest, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_num();
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Negative { dest, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_num();
-                    self.registers.write(dest, self.reg_offset(), -val);
+                    self.write_reg(dest, -val);
                 }
                 Instruction::IncrementPost { dest, arg, ty }
                 | Instruction::IncrementPre { dest, arg, ty }
@@ -315,13 +315,12 @@ impl<'a> Interpreter<'a> {
                         let val = arg.get_val(ty, self, &mut stack_space);
                         (val + rhs, val + if is_post { &Value::Int(0) } else { rhs })
                     };
-                    self.registers.write(dest, self.reg_offset(), res);
+                    self.write_reg(dest, res);
 
                     // TODO: refactor generic writes into a helper
                     match ty {
                         ArgTy::Reg => {
-                            self.registers
-                                .write(unsafe { raw_arg.reg }, self.reg_offset(), added);
+                            self.write_reg(unsafe { raw_arg.reg }, added);
                         }
                         ArgTy::UsVal => self.symbols.write_user_val(unsafe { raw_arg.sym }, added),
                         ArgTy::IsVal => todo!(),
@@ -330,69 +329,69 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::Copy { dest, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Eq { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs == rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::NEq { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs != rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Gt { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs > rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Lt { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs < rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::LtE { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs <= rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::GtE { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs >= rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Matches { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| match rhs {
                         Value::Regex(pat) => lhs.matches_regex(pat),
                         _ => false,
                     });
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| match rhs {
                         Value::Regex(pat) => lhs.matches_regex(pat),
                         _ => false,
                     });
-                    self.registers.write(dest, self.reg_offset(), !val);
+                    self.write_reg(dest, !val);
                 }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs + rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Subtract { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs - rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Multiply { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs * rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Divide { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs / rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Raise { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs ^ rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Modulo { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs % rhs);
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Concat { dest, lhs, rhs, tyl, tyr } => {
                     let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| {
@@ -402,7 +401,7 @@ impl<'a> Interpreter<'a> {
                         rhs.write_string(&mut buf);
                         buf
                     });
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::LoadA { dest, ty_place, start, end, var } => {
                     let key = self.make_array_key(start, end);
@@ -411,7 +410,7 @@ impl<'a> Interpreter<'a> {
                         ArgTy::IaVal => todo!("intrinsic array load"),
                         _ => unreachable!(),
                     };
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
@@ -420,14 +419,14 @@ impl<'a> Interpreter<'a> {
                         ArgTy::IsVal => todo!(),
                         _ => unreachable!(),
                     }
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
                     todo!()
                 }
                 Instruction::StoreA { dest, ty_place, start, end, var, arg } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.registers.get(arg, self.reg_offset()).clone();
+                    let val = self.read_reg(arg).clone();
                     match ty_place {
                         ArgTy::UaVal => {
                             self.symbols.store_user_array_elem(var, key, val.clone());
@@ -435,7 +434,7 @@ impl<'a> Interpreter<'a> {
                         ArgTy::IaVal => todo!("intrinsic array store"),
                         _ => unreachable!(),
                     }
-                    self.registers.write(dest, self.reg_offset(), val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
                 Instruction::OutputCall { start, end, cmd, redir } => {
@@ -471,7 +470,7 @@ impl<'a> Interpreter<'a> {
                     continue;
                 }
                 Instruction::Branch { then_label, else_label, condition } => {
-                    if self.registers.get(condition, self.reg_offset()).to_bool() {
+                    if self.read_reg(condition).to_bool() {
                         self.program_counter = then_label.0 as _;
                     } else {
                         self.program_counter = else_label.0 as _;
@@ -499,13 +498,23 @@ impl<'a> Interpreter<'a> {
         Ok(Signal::Terminal(CtrlSig::End))
     }
 
+    /// Convenience wrapper to write a value at the current reg slice.
+    fn write_reg(&mut self, dest: Reg, val: impl Into<Value<'a>>) {
+        self.registers.write(dest, self.reg_offset(), val);
+    }
+
+    /// Convenience wrapper to read a value from the current reg slice.
+    fn read_reg(&self, src: Reg) -> &Value<'a> {
+        self.registers.get(src, self.reg_offset())
+    }
+
     fn ret(&mut self, val: Value<'a>) {
         let Some(CallFrame { reg_offset: _, ret_addr, prev_code_end, ret_dest }) =
             self.frames.pop()
         else {
             unreachable!()
         };
-        self.registers.write(ret_dest, self.reg_offset(), val);
+        self.write_reg(ret_dest, val);
         self.program_counter = ret_addr;
         self.code_end = prev_code_end;
     }
@@ -740,7 +749,7 @@ impl Arg {
         stack_space: &'v MaybeUninit<Value<'a>>,
     ) -> &'v Value<'a> {
         match ty {
-            ArgTy::Reg => intrp.registers.get(unsafe { self.reg }, intrp.reg_offset()),
+            ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Rec => todo!(),
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
             ArgTy::Cnt => intrp
