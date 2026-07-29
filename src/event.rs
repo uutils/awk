@@ -41,12 +41,12 @@ impl<'a> AwkRt<'a> {
 
     /// Runs `code` to completion, dispatching I/O signals from the VM.
     fn drive(&mut self, code: CodeRange) -> Result<CtrlSig> {
-        let mut sig = self.intrp.run_code(&self.bc, code.clone())?;
+        let mut sig = self.intrp.run_code(&self.bc, code.clone());
         loop {
             let req = match sig {
-                Signal::Suspend(req) => req,
-                Signal::Terminal(t) => return Ok(t),
-                Signal::Error(ref err) => {
+                Ok(Signal::Suspend(req)) => req,
+                Ok(Signal::Terminal(t)) => return Ok(t),
+                Err(ref err) => {
                     err.emit_diagnostic(&mut self.diagnostics);
                     self.diagnostics.flush()?;
                     if self.diagnostics.is_unrecoverable() {

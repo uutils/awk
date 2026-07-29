@@ -60,7 +60,6 @@ pub struct CallFrame {
 pub enum Signal {
     Suspend(IoRequest),
     Terminal(CtrlSig),
-    Error(InterpreterError),
 }
 
 #[derive(Debug)]
@@ -268,14 +267,11 @@ impl<'a> Consts<'a> {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn run_code(&mut self, bytecode: &Bytecode, range: CodeRange) -> io::Result<Signal> {
-        self.program_counter = range.0.start;
-        self.code_end = range.0.end;
+    pub fn run_code(&mut self, bc: &Bytecode, span: CodeRange) -> Result<Signal, InterpreterError> {
+        self.program_counter = span.0.start;
+        self.code_end = span.0.end;
 
-        match self.run_chunk(&bytecode.code, &bytecode.metadata) {
-            Ok(s) => Ok(s),
-            Err(err) => Ok(Signal::Error(err)),
-        }
+        self.run_chunk(&bc.code, &bc.metadata)
     }
 
     fn run_chunk(
@@ -529,12 +525,9 @@ impl<'a> Interpreter<'a> {
         bytecode: &Bytecode,
         _req: IoRequest,
         _res: io::Result<IoResponse>,
-    ) -> io::Result<Signal> {
+    ) -> io::Result<Result<Signal, InterpreterError>> {
         self.program_counter += 1;
-        match self.run_chunk(&bytecode.code, &bytecode.metadata) {
-            Ok(s) => Ok(s),
-            Err(e) => Ok(Signal::Error(e)),
-        }
+        Ok(self.run_chunk(&bytecode.code, &bytecode.metadata))
     }
 
     fn print_req(
