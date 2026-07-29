@@ -93,7 +93,7 @@ pub union Arg {
     pub sym: NonLocal,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgTy {
     Reg,
     Imm,

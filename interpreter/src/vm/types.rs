@@ -94,10 +94,6 @@ impl Value<'_> {
         self.to_num().trunc() as isize
     }
 
-    pub fn b2f(b: bool) -> Self {
-        Self::Float(b as usize as f64)
-    }
-
     // FIXME: gawk supports regex extensions beyond the `regex` crate; compile patterns
     // once and route matching through a dedicated layer (likely regex-automata).
     pub(crate) fn matches_regex(&self, pattern: &[u8]) -> bool {
@@ -312,6 +308,24 @@ impl Display for Value<'_> {
             &Value::Bool(b) => write!(f, "{}", b as usize),
             Value::Array(_) | Value::Untyped | Value::Unassigned => Ok(()),
         }
+    }
+}
+
+impl From<f64> for Value<'_> {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<bool> for Value<'_> {
+    fn from(value: bool) -> Self {
+        Self::Float(value as usize as f64)
+    }
+}
+
+impl From<Vec<u8>> for Value<'_> {
+    fn from(value: Vec<u8>) -> Self {
+        Self::String(value.into())
     }
 }
 

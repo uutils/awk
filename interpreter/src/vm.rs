@@ -9,7 +9,7 @@ use std::{
     cell::RefCell,
     fmt::{self, Display},
     io::{self, Write},
-    mem::replace,
+    mem::{MaybeUninit, replace},
     ops::Range,
     rc::Rc,
     vec::Vec as StdVec,
@@ -24,7 +24,7 @@ use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirectio
 use crate::{
     InterpreterError,
     ir::{
-        ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
+        Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
         lower::{Bytecode, CodeGen},
     },
     vm::types::{ArrayMap, Value},
@@ -186,6 +186,11 @@ impl<'a> SymbolTable<'a> {
         v.scalar_context()
     }
 
+    // HACK: Please do not use this if you can help it.
+    fn raw_user_lookup(&self, var: NonLocal) -> &Value<'a> {
+        self.user.get_index(var).unwrap()
+    }
+
     fn write_user_val(&mut self, var: NonLocal, value: Value<'a>) {
         *self.user.get_index_mut(var).unwrap() = value;
     }
@@ -278,46 +283,22 @@ impl<'a> Interpreter<'a> {
         bytecode: &[Instruction],
         metadata: &[MetaId],
     ) -> Result<Signal, InterpreterError> {
-        macro_rules! rx {
-            ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
-                rx!($self, $src: $ty);
-                $self.registers.write($dest, $self.reg_offset(), $e);
-            }};
-            ($self:expr, $dest:expr, $lhs:ident: $tyl:ident, $rhs:ident: $tyr:ident, $e:expr) => {{
-                rx!($self, $lhs: $tyl, $rhs: $tyr);
-                $self.registers.write($dest, $self.reg_offset(), $e);
-            }};
-            ($self:expr, $($src:ident: $ty:ident),+) => {
-                use $crate::ir::ArgTy;
-                $(let $src = match $ty {
-                    ArgTy::Reg => $self.registers.get(unsafe { $src.reg }, $self.reg_offset()),
-                    ArgTy::Rec => todo!(),
-                    ArgTy::Imm => &Value::Int(unsafe { $src.imm } as _),
-                    ArgTy::Cnt => &$self.consts.0.get_index(unsafe { $src.sym.0 } as _).unwrap().clone(),
-                    ArgTy::UsVal => {
-                        &$self.symbols.lookup_user_scalar(unsafe { $src.sym }).clone()
-                    }
-                    _ => todo!()
-                };)+
-            };
-            ($self:expr, $dest:expr, $lhs:ident, $rhs:ident, $e:expr) => {{
-                rx!($self, $lhs, $rhs);
-                $self.registers.write($dest, $e);
-            }};
-        }
         while let Some(&instr) = bytecode.get(self.program_counter as usize)
             && self.program_counter < self.code_end
         {
             match instr {
                 Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
                 Instruction::Negation { dest, arg, ty } => {
-                    rx!(self, dest, arg: ty, Value::b2f(!arg.to_bool()));
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_bool();
+                    self.registers.write(dest, self.reg_offset(), !val);
                 }
                 Instruction::ToInt { dest, arg, ty } => {
-                    rx!(self, dest, arg: ty, Value::Float(arg.to_num().trunc()));
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_num();
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Negative { dest, arg, ty } => {
-                    rx!(self, dest, arg: ty, Value::Float(-arg.to_num()));
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_num();
+                    self.registers.write(dest, self.reg_offset(), -val);
                 }
                 Instruction::IncrementPost { dest, arg, ty }
                 | Instruction::IncrementPre { dest, arg, ty }
@@ -333,9 +314,11 @@ impl<'a> Interpreter<'a> {
                         Instruction::IncrementPost { .. } | Instruction::DecrementPost { .. }
                     );
 
-                    rx!(self, arg: ty);
-                    let added = arg + rhs;
-                    let res = arg + if is_post { &Value::Int(0) } else { rhs };
+                    let (added, res) = {
+                        let mut stack_space = MaybeUninit::uninit();
+                        let val = arg.get_val(ty, self, &mut stack_space);
+                        (val + rhs, val + if is_post { &Value::Int(0) } else { rhs })
+                    };
                     self.registers.write(dest, self.reg_offset(), res);
 
                     // TODO: refactor generic writes into a helper
@@ -349,102 +332,114 @@ impl<'a> Interpreter<'a> {
                         _ => unreachable!(),
                     }
                 }
-                Instruction::Copy { dest, arg, ty } => rx!(self, dest, arg: ty, arg.clone()),
+                Instruction::Copy { dest, arg, ty } => {
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    self.registers.write(dest, self.reg_offset(), val);
+                }
                 Instruction::Eq { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs == rhs));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs == rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::NEq { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs != rhs));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs != rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Gt { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs > rhs));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs > rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Lt { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs < rhs));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs < rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::LtE { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs <= rhs));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs <= rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::GtE { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs >= rhs));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs >= rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Matches { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, lhs: tyl, rhs: tyr);
-                    let matched = match rhs {
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| match rhs {
                         Value::Regex(pat) => lhs.matches_regex(pat),
                         _ => false,
-                    };
-                    self.registers
-                        .write(dest, self.reg_offset(), Value::b2f(matched));
+                    });
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, lhs: tyl, rhs: tyr);
-                    let matched = match rhs {
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| match rhs {
                         Value::Regex(pat) => lhs.matches_regex(pat),
                         _ => false,
-                    };
-                    self.registers
-                        .write(dest, self.reg_offset(), Value::b2f(!matched));
+                    });
+                    self.registers.write(dest, self.reg_offset(), !val);
                 }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs + rhs);
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs + rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Subtract { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs - rhs);
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs - rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Multiply { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs * rhs);
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs * rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Divide { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs / rhs);
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs / rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Raise { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs ^ rhs);
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs ^ rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Modulo { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, dest, lhs: tyl, rhs: tyr, lhs % rhs);
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs % rhs);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::Concat { dest, lhs, rhs, tyl, tyr } => {
-                    rx!(self, lhs: tyl, rhs: tyr);
-                    let mut buf =
-                        StdVec::with_capacity(lhs.string_size_hint() + rhs.string_size_hint());
-                    lhs.write_string(&mut buf);
-                    rhs.write_string(&mut buf);
-                    self.registers
-                        .write(dest, self.reg_offset(), Value::String(buf.into()));
+                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| {
+                        let mut buf =
+                            StdVec::with_capacity(lhs.string_size_hint() + rhs.string_size_hint());
+                        lhs.write_string(&mut buf);
+                        rhs.write_string(&mut buf);
+                        buf
+                    });
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::LoadA { dest, ty_place, start, end, var } => {
                     let key = self.make_array_key(start, end);
-                    let value = match ty_place {
+                    let val = match ty_place {
                         ArgTy::UaVal => self.symbols.load_user_array_elem(var, &key),
                         ArgTy::IaVal => todo!("intrinsic array load"),
                         _ => unreachable!(),
                     };
-                    self.registers.write(dest, self.reg_offset(), value);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
-                    rx!(self, arg: ty);
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
                     match ty_place {
-                        ArgTy::UsVal => self.symbols.write_user_val(var, arg.clone()),
+                        ArgTy::UsVal => self.symbols.write_user_val(var, val.clone()),
                         ArgTy::IsVal => todo!(),
                         _ => unreachable!(),
                     }
-                    self.registers.write(dest, self.reg_offset(), arg.clone());
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
                     todo!()
                 }
                 Instruction::StoreA { dest, ty_place, start, end, var, arg } => {
                     let key = self.make_array_key(start, end);
-                    let value = self.registers.get(arg, self.reg_offset()).clone();
+                    let val = self.registers.get(arg, self.reg_offset()).clone();
                     match ty_place {
                         ArgTy::UaVal => {
-                            self.symbols.store_user_array_elem(var, key, value.clone());
+                            self.symbols.store_user_array_elem(var, key, val.clone());
                         }
                         ArgTy::IaVal => todo!("intrinsic array store"),
                         _ => unreachable!(),
                     }
-                    self.registers.write(dest, self.reg_offset(), value);
+                    self.registers.write(dest, self.reg_offset(), val);
                 }
                 Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
                 Instruction::OutputCall { start, end, cmd, redir } => {
@@ -455,8 +450,9 @@ impl<'a> Interpreter<'a> {
                     continue;
                 }
                 Instruction::IndirectCall { dest, start, end, name, ty } => {
-                    rx!(self, name: ty);
-                    let name = name.to_string();
+                    let name = name
+                        .get_val(ty, self, &mut MaybeUninit::uninit())
+                        .to_string();
                     // TODO: Proper parsing, catch indirect calls to built-ins,
                     //       native funs and namespace tracking in metadata.
                     let (namespace, literal) = name.split_once("::").unwrap_or(("", &name));
@@ -487,12 +483,12 @@ impl<'a> Interpreter<'a> {
                     continue;
                 }
                 Instruction::Exit { arg, ty } => {
-                    rx!(self, arg: ty);
-                    return Ok(Signal::Terminal(CtrlSig::Exit(arg.to_int() as i32)));
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_int();
+                    return Ok(Signal::Terminal(CtrlSig::Exit(val as i32)));
                 }
                 Instruction::Return { arg, ty } => {
-                    rx!(self, arg: ty);
-                    self.ret(arg.clone());
+                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    self.ret(val);
                     continue;
                 }
                 Instruction::ReturnUnassigned => {
@@ -657,8 +653,8 @@ impl<'a> Registers<'a> {
         let ix = Self::index_of(src, offset);
         &mut self.0[ix]
     }
-    fn write(&mut self, dest: Reg, offset: IxWidth, src: Value<'a>) {
-        self.0[dest.0 as usize + offset as usize] = src;
+    fn write(&mut self, dest: Reg, offset: IxWidth, src: impl Into<Value<'a>>) {
+        self.0[dest.0 as usize + offset as usize] = src.into();
     }
     fn get_range(&mut self, regs: Range<Reg>, offset: IxWidth) -> &[Value<'a>] {
         let start = Self::index_of(regs.start, offset);
@@ -680,6 +676,88 @@ impl Display for CodeGen<'_> {
         writeln!(f, "{}\n", self.bc)?;
         writeln!(f, "{}\n", self.symbols)?;
         write!(f, "{}", self.consts)
+    }
+}
+
+impl Arg {
+    fn get_val<'v, 'a>(
+        self,
+        ty: ArgTy,
+        intrp: &'v mut Interpreter<'a>,
+        // We have super let at home.
+        stack_space: &'v mut MaybeUninit<Value<'a>>,
+    ) -> &'v Value<'a> {
+        self.prepare(ty, intrp, stack_space);
+
+        // SAFETY: called `Arg::prepare` beforehand with the right args.
+        unsafe { self.read_already_prepared(ty, intrp, stack_space) }
+    }
+
+    fn get_val2<'a, T>(
+        lhs: Self,
+        tyl: ArgTy,
+        rhs: Self,
+        tyr: ArgTy,
+        intrp: &mut Interpreter<'a>,
+        f: impl FnOnce(&Value<'a>, &Value<'a>) -> T,
+    ) -> T {
+        let mut stack_space_lhs = MaybeUninit::uninit();
+        let mut stack_space_rhs = MaybeUninit::uninit();
+        lhs.prepare(tyl, intrp, &mut stack_space_lhs);
+        rhs.prepare(tyr, intrp, &mut stack_space_rhs);
+
+        // SAFETY: called `Arg::prepare` beforehand with the right args.
+        let lhs = unsafe { lhs.read_already_prepared(tyl, intrp, &stack_space_lhs) };
+        let rhs = unsafe { rhs.read_already_prepared(tyr, intrp, &stack_space_rhs) };
+
+        f(lhs, rhs)
+    }
+
+    /// Only exists to make the borrow checker happy. To be used in conjunction
+    /// w/ [`Self::read_already_prepared`]. Please, don't use either of these if
+    /// you can help it; use [`Self::get_val`] or [`Self::get_val2`] instead.
+    fn prepare<'a>(
+        self,
+        ty: ArgTy,
+        intrp: &mut Interpreter<'a>,
+        stack_space: &mut MaybeUninit<Value<'a>>,
+    ) {
+        match ty {
+            ArgTy::Reg | ArgTy::Cnt => {}
+            ArgTy::Rec => todo!(),
+            ArgTy::Imm => {
+                stack_space.write(Value::Int(unsafe { self.imm } as _));
+            }
+            ArgTy::UsVal => {
+                // Forces it a scalar without reading the value yet.
+                intrp.symbols.lookup_user_scalar(unsafe { self.sym });
+            }
+            _ => todo!(),
+        }
+    }
+
+    /// # SAFETY
+    ///
+    /// Must have called [`Self::prepare`] with the exact same arguments. Only
+    /// exists to make the borrowck happy via two-phased initialization (yuck).
+    unsafe fn read_already_prepared<'v, 'a>(
+        self,
+        ty: ArgTy,
+        intrp: &'v Interpreter<'a>,
+        stack_space: &'v MaybeUninit<Value<'a>>,
+    ) -> &'v Value<'a> {
+        match ty {
+            ArgTy::Reg => intrp.registers.get(unsafe { self.reg }, intrp.reg_offset()),
+            ArgTy::Rec => todo!(),
+            ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
+            ArgTy::Cnt => intrp
+                .consts
+                .0
+                .get_index(unsafe { self.sym.0 } as _)
+                .unwrap(),
+            ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
+            _ => todo!(),
+        }
     }
 }
 
