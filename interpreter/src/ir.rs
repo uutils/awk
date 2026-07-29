@@ -84,6 +84,15 @@ pub enum Instruction {
     NextFile,
 }
 
+/// Keeps the size bounded to reduce cache pressure. They can actually be halved
+/// to an [`u64`]; this requires setting `imm`s and [`IxWidth`] to [`u16`], and
+/// doing some fancy tricks with the `Store`s. However, this constrains a lot
+/// more our active development, and if your hardware prefetcher is particularly
+/// smart (like in my case), makes almost no difference LOL. So, might be done
+/// in the future, but *only* if it won't meaningfully hurt instruction decode.
+//
+/// Other VM folks will point and laugh at our 16-bytes instrs, though, but our
+/// performance bottlenecks hardly lie here; AWK code is generally very small.
 const _: () = const { assert!(size_of::<Instruction>() <= size_of::<u128>()) };
 
 #[derive(Clone, Copy)]
