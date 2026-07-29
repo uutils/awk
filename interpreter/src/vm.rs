@@ -9,7 +9,7 @@ use std::{
     cell::RefCell,
     fmt::{self, Display},
     io::{self, Write},
-    mem::{MaybeUninit, replace},
+    mem::MaybeUninit,
     ops::Range,
     rc::Rc,
     vec::Vec as StdVec,
@@ -633,11 +633,6 @@ impl<'a> Interpreter<'a> {
 }
 
 impl<'a> Registers<'a> {
-    #[allow(dead_code)]
-    fn replace(&mut self, src: Reg, offset: IxWidth, f: impl FnOnce(Value<'a>) -> Value<'a>) {
-        let val = replace(self.get_mut(src, offset), Value::Untyped);
-        self.write(src, offset, f(val));
-    }
     fn reserve(&mut self, len: IxWidth) {
         let len = len as usize;
         if self.0.len() < len {
@@ -650,10 +645,6 @@ impl<'a> Registers<'a> {
     fn get(&self, src: Reg, offset: IxWidth) -> &Value<'a> {
         let ix = Self::index_of(src, offset);
         &self.0[ix]
-    }
-    fn get_mut(&mut self, src: Reg, offset: IxWidth) -> &mut Value<'a> {
-        let ix = Self::index_of(src, offset);
-        &mut self.0[ix]
     }
     fn write(&mut self, dest: Reg, offset: IxWidth, src: impl Into<Value<'a>>) {
         self.0[dest.0 as usize + offset as usize] = src.into();
