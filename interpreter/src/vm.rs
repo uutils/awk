@@ -39,13 +39,12 @@ pub enum ExecMode {
 
 // TODO struct ReentrantPoint that contains PC, code_end, frames and regs.
 pub struct Interpreter<'a> {
-    arena: &'a Bump,
     program_counter: IxWidth,
     code_end: IxWidth,
     registers: Registers<'a>,
     symbols: SymbolTable<'a>,
     consts: Consts<'a>,
-    compat: ExecMode,
+    _compat: ExecMode,
     frames: StdVec<CallFrame>,
     metadata: MetadataStore<AriadneSpan>,
 }
@@ -118,13 +117,12 @@ impl<'a> Interpreter<'a> {
     pub fn new(compat: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
         let n_regs = code.reg_pointer as usize + 1;
         Self {
-            arena: code.arena,
             program_counter: 0,
             code_end: 0,
             registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs]),
             symbols: code.symbols,
             consts: code.consts,
-            compat,
+            _compat: compat,
             frames: StdVec::new(),
             metadata,
         }
@@ -637,6 +635,7 @@ impl<'a> Interpreter<'a> {
 }
 
 impl<'a> Registers<'a> {
+    #[allow(dead_code)]
     fn replace(&mut self, src: Reg, offset: IxWidth, f: impl FnOnce(Value<'a>) -> Value<'a>) {
         let val = replace(self.get_mut(src, offset), Value::Untyped);
         self.write(src, offset, f(val));

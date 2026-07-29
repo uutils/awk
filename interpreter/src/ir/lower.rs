@@ -7,7 +7,6 @@ use std::{borrow::Cow, mem::forget, ops::Deref, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
-use indexmap_allocator_api::IndexSet;
 use parser::{
     ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
     Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
@@ -59,7 +58,7 @@ impl<'a> CodeGen<'a> {
         Self {
             arena,
             bc: Bytecode::with_capacity_in(64, arena),
-            consts: Consts(IndexSet::new_in(arena)),
+            consts: Consts::new_in(arena),
             symbols: SymbolTable::new_in(arena),
             free_regs: Vec::new_in(arena),
             reg_pointer: 0,

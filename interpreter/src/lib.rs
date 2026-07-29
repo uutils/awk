@@ -2,7 +2,6 @@
 //
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
-#![allow(dead_code)]
 
 pub(crate) mod ir;
 mod vm;
@@ -16,7 +15,6 @@ use parser::{AriadneSpan, Diagnostic, DiagnosticStore, Span};
 pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)]
 pub enum InterpreterError {
     #[error("Call to an undefined function!")]
     UnknownFunction(AriadneSpan),

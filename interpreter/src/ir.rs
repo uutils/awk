@@ -93,9 +93,6 @@ pub union Arg {
     pub sym: NonLocal,
 }
 
-#[derive(Clone, Copy)]
-struct Imm(u32);
-
 #[derive(Clone, Copy, Debug)]
 pub enum ArgTy {
     Reg,
