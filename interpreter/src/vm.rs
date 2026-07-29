@@ -18,7 +18,7 @@ use std::{
 use ahash::RandomState;
 use bumpalo::{Bump, collections::Vec};
 use hashbrown::HashMap;
-use indexmap_allocator_api::{IndexMap, IndexSet};
+use indexmap_allocator_api::IndexMap;
 use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection};
 
 use crate::{
@@ -107,7 +107,7 @@ pub struct Function {
 }
 
 #[derive(Debug)]
-pub struct Consts<'a>(pub IndexSet<Value<'a>, RandomState, &'a Bump>);
+pub struct Consts<'a>(pub(crate) Vec<'a, Value<'a>>);
 
 #[derive(Debug, Clone)]
 pub struct CodeRange(pub(crate) Range<IxWidth>);
@@ -262,7 +262,7 @@ impl<'a> SymbolTable<'a> {
 
 impl<'a> Consts<'a> {
     pub fn new_in(arena: &'a Bump) -> Self {
-        Self(IndexSet::with_capacity_in(4, arena))
+        Self(Vec::new_in(arena))
     }
 }
 
@@ -743,11 +743,7 @@ impl Arg {
             ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Rec => todo!(),
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
-            ArgTy::Cnt => intrp
-                .consts
-                .0
-                .get_index(unsafe { self.sym.0 } as _)
-                .unwrap(),
+            ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
             ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
             _ => todo!(),
         }

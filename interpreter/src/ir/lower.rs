@@ -862,7 +862,9 @@ impl<'a> CodeGen<'a> {
     }
 
     fn register_const(&mut self, value: Value<'a>) -> NonLocal {
-        NonLocal(self.consts.0.insert_full(value).0 as IxWidth)
+        let nl = NonLocal(self.consts.0.len() as IxWidth);
+        self.consts.0.push(value);
+        nl
     }
 
     fn following_instr(&self, nth: IxWidth) -> Label {
