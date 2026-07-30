@@ -6,6 +6,8 @@
 pub(crate) mod ir;
 mod vm;
 
+use std::borrow::Cow;
+
 use ariadne::{Color, Label, ReportBuilder};
 pub use ir::{
     Instruction,
@@ -24,12 +26,15 @@ pub enum InterpreterError {
     RecursionDepth(AriadneSpan),
     #[error("Indirect call to an undefined function!")]
     UnknownIndFunction(AriadneSpan, String),
+    #[error("Attempted to divide `{}` by zero here!", quacks_like_a_float(.1))]
+    DivByZeroAttempted(AriadneSpan, String),
 }
 
 impl InterpreterError {
     pub fn emit_diagnostic(&self, store: &mut DiagnosticStore) {
         match self {
-            Self::UnknownIndFunction(span, _)
+            Self::DivByZeroAttempted(span, _)
+            | Self::UnknownIndFunction(span, _)
             | Self::RecursionDepth(span)
             | Self::ArityMismatch(span, _, _)
             | Self::UnknownFunction(span) => self.add_diagnostic_cached(store, span.clone()),
@@ -43,7 +48,8 @@ impl Diagnostic for InterpreterError {
     }
     fn span(&self) -> Option<Span> {
         match self {
-            Self::UnknownIndFunction((_, span), _)
+            Self::DivByZeroAttempted((_, span), _)
+            | Self::UnknownIndFunction((_, span), _)
             | Self::RecursionDepth((_, span))
             | Self::ArityMismatch((_, span), _, _)
             | Self::UnknownFunction((_, span)) => Some(span.clone()),
@@ -75,10 +81,26 @@ impl Diagnostic for InterpreterError {
             Self::UnknownIndFunction(_, name) => {
                 &format!("This code tried to call the unknown function `{name}` indirectly.")
             }
+            Self::DivByZeroAttempted(_, _) => {
+                "Division and modular arithmetic by zero is always fatal in AWK. To avoid this, \
+                you can use an\nif statement or a ternary expression. You may optionally introduce \
+                IEEE 754 not-a-number values:\n                          \
+                `a / b` --> `(+b != 0) ? (a / b) : +\"+nan\"`.\nNote the importance of the `+` \
+                operator, which forces values into numbers. Otherwise, some\nvalues of `b`, like \
+                an empty string, would still trigger this error. It also parses the \"+nan\"."
+            }
         };
         report.set_help(note);
     }
     fn is_unrecoverable(&self) -> bool {
         true
+    }
+}
+
+fn quacks_like_a_float(val: &str) -> Cow<'_, str> {
+    if val.parse::<f64>().is_ok() {
+        val.into()
+    } else {
+        format!("{val:?}").into()
     }
 }

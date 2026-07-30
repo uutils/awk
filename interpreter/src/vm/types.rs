@@ -8,6 +8,7 @@ use std::{
     cell::RefCell,
     fmt::Display,
     hash::Hash,
+    hint::cold_path,
     io::Write,
     mem::discriminant,
     ops::{Add, BitXor, Div, Mul, Rem, Sub},
@@ -16,6 +17,14 @@ use std::{
 
 use ahash::RandomState;
 use hashbrown::HashMap;
+
+#[inline(always)]
+fn likely(b: bool) -> bool {
+    if !b {
+        cold_path();
+    }
+    b
+}
 
 /// Shared array storage. AWK arrays are reference-counted (assignment of array
 /// names is not a deep copy); `Rc`/`RefCell` is enough while the VM is single-threaded.
@@ -155,13 +164,11 @@ impl<'a> Mul for &'_ Value<'a> {
 }
 
 impl<'a> Div for &'_ Value<'a> {
-    type Output = Value<'a>;
+    type Output = Option<Value<'a>>;
 
     fn div(self, rhs: Self) -> Self::Output {
         let rhs = rhs.to_num();
-        // TODO: panic "nicely" on div by zero.
-        assert!(rhs != 0., "Division by zero attempted in '/'!");
-        Value::Float(self.to_num() / rhs)
+        likely(rhs != 0.).then(|| Value::Float(self.to_num() / rhs))
     }
 }
 
@@ -174,13 +181,11 @@ impl<'a> BitXor for &'_ Value<'a> {
 }
 
 impl<'a> Rem for &'_ Value<'a> {
-    type Output = Value<'a>;
+    type Output = Option<Value<'a>>;
 
     fn rem(self, rhs: Self) -> Self::Output {
-        let (lhs, rhs) = (self.to_num(), rhs.to_num());
-        // TODO: panic "nicely" on div by zero.
-        assert!(lhs != 0. || rhs != 0., "Division by zero attempted in '%'!");
-        Value::Float(lhs % rhs)
+        let rhs = rhs.to_num();
+        likely(rhs != 0.).then(|| Value::Float(self.to_num() % rhs))
     }
 }
 

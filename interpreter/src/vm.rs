@@ -494,7 +494,14 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::Divide { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs / rhs);
+                    let Some(val) = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs / rhs)
+                    else {
+                        let uninit = &mut MaybeUninit::uninit();
+                        return Err(InterpreterError::DivByZeroAttempted(
+                            self.get_span(metadata),
+                            lhs.get_val(tyl, self, uninit).to_string(),
+                        ));
+                    };
                     self.write_reg(dest, val);
                 }
                 Instruction::Raise { dest, lhs, rhs, tyl, tyr } => {
@@ -502,7 +509,14 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::Modulo { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs % rhs);
+                    let Some(val) = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs % rhs)
+                    else {
+                        let uninit = &mut MaybeUninit::uninit();
+                        return Err(InterpreterError::DivByZeroAttempted(
+                            self.get_span(metadata),
+                            lhs.get_val(tyl, self, uninit).to_string(),
+                        ));
+                    };
                     self.write_reg(dest, val);
                 }
                 Instruction::Concat { dest, lhs, rhs, tyl, tyr } => {
