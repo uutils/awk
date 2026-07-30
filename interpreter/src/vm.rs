@@ -92,11 +92,78 @@ pub struct SymbolTable<'a> {
     functions: RawSymbolTable<'a, Option<Function>>,
     // separate table for cheap invalidation. It's an arena _visibly shrugs_.
     records: HashMap<usize, Value<'a>, RandomState, &'a Bump>,
+
+    // Built-in variables as dedicated fields. `ENVIRON`, `PROCINFO`, `SYMTAB`, and
+    // `FUNCTAB` are intentionally omitted — they will be separate instructions.
+    /// Number of elements in `ARGV`. Set from the CLI at startup; the program may
+    /// change it to add/drop input files.
+    argc: Value<'a>,
+    /// GNU extension: index in `ARGV` of the current input file. Updated when the
+    /// interpreter opens the next file.
+    argind: Value<'a>,
+    /// Command-line arguments (`ARGV[0]` … `ARGV[ARGC-1]`). Filled at startup;
+    /// rewriting elements changes which files are read.
+    argv: Value<'a>,
+    /// GNU extension: binary I/O mode on non-POSIX platforms. Examined when
+    /// opening files or pipes.
+    binmode: Value<'a>,
+    /// `sprintf` format for number→string conversion outside `print`. Default
+    /// `"%.6g"`. Read on numeric-to-string coercion.
+    convfmt: Value<'a>,
+    /// GNU extension: set to a descriptive string when redirected `getline`, a
+    /// read, or `close` fails.
+    errno: Value<'a>,
+    /// GNU extension: whitespace-separated fixed field widths. When assigned,
+    /// overrides `FS` for input field splitting.
+    fieldwidths: Value<'a>,
+    /// Current input file name (`"-"` for stdin). Updated on each file switch;
+    /// empty in `BEGIN` until input starts.
+    filename: Value<'a>,
+    /// Record number within the current file. Incremented per record; reset when
+    /// a new file is opened.
+    fnr: Value<'a>,
+    /// GNU extension: regexp describing field contents. When assigned, overrides
+    /// `FS` for input field splitting.
+    fpat: Value<'a>,
+    /// Input field separator. Default `" "`. Examined when splitting `$0`.
+    fs: Value<'a>,
+    /// GNU extension: non-zero enables case-insensitive string/regexp ops.
+    ignorecase: Value<'a>,
+    /// GNU extension: dynamic control of `--lint` from AWK code.
+    lint: Value<'a>,
+    /// Field count for the current record. Updated on record read or when `$0` /
+    /// fields change.
+    nf: Value<'a>,
+    /// Total records read so far. Incremented on each record read.
+    nr: Value<'a>,
+    /// `sprintf` format for numbers in `print`. Default `"%.6g"`.
+    ofmt: Value<'a>,
+    /// Output field separator. Default `" "`. Inserted between `print` fields.
     ofs: Value<'a>,
-    rfs: Value<'a>,
-    /// Default AWK `SUBSEP` (`"\034"`).
+    /// Output record separator. Default `"\n"`. Appended after each `print`.
+    ors: Value<'a>,
+    /// GNU extension: working precision for arbitrary-precision floats. Default
+    /// `53`.
+    prec: Value<'a>,
+    /// GNU extension: rounding mode for arbitrary-precision arithmetic. Default
+    /// `"N"` (IEEE-754 roundTiesToEven).
+    roundmode: Value<'a>,
+    /// Input record separator. Default `"\n"`. Examined when reading records.
+    rs: Value<'a>,
+    /// GNU extension: input text that matched `RS` for the last record read.
+    rt: Value<'a>,
+    /// Start index (1-based) of the last `match()` hit; `0` if none. Set by
+    /// `match()`.
+    rstart: Value<'a>,
+    /// Length of the last `match()` hit (`-1` after a failed match). Set by
+    /// `match()`.
+    rlength: Value<'a>,
+    /// Subscript separator for multi-dimensional array keys. Default `"\034"`.
+    /// Read when building compound array indices.
     subsep: Value<'a>,
-    // etc
+    /// GNU extension: gettext text domain for localized strings. Default
+    /// `"messages"`.
+    textdomain: Value<'a>,
 }
 
 #[derive(Debug)]
@@ -174,10 +241,55 @@ impl<'a> SymbolTable<'a> {
             user: RawSymbolTable::new_in(arena),
             functions: RawSymbolTable::new_in(arena),
             records: HashMap::with_hasher_in(RandomState::new(), arena),
+            // Static / well-known defaults; I/O-driven values stay at their
+            // pre-input zeros/empties until the reader wires them up.
+            argc: Value::Int(0),
+            argind: Value::Int(0),
+            argv: Value::empty_array(),
+            binmode: Value::Int(0),
+            convfmt: Value::String(b"%.6g".into()),
+            errno: Value::String(b"".into()),
+            fieldwidths: Value::String(b"".into()),
+            filename: Value::String(b"".into()),
+            fnr: Value::Int(0),
+            fpat: Value::String(b"[^[:space:]]+".into()),
+            fs: Value::String(b" ".into()),
+            ignorecase: Value::Int(0),
+            lint: Value::Int(0),
+            nf: Value::Int(0),
+            nr: Value::Int(0),
+            ofmt: Value::String(b"%.6g".into()),
             ofs: Value::String(b" ".into()),
-            rfs: Value::String(b"\n".into()),
+            ors: Value::String(b"\n".into()),
+            prec: Value::Int(53),
+            roundmode: Value::String(b"N".into()),
+            rs: Value::String(b"\n".into()),
+            rt: Value::String(b"".into()),
+            rstart: Value::Int(0),
+            rlength: Value::Int(0),
             subsep: Value::String(b"\x1c".into()),
+            textdomain: Value::String(b"messages".into()),
         }
+    }
+
+    /// Populate `ARGC` / `ARGV` from a process argument list (`ARGV[0]` is the
+    /// program name). Indices are decimal strings, as in AWK.
+    pub fn set_argc_argv<I, S>(&mut self, args: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        let mut map = ArrayMap::with_hasher(RandomState::new());
+        let mut n = 0isize;
+        for arg in args {
+            map.insert(
+                n.to_string(),
+                Value::String(std::borrow::Cow::Owned(arg.as_ref().to_vec())),
+            );
+            n += 1;
+        }
+        self.argc = Value::Int(n);
+        self.argv = Value::Array(Rc::new(RefCell::new(map)));
     }
 
     fn lookup_user_scalar(&mut self, var: NonLocal) -> &Value<'a> {
@@ -563,7 +675,7 @@ impl<'a> Interpreter<'a> {
                 let _ = write!(buf, "{ofs}{reg}", ofs = self.symbols.ofs);
             }
         }
-        let _ = write!(buf, "{rfs}", rfs = self.symbols.rfs);
+        let _ = write!(buf, "{ors}", ors = self.symbols.ors);
 
         IoRequest::WriteStdout(buf)
     }
@@ -771,7 +883,38 @@ impl Display for SymbolTable<'_> {
         write!(f, "Symbols:")?;
         fmt_list(f, self.user.iter(), |f, i, (k, v)| {
             write!(f, "user[{i}] @ {k:?} = {v}")
-        })
+        })?;
+        for (name, val) in [
+            ("ARGC", &self.argc),
+            ("ARGIND", &self.argind),
+            ("ARGV", &self.argv),
+            ("BINMODE", &self.binmode),
+            ("CONVFMT", &self.convfmt),
+            ("ERRNO", &self.errno),
+            ("FIELDWIDTHS", &self.fieldwidths),
+            ("FILENAME", &self.filename),
+            ("FNR", &self.fnr),
+            ("FPAT", &self.fpat),
+            ("FS", &self.fs),
+            ("IGNORECASE", &self.ignorecase),
+            ("LINT", &self.lint),
+            ("NF", &self.nf),
+            ("NR", &self.nr),
+            ("OFMT", &self.ofmt),
+            ("OFS", &self.ofs),
+            ("ORS", &self.ors),
+            ("PREC", &self.prec),
+            ("ROUNDMODE", &self.roundmode),
+            ("RS", &self.rs),
+            ("RT", &self.rt),
+            ("RSTART", &self.rstart),
+            ("RLENGTH", &self.rlength),
+            ("SUBSEP", &self.subsep),
+            ("TEXTDOMAIN", &self.textdomain),
+        ] {
+            write!(f, "\n  builtin {name} = {val}")?;
+        }
+        Ok(())
     }
 }
 
@@ -792,4 +935,59 @@ fn fmt_list<'a, T: Copy>(
         cb(f, i, e)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbol_table_builtin_defaults() {
+        let arena = Bump::new();
+        let st = SymbolTable::new_in(&arena);
+
+        assert_eq!(st.argc, Value::Int(0));
+        assert_eq!(st.argind, Value::Int(0));
+        assert!(matches!(st.argv, Value::Array(_)));
+        assert_eq!(st.binmode, Value::Int(0));
+        assert_eq!(st.convfmt, Value::String(b"%.6g".into()));
+        assert_eq!(st.errno, Value::String(b"".into()));
+        assert_eq!(st.fieldwidths, Value::String(b"".into()));
+        assert_eq!(st.filename, Value::String(b"".into()));
+        assert_eq!(st.fnr, Value::Int(0));
+        assert_eq!(st.fpat, Value::String(b"[^[:space:]]+".into()));
+        assert_eq!(st.fs, Value::String(b" ".into()));
+        assert_eq!(st.ignorecase, Value::Int(0));
+        assert_eq!(st.lint, Value::Int(0));
+        assert_eq!(st.nf, Value::Int(0));
+        assert_eq!(st.nr, Value::Int(0));
+        assert_eq!(st.ofmt, Value::String(b"%.6g".into()));
+        assert_eq!(st.ofs, Value::String(b" ".into()));
+        assert_eq!(st.ors, Value::String(b"\n".into()));
+        assert_eq!(st.prec, Value::Int(53));
+        assert_eq!(st.roundmode, Value::String(b"N".into()));
+        assert_eq!(st.rs, Value::String(b"\n".into()));
+        assert_eq!(st.rt, Value::String(b"".into()));
+        assert_eq!(st.rstart, Value::Int(0));
+        assert_eq!(st.rlength, Value::Int(0));
+        assert_eq!(st.subsep, Value::String(b"\x1c".into()));
+        assert_eq!(st.textdomain, Value::String(b"messages".into()));
+    }
+
+    #[test]
+    fn set_argc_argv_populates_argc_and_argv() {
+        let arena = Bump::new();
+        let mut st = SymbolTable::new_in(&arena);
+        st.set_argc_argv([b"awk".as_slice(), b"a.txt", b"b.txt"]);
+
+        assert_eq!(st.argc, Value::Int(3));
+        let Value::Array(argv) = &st.argv else {
+            panic!("expected ARGV array");
+        };
+        let argv = argv.borrow();
+        assert_eq!(argv.get("0"), Some(&Value::String(b"awk".into())));
+        assert_eq!(argv.get("1"), Some(&Value::String(b"a.txt".into())));
+        assert_eq!(argv.get("2"), Some(&Value::String(b"b.txt".into())));
+        assert_eq!(argv.len(), 3);
+    }
 }
