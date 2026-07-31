@@ -355,3 +355,26 @@ fn array_multi_index_assignment_lowers_storea() {
         assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
     });
 }
+
+#[test]
+fn builtin_call_lowers_to_icall() {
+    with_lower("BEGIN { print int(3.7) }", |cg| {
+        let bc = format!("{}", cg.bc);
+        assert!(
+            bc.contains(" <- icall int,"),
+            "expected IntrinsicCall for int():\n{bc}"
+        );
+    });
+}
+
+#[test]
+fn builtin_call_nested_in_expression_lowers_icall() {
+    with_lower("BEGIN { x = length(\"abc\") + sqrt(4) }", |cg| {
+        let bc = format!("{}", cg.bc);
+        assert!(
+            bc.contains(" <- icall length,"),
+            "expected length icall:\n{bc}"
+        );
+        assert!(bc.contains(" <- icall sqrt,"), "expected sqrt icall:\n{bc}");
+    });
+}

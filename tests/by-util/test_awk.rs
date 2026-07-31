@@ -358,3 +358,74 @@ fn user_functions_fib() {
         .succeeds()
         .stdout_only("0\n1\n1\n2\n3\n5\n8\n13\n21\n34\n");
 }
+
+#[test]
+fn builtin_numeric_and_string_functions() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                print int(3.7)
+                print int(-3.7)
+                print sqrt(4)
+                print length("abc")
+                print length()
+                print toupper("ab")
+                print tolower("AB")
+                print index("foobar", "bar")
+                print substr("abcdef", 2, 3)
+                print substr("abcdef", 2)
+                print and(7, 3)
+                print or(1, 2, 4)
+                print xor(7, 3)
+                print compl(0)
+                print lshift(1, 3)
+                print rshift(8, 2)
+                print strtonum("0x10")
+                print strtonum("010")
+                print typeof(1)
+                print typeof("")
+            }"#,
+        )
+        .succeeds()
+        .stdout_only(
+            "\
+3
+-3
+2
+3
+0
+AB
+ab
+4
+bcd
+bcdef
+3
+7
+4
+9007199254740991
+8
+2
+16
+8
+number
+string
+",
+        );
+}
+
+#[test]
+fn builtin_math_trig_basics() {
+    ucmd()
+        .arg("BEGIN { print exp(0); print log(1); print sin(0); print cos(0); print atan2(0, 1) }")
+        .succeeds()
+        .stdout_only("1\n0\n0\n1\n0\n");
+}
+
+#[ignore = "FIXME: array arguments currently hit scalar_context before dispatch"]
+#[test]
+fn builtin_isarray_with_array_variable() {
+    ucmd()
+        .arg("BEGIN { a[1] = 1; print isarray(a); print length(a) }")
+        .succeeds()
+        .stdout_only("1\n1\n");
+}

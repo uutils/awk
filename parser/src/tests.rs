@@ -821,6 +821,18 @@ fn test_parser_unary_and_divide() {
 }
 
 #[test]
+fn test_parser_builtin_in_expression_context() {
+    let source = r#"
+        BEGIN { print int(3.7); x = length("ab") }
+    "#;
+    test_parser!(source => {
+        begin: [
+            r#"(body (Print (Int 3.7)) (Assignment awk::x (Length "ab")))"#
+        ],
+    });
+}
+
+#[test]
 fn test_parser_proper_assignments() {
     let source = r"
         { a = 1 }

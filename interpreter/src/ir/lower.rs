@@ -653,6 +653,10 @@ impl<'a> CodeGen<'a> {
                             let (start, end, ()) = this.gen_call_convention(args, |_| ());
                             this.emit(Instruction::UserCall { dest, start, end, name });
                         }
+                        ExprNode::BuiltinCall(fun, args) => {
+                            let (start, end, ()) = this.gen_call_convention(args, |_| ());
+                            this.emit(Instruction::IntrinsicCall { dest, start, end, fun: *fun });
+                        }
                         ExprNode::IndirectCall(place, args) => {
                             let (start, end, ()) = this.gen_call_convention(args, |_| ());
                             let TypedArg(name, ty) =
