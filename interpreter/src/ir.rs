@@ -16,7 +16,7 @@ mod tests;
 
 use std::fmt::{self, Debug, Display, Formatter};
 
-use parser::{Command, Redirection};
+use parser::{BuiltinFunction, Command, Redirection};
 
 pub type RegWidth = u8;
 pub type IxWidth = u32;
@@ -69,7 +69,7 @@ pub enum Instruction {
     StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     StoreA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal, arg: Reg },
     LoadA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal },
-    IntrinsicCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
+    IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
     IndirectCall { dest: Reg, start: Reg, end: Reg, name: Arg, ty: ArgTy },
@@ -261,8 +261,8 @@ impl Display for Instruction {
                 write!(f, "{op}")?;
                 fmt_arg(f, arg, ty, " ")
             }
-            Self::IntrinsicCall { dest, start, end, name } => {
-                write!(f, "{dest} <- {op} {name}, {start}..{end}")
+            Self::IntrinsicCall { dest, start, end, fun } => {
+                write!(f, "{dest} <- {op} {fun}, {start}..{end}")
             }
             Self::IndirectCall { dest, start, end, name, ty } => {
                 write!(f, "{dest} <- {op}")?;

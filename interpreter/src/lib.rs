@@ -3,6 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
+mod builtins;
 pub(crate) mod ir;
 mod vm;
 

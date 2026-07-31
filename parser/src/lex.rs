@@ -235,6 +235,7 @@ impl TokenExt for Token<'_> {
     fn is_expr_start(&self) -> bool {
         self.is_atom()
             || self.is_prefix_op()
+            || self.maps_to_builtin().is_some()
             || matches!(
                 self,
                 Token::IndirectCall(_) | Token::Getline | Token::OpenParent

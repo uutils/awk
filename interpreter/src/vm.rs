@@ -42,7 +42,7 @@ pub struct Interpreter<'a> {
     program_counter: IxWidth,
     code_end: IxWidth,
     registers: Registers<'a>,
-    symbols: SymbolTable<'a>,
+    pub(crate) symbols: SymbolTable<'a>,
     consts: Consts<'a>,
     _compat: ExecMode,
     frames: StdVec<CallFrame>,
@@ -562,7 +562,16 @@ impl<'a> Interpreter<'a> {
                     }
                     self.write_reg(dest, val);
                 }
-                Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
+                Instruction::IntrinsicCall { dest, start, end, fun } => {
+                    let offset = self.reg_offset();
+                    let args = self.registers.get_range(start..end, offset);
+                    match self.call_builtin(fun, args) {
+                        Ok(val) => self.write_reg(dest, val),
+                        Err(err) => {
+                            return Err(err.into_interpreter_error(self.get_span(metadata)));
+                        }
+                    }
+                }
                 Instruction::OutputCall { start, end, cmd, redir } => {
                     return Ok(Signal::Suspend(self.print_req(start, end, cmd, redir)));
                 }
@@ -775,7 +784,7 @@ impl<'a> Registers<'a> {
     fn write(&mut self, dest: Reg, offset: IxWidth, src: impl Into<Value<'a>>) {
         self.0[dest.0 as usize + offset as usize] = src.into();
     }
-    fn get_range(&mut self, regs: Range<Reg>, offset: IxWidth) -> &[Value<'a>] {
+    fn get_range(&self, regs: Range<Reg>, offset: IxWidth) -> &[Value<'a>] {
         let start = Self::index_of(regs.start, offset);
         let end = Self::index_of(regs.end, offset);
         &self.0[start..end]
@@ -842,7 +851,7 @@ impl Arg {
         stack_space: &mut MaybeUninit<Value<'a>>,
     ) {
         match ty {
-            ArgTy::Reg | ArgTy::Cnt => {}
+            ArgTy::Reg | ArgTy::Cnt | ArgTy::ImmF => {}
             ArgTy::Rec => todo!(),
             ArgTy::Imm => {
                 stack_space.write(Value::Int(unsafe { self.imm } as _));
@@ -869,7 +878,7 @@ impl Arg {
             ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Rec => todo!(),
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
-            ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
             ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
             _ => todo!(),
         }
