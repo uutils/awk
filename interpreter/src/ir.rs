@@ -149,6 +149,8 @@ impl Instruction {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn to_bytes(self) -> u128 {
+        use std::mem::{MaybeUninit, transmute};
+
         // miri does not support inline asm. Intentionally if-gated so it's
         // still compiled anyway.
         if cfg!(miri) {
@@ -162,7 +164,7 @@ impl Instruction {
         /// Note that this relies on an LLVM hack; it's just a quite uncontroversial
         /// cop-out for the lack of a freeze intrinsic, whose RFC is on the works.
         #[inline(always)]
-        fn freeze<T>(mut val: T) -> T {
+        fn freeze<T>(mut val: MaybeUninit<T>) -> MaybeUninit<T> {
             unsafe {
                 std::arch::asm!(
                     "/* freeze {0} */",
@@ -176,7 +178,7 @@ impl Instruction {
         // SAFETY: the return value is (partially) unspecified, because
         // it reads arbitrary padding bytes. However, it is frozen, and
         // therefore not UB.
-        unsafe { std::mem::transmute::<Self, u128>(freeze(self)) }
+        unsafe { freeze(transmute::<Self, MaybeUninit<u128>>(self)).assume_init() }
     }
 
     #[cfg(target_arch = "wasm32")]
