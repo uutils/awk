@@ -96,7 +96,7 @@ fn uu_main() -> Result<()> {
 
         let mut table = Table::new();
         table
-            .load_preset(UTF8_FULL_CONDENSED)
+            .load_style(UTF8_FULL_CONDENSED)
             .set_content_arrangement(ContentArrangement::Dynamic)
             .set_header(["Bytecode", "Dissassembled", "Span", "File"])
             .add_rows(bytecode);
