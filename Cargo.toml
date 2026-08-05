@@ -54,7 +54,7 @@ comfy-table = "7.2.2"
 
 [dev-dependencies]
 ctor = "1.0"
-uutests = "0.9"
+uutests = "0.10"
 
 [profile.release]
 lto = true
