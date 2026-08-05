@@ -99,7 +99,7 @@ impl<'a> Lexer<'a> {
         let Some(Ok(Token::Identifier(ident))) = Token::lex(source, arena, true, true).next()
         else {
             return Err(ParsingError::UnexpectedToken(
-                self.span().start + 1..self.span().end - 1,
+                (self.span().start + 1..self.span().end - 1).into(),
                 "expected a valid, non-qualified identifier.".into(),
             ));
         };
@@ -153,13 +153,13 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn span(&self) -> Span {
-        self.span.clone()
+        self.span
     }
 
     pub fn peeked_span(&mut self) -> Result<Span> {
         self.inner
             .peek()
-            .map(|(_, s)| s.clone())
+            .map(|(_, s)| s.clone().into())
             .ok_or(ParsingError::LexingError(LexingError::UnexpectedEof))
     }
 
@@ -167,20 +167,31 @@ impl<'a> Lexer<'a> {
         self.inner.peek().map(|(a, b)| {
             (
                 a.as_ref().map_err(|e| ParsingError::LexingError(e.clone())),
-                b.clone(),
+                b.clone().into(),
             )
         })
     }
 
-    fn advance_span(&mut self, next: Option<(LexItem<'a>, Span)>) -> Option<LexItem<'a>> {
+    fn advance_span(
+        &mut self,
+        next: Option<(LexItem<'a>, impl Into<Span>)>,
+    ) -> Option<LexItem<'a>> {
         next.map(|(token, span)| {
-            self.span = span.clone();
+            self.span = span.into();
             token
         })
     }
 
     pub fn is_yuxtaposed(&mut self) -> bool {
         self.peeked_span().is_ok_and(|x| x.start == self.span.end)
+    }
+
+    pub fn span_peeked_since(&mut self, start: usize) -> Span {
+        Span::from(start..self.peeked_span().map_or(self.span().end, |s| s.end))
+    }
+
+    pub fn span_peeked_up_to(&mut self, start: usize) -> Span {
+        Span::from(start..self.peeked_span().map_or(self.span().end, |s| s.start))
     }
 
     /// # Safety
@@ -339,5 +350,19 @@ impl TokenExt for Token<'_> {
 impl Debug for Lexer<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Lexer {{ span: {:?} }}", self.span)
+    }
+}
+
+pub trait SpanExt: Copy {
+    fn since(self, end: usize) -> Self;
+    fn up_from(self, start: usize) -> Self;
+}
+
+impl SpanExt for Span {
+    fn since(self, start: usize) -> Self {
+        Self { start, end: self.end }
+    }
+    fn up_from(self, start: usize) -> Self {
+        Self { start, end: self.start }
     }
 }

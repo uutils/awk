@@ -10,7 +10,8 @@ use either::Either;
 use lexer::{LexingError, Span};
 use thiserror::Error;
 
-pub type AriadneSpan = (FileCache, Span);
+#[derive(Debug, Clone)]
+pub struct AriadneSpan(pub FileCache, pub Span);
 
 #[derive(Debug, Default)]
 pub struct DiagnosticStore {
@@ -27,15 +28,15 @@ struct Cache(Vec<(FileCache, Source<InnerSource>)>);
 
 pub trait Diagnostic: Error {
     fn add_diagnostic(&self, store: &mut DiagnosticStore, file: FileCache, source: &[u8]) {
-        let span = self.span().unwrap_or(source.len()..source.len());
+        let span = self.span().unwrap_or((source.len()..source.len()).into());
         store.cache(file.clone(), source);
-        self.add_diagnostic_cached(store, (file, span));
+        self.add_diagnostic_cached(store, AriadneSpan(file, span));
     }
-    fn add_diagnostic_cached(&self, store: &mut DiagnosticStore, (file, span): AriadneSpan) {
-        let mut report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
-            .with_message(self.message());
+    fn add_diagnostic_cached(&self, store: &mut DiagnosticStore, span: AriadneSpan) {
+        let mut report =
+            Report::build(ReportKind::Error, span.clone()).with_message(self.message());
 
-        self.add_labels((file.clone(), span.clone()), &mut report);
+        self.add_labels(span, &mut report);
         self.add_help(&mut report);
 
         store.unrecoverable |= self.is_unrecoverable();
@@ -62,7 +63,7 @@ impl DiagnosticStore {
         }
     }
 
-    pub fn push(&mut self, report: Report<'static, (FileCache, Span)>) {
+    pub fn push(&mut self, report: Report<'static, AriadneSpan>) {
         self.storage.push(report);
     }
 
@@ -164,51 +165,48 @@ pub enum ParsingError {
 impl ParsingError {
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::LexingError(err) => match err {
-                LexingError::Unknown => panic!("Unknown lexing error!"),
-                LexingError::Unexpected(span, _) => Some(span.clone()),
-                LexingError::UnterminatedString(span) => Some(span.clone()),
-                LexingError::UnterminatedRegex(span) => Some(span.clone()),
-                LexingError::UnexpectedEof => None,
-                LexingError::UnavailableOnPosix(span, _) => Some(span.clone()),
-                LexingError::UnavailableOnGnu(span, _) => Some(span.clone()),
-            },
-            Self::UnclosedScope(span) => Some(span.clone()),
-            Self::UnexpectedToken(span, _) => Some(span.clone()),
-            Self::DuplicatedArgument(span, _, _) => Some(span.clone()),
-            Self::ExpectedStatementEnd(span) => Some(span.clone()),
-            Self::ExpectedOpeningBrace(span) => Some(span.clone()),
-            Self::ExpectedOpeningParenthesis(span) => Some(span.clone()),
-            Self::InvalidForLoop(span) => Some(span.clone()),
-            Self::ColonMustFollowCase(span) => Some(span.clone()),
-            Self::DuplicatedDefaultBranch(span) => Some(span.clone()),
-            Self::MissingSwitchBranch(span) => Some(span.clone()),
-            Self::InvalidCaseValue(span) => Some(span.clone()),
-            Self::MissingWhileAfterDo(span) => Some(span.clone()),
-            Self::MissingParenthesisInStatement(span) => Some(span.clone()),
-            Self::UnclosedParenthesisInStatement(span) => Some(span.clone()),
-            Self::NoFunctionSignature(span, _) => Some(span.clone()),
-            Self::UnclosedSignature(span, _) => Some(span.clone()),
-            Self::UnclosedParenthesisExpression(span) => Some(span.clone()),
-            Self::UnclosedArrayAccess(span) => Some(span.clone()),
-            Self::OperatorExpectsVariable(span) => Some(span.clone()),
-            Self::InvalidExpression(span, _) => Some(span.clone()),
-            Self::MissingTernaryOr(span) => Some(span.clone()),
-            Self::FunctionCallMissingParenthesis(span) => Some(span.clone()),
-            Self::FunctionCallSeparatedIdent(span) => Some(span.clone()),
-            Self::FunctionCallUnclosed(span, _) => Some(span.clone()),
-            Self::ExpectedIdentifier(span, _) => Some(span.clone()),
-            Self::ExpectedUnaryOperator(span) => Some(span.clone()),
-            Self::ExpectedBinaryOperator(span) => Some(span.clone()),
-            Self::ExpectedPlaceOperator(span) => Some(span.clone()),
-            Self::UnexpectedTypedRegex(span) => Some(span.clone()),
-            Self::SpecialVariableCall(span, _) => Some(span.clone()),
-            Self::SpecialVariableIndirectCall(span, _) => Some(span.clone()),
-            Self::NonAssociativeOperator(span) => Some(span.clone()),
-            Self::BreakOutsideLoopOrSwitch(span) => Some(span.clone()),
-            Self::ContinueOutsideLoop(span) => Some(span.clone()),
-            Self::ReturnOutsideFunction(span) => Some(span.clone()),
-            Self::CommandDoubleCall(span, _) => Some(span.clone()),
+            Self::LexingError(LexingError::Unknown | LexingError::UnexpectedEof) => None,
+            &Self::LexingError(LexingError::Unexpected(span, _))
+            | &Self::LexingError(LexingError::UnterminatedString(span))
+            | &Self::LexingError(LexingError::UnterminatedRegex(span))
+            | &Self::LexingError(LexingError::UnavailableOnPosix(span, _))
+            | &Self::LexingError(LexingError::UnavailableOnGnu(span, _))
+            | &Self::UnclosedScope(span)
+            | &Self::UnexpectedToken(span, _)
+            | &Self::DuplicatedArgument(span, _, _)
+            | &Self::ExpectedStatementEnd(span)
+            | &Self::ExpectedOpeningBrace(span)
+            | &Self::ExpectedOpeningParenthesis(span)
+            | &Self::InvalidForLoop(span)
+            | &Self::ColonMustFollowCase(span)
+            | &Self::DuplicatedDefaultBranch(span)
+            | &Self::MissingSwitchBranch(span)
+            | &Self::InvalidCaseValue(span)
+            | &Self::MissingWhileAfterDo(span)
+            | &Self::MissingParenthesisInStatement(span)
+            | &Self::UnclosedParenthesisInStatement(span)
+            | &Self::NoFunctionSignature(span, _)
+            | &Self::UnclosedSignature(span, _)
+            | &Self::UnclosedParenthesisExpression(span)
+            | &Self::UnclosedArrayAccess(span)
+            | &Self::OperatorExpectsVariable(span)
+            | &Self::InvalidExpression(span, _)
+            | &Self::MissingTernaryOr(span)
+            | &Self::FunctionCallMissingParenthesis(span)
+            | &Self::FunctionCallSeparatedIdent(span)
+            | &Self::FunctionCallUnclosed(span, _)
+            | &Self::ExpectedIdentifier(span, _)
+            | &Self::ExpectedUnaryOperator(span)
+            | &Self::ExpectedBinaryOperator(span)
+            | &Self::ExpectedPlaceOperator(span)
+            | &Self::UnexpectedTypedRegex(span)
+            | &Self::SpecialVariableCall(span, _)
+            | &Self::SpecialVariableIndirectCall(span, _)
+            | &Self::NonAssociativeOperator(span)
+            | &Self::BreakOutsideLoopOrSwitch(span)
+            | &Self::ContinueOutsideLoop(span)
+            | &Self::ReturnOutsideFunction(span)
+            | &Self::CommandDoubleCall(span, _) => Some(span),
         }
     }
     fn hint(&self) -> Option<&'static str> {
@@ -264,11 +262,11 @@ impl ParsingError {
         match self {
             Self::ExpectedIdentifier(_, Some(span)) => Some((
                 "Unexpected space.",
-                span.clone().into_inner(),
+                span.into_inner(),
                 2 * span.is_left() as i32,
             )),
-            Self::CommandDoubleCall(_, span) => {
-                Some(("Unexpected additional arguments.", span.clone(), 0))
+            &Self::CommandDoubleCall(_, span) => {
+                Some(("Unexpected additional arguments.", span, 0))
             }
             _ => None,
         }
@@ -296,9 +294,13 @@ impl Diagnostic for ParsingError {
         "Syntax error"
     }
 
-    fn add_labels(&self, (file, span): AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {
+    fn add_labels(
+        &self,
+        AriadneSpan(file, span): AriadneSpan,
+        report: &mut ReportBuilder<AriadneSpan>,
+    ) {
         report.add_label(
-            Label::new((file.clone(), span))
+            Label::new(AriadneSpan(file.clone(), span))
                 .with_message(self.to_string())
                 .with_color(Color::Red)
                 .with_order(1),
@@ -306,7 +308,7 @@ impl Diagnostic for ParsingError {
 
         if let Some((str, span, order)) = self.secondary() {
             report.add_label(
-                Label::new((file, span))
+                Label::new(AriadneSpan(file, span))
                     .with_message(str)
                     .with_color(Color::Yellow)
                     .with_order(order),
@@ -337,6 +339,22 @@ impl ariadne::Cache<FileCache> for Cache {
 
     fn display<'b>(&self, id: &'b FileCache) -> Option<impl Display + 'b> {
         Some(id)
+    }
+}
+
+impl ariadne::Span for AriadneSpan {
+    type SourceId = FileCache;
+
+    fn source(&self) -> &Self::SourceId {
+        &self.0
+    }
+
+    fn start(&self) -> usize {
+        self.1.start
+    }
+
+    fn end(&self) -> usize {
+        self.1.end
     }
 }
 

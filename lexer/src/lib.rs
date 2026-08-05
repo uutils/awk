@@ -9,6 +9,7 @@ mod tests;
 mod locale_encoding;
 
 use core::str;
+use std::range::Range;
 use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
@@ -18,13 +19,14 @@ use std::{
 
 use bumpalo::{Bump, collections::Vec};
 pub use locale_encoding::LocaleEncoding;
+pub use logos::SpannedIter;
 use logos::{Logos, Skip};
-pub use logos::{Span, SpannedIter};
 use memchr::{memchr, memchr3};
 use thiserror::Error;
 
 pub type Lexer<'a> = logos::Lexer<'a, Token<'a>>;
 pub type Result<T, E = LexingError> = std::result::Result<T, E>;
+pub type Span = Range<usize>;
 
 #[derive(Logos, Debug, PartialEq)]
 #[logos(utf8 = false)]
@@ -394,18 +396,18 @@ impl LexingError {
 
     #[cold]
     fn unexpected(lex: &mut Lexer<'_>) -> Self {
-        Self::Unexpected(lex.span(), Self::to_utf8(lex))
+        Self::Unexpected(lex.span().into(), Self::to_utf8(lex))
     }
 
     #[cold]
     fn non_posix(lex: &mut Lexer<'_>) -> Self {
-        Self::UnavailableOnPosix(lex.span(), Self::to_utf8(lex))
+        Self::UnavailableOnPosix(lex.span().into(), Self::to_utf8(lex))
     }
 
     #[cold]
     #[allow(dead_code)] // Remove if we add extensions that require it.
     fn non_uu(lex: &mut Lexer<'_>) -> Self {
-        Self::UnavailableOnGnu(lex.span(), Self::to_utf8(lex))
+        Self::UnavailableOnGnu(lex.span().into(), Self::to_utf8(lex))
     }
 }
 
@@ -474,9 +476,9 @@ fn parse_content<'a, const REGEX: bool, const DELIMITER: char>(
         }
     }
     if REGEX {
-        Err(LexingError::UnterminatedRegex(lex.span()))
+        Err(LexingError::UnterminatedRegex(lex.span().into()))
     } else {
-        Err(LexingError::UnterminatedString(lex.span()))
+        Err(LexingError::UnterminatedString(lex.span().into()))
     }
 }
 

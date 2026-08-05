@@ -18,7 +18,10 @@ pub fn parse_error_span(source: &str) -> std::ops::Range<usize> {
     let arena = Bump::new();
     let parser = arena.alloc(Parser::new(&arena, true));
     match parser.parse_top(&mut Lexer::new(source.as_bytes(), &arena), true) {
-        Err(err) => err.span().expect("expected a span-bearing parse error"),
+        Err(err) => err
+            .span()
+            .expect("expected a span-bearing parse error")
+            .into(),
         Ok(_) => panic!("expected parse error for {source:?}"),
     }
 }

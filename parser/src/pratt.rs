@@ -14,17 +14,12 @@ use crate::{
         WriteKind,
     },
     diagnostics::ParsingError,
-    lex::TokenExt,
+    lex::{SpanExt, TokenExt},
 };
 
-/// Span from the start of the subexpression being parsed through `end`.
-fn subexpr_span(anchor: usize, end: usize) -> Span {
-    anchor..end
-}
-
-fn extend_operator_expects_variable(err: ParsingError, anchor: usize, end: usize) -> ParsingError {
+fn extend_operator_expects_variable(err: ParsingError, span: Span) -> ParsingError {
     if matches!(err, ParsingError::OperatorExpectsVariable(_)) {
-        ParsingError::OperatorExpectsVariable(subexpr_span(anchor, end))
+        ParsingError::OperatorExpectsVariable(span)
     } else {
         err
     }
@@ -82,7 +77,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         let expr = self.parse_expression(lex, op.binding_power().1)?;
         let indices = self.parse_comma_expr(lex, expr)?;
         lex.expect(&Token::ClosedBracket, |s| {
-            ParsingError::UnclosedArrayAccess(subexpr_span(expr_anchor, s.end))
+            ParsingError::UnclosedArrayAccess(s.since(expr_anchor))
         })?;
         Ok(indices)
     }
@@ -104,19 +99,19 @@ impl<'a, 'b> Pratt<'a, 'b> {
             }
             // Reset typed regex acceptance.
             self.typed_regex = false;
-            lhs = if let Ok(op) = UnaryPlaceOperator::parse_suffix(next, &span) {
+            lhs = if let Ok(op) = UnaryPlaceOperator::parse_suffix(next, span) {
                 if op.binding_power() < min_bp {
                     break;
                 }
-                match Place::lower_from(lhs.take(), subexpr_span(expr_anchor, span.end)) {
+                match Place::lower_from(lhs.take(), span.since(expr_anchor)) {
                     Ok(place) => {
                         lex.next();
-                        let node_span = subexpr_span(expr_anchor, lex.span().end);
+                        let node_span = lex.span().since(expr_anchor);
                         Expr::node(op.expr(place), self.parser, node_span)
                     }
                     Err((lhs, _)) => {
                         let rhs = self.parse_prefix(lex)?;
-                        let node_span = subexpr_span(expr_anchor, lex.span().end);
+                        let node_span = lex.span().since(expr_anchor);
                         Expr::node(
                             BinaryOperator::Concat.expr(lhs, rhs),
                             self.parser,
@@ -124,46 +119,44 @@ impl<'a, 'b> Pratt<'a, 'b> {
                         )
                     }
                 }
-            } else if let Ok(op) = BinaryPlaceOperator::parse(next, &span) {
+            } else if let Ok(op) = BinaryPlaceOperator::parse(next, span) {
                 // Places consume assignment operators with maximum precedence
                 // on exprs with certain operators, overriding their precedence.
                 // For example, `1 && x = 1` parses as `1 && (x = 1)`.
                 if min_bp >= BinaryOperator::Concat.binding_power().0 {
                     break;
                 }
-                let place = match Place::lower_from(lhs.take(), subexpr_span(expr_anchor, span.end))
-                {
+                let place = match Place::lower_from(lhs.take(), span.since(expr_anchor)) {
                     Ok(x) => x,
                     Err((expr, _)) => {
                         lhs = expr;
                         if op.binding_power().0 < min_bp {
                             break;
                         }
-                        return Err(ParsingError::OperatorExpectsVariable(subexpr_span(
-                            expr_anchor,
-                            span.end,
-                        )));
+                        return Err(ParsingError::OperatorExpectsVariable(
+                            span.since(expr_anchor),
+                        ));
                     }
                 };
                 self.parse_place_op(lex, op, place, expr_anchor)?
-            } else if let Ok(op) = ArrayOperator::parse(next, &span) {
+            } else if let Ok(op) = ArrayOperator::parse(next, span) {
                 match op {
                     ArrayOperator::Index => {
-                        match Place::lower_from(lhs.take(), subexpr_span(expr_anchor, span.end)) {
+                        match Place::lower_from(lhs.take(), span.since(expr_anchor)) {
                             Ok(Place::Variable(var)) => {
                                 let index = self.parse_index_exprs(lex, op, expr_anchor)?;
-                                let node_span = subexpr_span(expr_anchor, lex.span().end);
+                                let node_span = lex.span().since(expr_anchor);
                                 Expr::node(op.expr(var, index), self.parser, node_span)
                             }
                             Ok(Place::Index(var, index)) => {
-                                let inner_span = subexpr_span(expr_anchor, span.start);
+                                let inner_span = span.up_from(expr_anchor);
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
                                 let inner = Expr::node(
                                     ExprNode::ArrayOperation(ArrayOperator::Index, var, index),
                                     self.parser,
                                     inner_span,
                                 );
-                                let node_span = subexpr_span(expr_anchor, lex.span().end);
+                                let node_span = lex.span().since(expr_anchor);
                                 Expr::node(
                                     ExprNode::NestedArray(inner, new_indices),
                                     self.parser,
@@ -171,14 +164,14 @@ impl<'a, 'b> Pratt<'a, 'b> {
                                 )
                             }
                             Ok(Place::ChainedIndex(arr, indices)) => {
-                                let inner_span = subexpr_span(expr_anchor, span.start);
+                                let inner_span = span.up_from(expr_anchor);
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
                                 let inner = Expr::node(
                                     ExprNode::NestedArray(arr, indices),
                                     self.parser,
                                     inner_span,
                                 );
-                                let node_span = subexpr_span(expr_anchor, lex.span().end);
+                                let node_span = lex.span().since(expr_anchor);
                                 Expr::node(
                                     ExprNode::NestedArray(inner, new_indices),
                                     self.parser,
@@ -186,32 +179,29 @@ impl<'a, 'b> Pratt<'a, 'b> {
                                 )
                             }
                             Ok(_) => {
-                                return Err(ParsingError::OperatorExpectsVariable(subexpr_span(
-                                    expr_anchor,
-                                    span.end,
-                                )));
+                                return Err(ParsingError::OperatorExpectsVariable(
+                                    span.since(expr_anchor),
+                                ));
                             }
                             Err((expr, _)) => {
                                 lhs = expr;
                                 if op.binding_power().0 < min_bp {
                                     break;
                                 }
-                                return Err(ParsingError::OperatorExpectsVariable(subexpr_span(
-                                    expr_anchor,
-                                    span.end,
-                                )));
+                                return Err(ParsingError::OperatorExpectsVariable(
+                                    span.since(expr_anchor),
+                                ));
                             }
                         }
                     }
                     ArrayOperator::In => {
                         lex.next();
                         let Place::Variable(var) = self.parse_place(lex)? else {
-                            return Err(ParsingError::OperatorExpectsVariable(subexpr_span(
-                                expr_anchor,
-                                lex.span().end,
-                            )));
+                            return Err(ParsingError::OperatorExpectsVariable(
+                                lex.span().since(expr_anchor),
+                            ));
                         };
-                        let node_span = subexpr_span(expr_anchor, lex.span().end);
+                        let node_span = lex.span().since(expr_anchor);
                         Expr::node(
                             op.expr(var, vec![in self.parser.arena; lhs.take()]),
                             self.parser,
@@ -219,7 +209,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                         )
                     }
                 }
-            } else if let Ok(op) = BinaryOperator::parse(next, &span)
+            } else if let Ok(op) = BinaryOperator::parse(next, span)
                 && !matches!(next, Token::Increment | Token::Decrement)
             {
                 if op.binding_power().0 < min_bp {
@@ -255,7 +245,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         if min_bp < UnaryOperator::Record.binding_power() && lex.peek_is(&Token::Comma) {
             let expr = self.parse_comma_expr(lex, inner)?;
             lex.expect(&Token::ClosedParent, |s| {
-                ParsingError::UnclosedParenthesisExpression(subexpr_span(anchor, s.end))
+                ParsingError::UnclosedParenthesisExpression(s.since(anchor))
             })?;
             lex.expect(&Token::In, |s| {
                 ParsingError::UnexpectedToken(
@@ -264,12 +254,11 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 )
             })?;
             let Place::Variable(var) = self.parse_place(lex)? else {
-                return Err(ParsingError::OperatorExpectsVariable(subexpr_span(
-                    anchor,
-                    lex.span().end,
-                )));
+                return Err(ParsingError::OperatorExpectsVariable(
+                    lex.span().since(anchor),
+                ));
             };
-            let node_span = subexpr_span(anchor, lex.span().end);
+            let node_span = lex.span().since(anchor);
             Ok(Expr::node(
                 ArrayOperator::In.expr(var, expr),
                 self.parser,
@@ -277,9 +266,9 @@ impl<'a, 'b> Pratt<'a, 'b> {
             ))
         } else {
             lex.expect(&Token::ClosedParent, |s| {
-                ParsingError::UnclosedParenthesisExpression(subexpr_span(anchor, s.end))
+                ParsingError::UnclosedParenthesisExpression(s.since(anchor))
             })?;
-            let node_span = subexpr_span(anchor, lex.span().end);
+            let node_span = lex.span().since(anchor);
             let inner = Expr::node(ExprNode::Parenthesized(inner), self.parser, node_span);
             Ok(inner)
         }
@@ -290,21 +279,19 @@ impl<'a, 'b> Pratt<'a, 'b> {
         let next = lex.expect_next()?;
         // No prefix operator accepts them.
         self.typed_regex = false;
-        if let Ok(op) =
-            UnaryPlaceOperator::parse_prefix(&next, &subexpr_span(anchor, lex.span().end))
-        {
+        if let Ok(op) = UnaryPlaceOperator::parse_prefix(&next, lex.span().since(anchor)) {
             let rhs = self
                 .parse_place(lex)
-                .map_err(|e| extend_operator_expects_variable(e, anchor, lex.span().end))?;
-            let node_span = subexpr_span(anchor, lex.span().end);
+                .map_err(|e| extend_operator_expects_variable(e, lex.span().since(anchor)))?;
+            let node_span = lex.span().since(anchor);
             Ok(Expr::node(op.expr(rhs), self.parser, node_span))
-        } else if let Ok(op) = UnaryOperator::parse(&next, &lex.peeked_span()?) {
+        } else if let Ok(op) = UnaryOperator::parse(&next, lex.peeked_span()?) {
             let rhs = self.parse_expression(lex, op.binding_power())?;
-            let node_span = subexpr_span(anchor, lex.span().end);
+            let node_span = lex.span().since(anchor);
             Ok(Expr::node(op.expr(rhs), self.parser, node_span))
         } else {
             Err(ParsingError::InvalidExpression(
-                subexpr_span(anchor, lex.span().end),
+                lex.span().since(anchor),
                 "expected a valid prefix operator".into(),
             ))
         }
@@ -314,12 +301,12 @@ impl<'a, 'b> Pratt<'a, 'b> {
         // Consumes with maximum precedence the following place and/or
         // redirection reading from file. Does not accept typed regexes.
         let anchor = lex.span().start;
-        let keyword_end = lex.span().end;
+        let keyword_span = lex.span();
         self.typed_regex = false;
         let place = if lex.peek_with(Token::is_place) {
             Some(Place::lower_from(
                 self.parse_redirection(lex)?,
-                subexpr_span(anchor, lex.span().end),
+                lex.span().since(anchor),
             ))
         } else {
             None
@@ -332,9 +319,9 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 let getline = Expr::node(
                     ExprNode::Getline(Getline::FromInput(None)),
                     self.parser,
-                    subexpr_span(anchor, keyword_end),
+                    keyword_span.since(anchor),
                 );
-                let node_span = subexpr_span(anchor, lex.span().end);
+                let node_span = lex.span().since(anchor);
                 Ok(Expr::node(
                     BinaryOperator::Concat.expr(getline, expr),
                     self.parser,
@@ -344,14 +331,14 @@ impl<'a, 'b> Pratt<'a, 'b> {
             Ok(place) => {
                 if lex.consume(&Token::LesserThan) {
                     let file = self.parse_expression(lex, BinaryOperator::Lt.binding_power().1)?;
-                    let node_span = subexpr_span(anchor, lex.span().end);
+                    let node_span = lex.span().since(anchor);
                     Ok(Expr::node(
                         ExprNode::Getline(Getline::FromFile(place, file)),
                         self.parser,
                         node_span,
                     ))
                 } else {
-                    let node_span = subexpr_span(anchor, lex.span().end);
+                    let node_span = lex.span().since(anchor);
                     Ok(Expr::node(
                         ExprNode::Getline(Getline::FromInput(place)),
                         self.parser,
@@ -380,7 +367,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     lex.span(),
                 )
             } else {
-                let leaf_span = subexpr_span(anchor, lex.span().end);
+                let leaf_span = lex.span().since(anchor);
                 Ok(Expr::leaf(
                     Atom::Variable(Variable::User(name)),
                     self.parser,
@@ -400,7 +387,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
             self.parser.parse_function_call(
                 lex,
                 |args| ExprNode::IndirectCall(name, args),
-                subexpr_span(anchor, lex.span().end),
+                lex.span().since(anchor),
             )
         } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed() {
             let name = match self.parser.get_place(lex, next) {
@@ -408,18 +395,18 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 Err((_, tok)) => format!("{tok:?}"),
             };
             Err(ParsingError::SpecialVariableCall(
-                subexpr_span(anchor, lex.span().end),
+                lex.span().since(anchor),
                 name,
             ))
         } else {
             match self.parser.parse_atom(lex, next, self.typed_regex) {
                 Ok(atom) => {
-                    let leaf_span = subexpr_span(anchor, lex.span().end);
+                    let leaf_span = lex.span().since(anchor);
                     Ok(Expr::leaf(atom, self.parser, leaf_span))
                 }
                 // Add detail to this error.
                 Err(ParsingError::UnexpectedToken(_, str)) => Err(ParsingError::InvalidExpression(
-                    subexpr_span(anchor, lex.span().end),
+                    lex.span().since(anchor),
                     str,
                 )),
                 Err(e) => Err(e),
@@ -451,10 +438,10 @@ impl<'a, 'b> Pratt<'a, 'b> {
         let mut rhs = self.parse_expression(lex, op.binding_power().1)?;
         if is_regex && let Expr::Leaf(Atom::Regex(r), _) = rhs {
             // Has interactions with pretty printing, but makes the interpreter easier.
-            let rhs_span = subexpr_span(rhs_anchor, lex.span().end);
+            let rhs_span = lex.span().since(rhs_anchor);
             rhs = Expr::leaf(Atom::TypedRegex(r), self.parser, rhs_span);
         }
-        let node_span = subexpr_span(expr_anchor, lex.span().end);
+        let node_span = lex.span().since(expr_anchor);
         Ok(Expr::node(op.expr(lhs, rhs), self.parser, node_span))
     }
 
@@ -477,7 +464,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 lex.next_if(|t| matches!(t, Token::TypedRegex(_)))?
         {
             let anchor = lex.span().start;
-            let leaf_span = subexpr_span(anchor, lex.span().end);
+            let leaf_span = lex.span().since(anchor);
             let lhs = Expr::leaf(Atom::TypedRegex(slice), self.parser, leaf_span);
             // We fold it in order to catch invalid cases, like `x = @/a/ + 1`.
             // Also allows us to bypass ternaries without binding power hacks.
@@ -487,7 +474,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         } else {
             self.parse_expression(lex, op.binding_power().1)?
         };
-        let node_span = subexpr_span(expr_anchor, lex.span().end);
+        let node_span = lex.span().since(expr_anchor);
         Ok(Expr::node(op.expr(place, rhs), self.parser, node_span))
     }
 
@@ -506,17 +493,15 @@ impl<'a, 'b> Pratt<'a, 'b> {
             Token::OpenParent => {
                 // advance expression for nicer errors
                 let _ = self.parse_expression(lex, 0);
-                Expr::leaf(
-                    Atom::Number(0.),
-                    self.parser,
-                    subexpr_span(start, lex.span().end),
-                )
+                Expr::leaf(Atom::Number(0.), self.parser, lex.span().since(start))
             }
             tok if tok.is_place() => {
                 let expr = self.parse_lhs(lex, 0)?;
                 if lex.peek_is(&Token::OpenBracket) {
                     let Expr::Leaf(Atom::Variable(var), _) = expr else {
-                        return Err(ParsingError::OperatorExpectsVariable(start..lex.span().end));
+                        return Err(ParsingError::OperatorExpectsVariable(
+                            lex.span().since(start),
+                        ));
                     };
 
                     let index = self.parse_index_exprs(lex, ArrayOperator::Index, start)?;
@@ -528,7 +513,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     let mut lhs = Expr::node(
                         ExprNode::ArrayOperation(ArrayOperator::Index, var, index),
                         self.parser,
-                        subexpr_span(start, lex.span().end),
+                        lex.span().since(start),
                     );
 
                     while lex.peek_is(&Token::OpenBracket) {
@@ -537,7 +522,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                             lhs = Expr::node(
                                 ExprNode::NestedArray(lhs, index),
                                 self.parser,
-                                subexpr_span(start, lex.span().end),
+                                lex.span().since(start),
                             );
                         } else {
                             return Ok(Place::ChainedIndex(lhs, index));
@@ -548,14 +533,11 @@ impl<'a, 'b> Pratt<'a, 'b> {
             }
             _ => {
                 lex.next();
-                Expr::leaf(
-                    Atom::Number(0.),
-                    self.parser,
-                    subexpr_span(start, lex.span().end),
-                ) // force error below
+                // force error below
+                Expr::leaf(Atom::Number(0.), self.parser, lex.span().since(start))
             }
         };
-        Place::lower_from(lhs, start..lex.span().end).map_err(Into::into)
+        Place::lower_from(lhs, lex.span().since(start)).map_err(Into::into)
     }
 
     /// Continuously consumes comma-separated expressions.
@@ -585,7 +567,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         let then_branch = self.parse_expression(lex, right_bp)?;
         lex.expect(&Token::Colon, ParsingError::MissingTernaryOr)?;
         let else_branch = self.parse_expression(lex, right_bp)?;
-        let node_span = subexpr_span(expr_anchor, lex.span().end);
+        let node_span = lex.span().since(expr_anchor);
         Ok(Expr::node(
             ExprNode::Ternary(lhs, then_branch, else_branch),
             self.parser,
@@ -607,14 +589,14 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 "operand must precede `getline` in an expression.".into(),
             )
         })?;
-        let getline_end = lex.span().end;
+        let getline_span = lex.span();
 
         if lex.peek_with(Token::is_place) {
             let anchor = lex.peeked_span()?.start;
             let expr = self.parse_redirection(lex)?;
-            match Place::lower_from(expr, subexpr_span(anchor, lex.span().end)) {
+            match Place::lower_from(expr, lex.span().since(anchor)) {
                 Ok(place) => {
-                    let node_span = subexpr_span(expr_anchor, lex.span().end);
+                    let node_span = lex.span().since(expr_anchor);
                     Ok(Expr::node(
                         op.expr_getline(Some(place), lhs),
                         self.parser,
@@ -625,9 +607,9 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     let pipe = Expr::node(
                         op.expr_getline(None, lhs),
                         self.parser,
-                        subexpr_span(expr_anchor, getline_end),
+                        getline_span.since(expr_anchor),
                     );
-                    let node_span = subexpr_span(expr_anchor, lex.span().end);
+                    let node_span = lex.span().since(expr_anchor);
                     Ok(Expr::node(
                         BinaryOperator::Concat.expr(pipe, expr),
                         self.parser,
@@ -636,7 +618,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 }
             }
         } else {
-            let node_span = subexpr_span(expr_anchor, getline_end);
+            let node_span = getline_span.since(expr_anchor);
             Ok(Expr::node(
                 op.expr_getline(None, lhs),
                 self.parser,

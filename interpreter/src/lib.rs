@@ -49,11 +49,11 @@ impl Diagnostic for InterpreterError {
     }
     fn span(&self) -> Option<Span> {
         match self {
-            Self::DivByZeroAttempted((_, span), _)
-            | Self::UnknownIndFunction((_, span), _)
-            | Self::RecursionDepth((_, span))
-            | Self::ArityMismatch((_, span), _, _)
-            | Self::UnknownFunction((_, span)) => Some(span.clone()),
+            &Self::DivByZeroAttempted(AriadneSpan(_, span), _)
+            | &Self::UnknownIndFunction(AriadneSpan(_, span), _)
+            | &Self::RecursionDepth(AriadneSpan(_, span))
+            | &Self::ArityMismatch(AriadneSpan(_, span), _, _)
+            | &Self::UnknownFunction(AriadneSpan(_, span)) => Some(span),
         }
     }
     fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {

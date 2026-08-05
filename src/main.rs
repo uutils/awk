@@ -77,6 +77,7 @@ fn uu_main() -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     if args.debug.is_some() {
         use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
+        use parser::AriadneSpan;
 
         let code = args.code.unwrap();
         let source = String::from_utf8_lossy(code.as_encoded_bytes());
@@ -84,8 +85,8 @@ fn uu_main() -> Result<()> {
         assert_eq!(bc.code.len(), bc.metadata.len());
 
         let bytecode = bc.code.iter().zip(bc.metadata.iter()).map(|(&x, &m)| {
-            let (file, span) = &metadata[m];
-            let span = source[span.clone()].to_string();
+            let &AriadneSpan(ref file, span) = &metadata[m];
+            let span = source[span].to_string();
 
             let span = source
                 .split_once('\n')

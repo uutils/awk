@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn builtin_error_converts_with_span() {
         let err = BuiltinError::Arity { expected: 2, given: 1 };
-        let span = (parser::FileCache(None), 0..1);
+        let span = AriadneSpan(parser::FileCache(None), (0..1).into());
         assert!(matches!(
             err.into_interpreter_error(span),
             InterpreterError::ArityMismatch(_, 2, 1)

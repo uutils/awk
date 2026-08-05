@@ -321,12 +321,14 @@ pub enum Command {
 
 impl<'a> Expr<'a> {
     pub fn leaf(from: impl Into<Atom<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
-        let metadata = parser.ast.loc_metadata.store((parser.file.clone(), span));
+        let span = AriadneSpan(parser.file.clone(), span);
+        let metadata = parser.ast.loc_metadata.store(span);
         Self::Leaf(from.into(), metadata)
     }
 
     pub fn node(op: impl Into<ExprNode<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
-        let metadata = parser.ast.loc_metadata.store((parser.file.clone(), span));
+        let span = AriadneSpan(parser.file.clone(), span);
+        let metadata = parser.ast.loc_metadata.store(span);
         Self::Node(Box::new_in(op.into(), parser.arena), metadata)
     }
 }
@@ -398,14 +400,14 @@ impl From<f64> for Atom<'_> {
 }
 
 impl<'a> UnaryOperator {
-    pub fn parse(value: &Token<'a>, span: &Span) -> Result<Self> {
+    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
         match value {
             Token::Record => Ok(Self::Record),
             Token::Negation => Ok(Self::Negation),
             Token::Plus => Ok(Self::ToInt),
             Token::Minus => Ok(Self::Negative),
             _ => Err(ParsingError::UnexpectedToken(
-                span.clone(),
+                span,
                 "expected an unary operator.".into(),
             )),
         }
@@ -413,7 +415,7 @@ impl<'a> UnaryOperator {
 }
 
 impl<'a> BinaryOperator {
-    pub fn parse(value: &Token<'a>, span: &Span) -> Result<Self> {
+    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
         match value {
             Token::EqualTo => Ok(Self::Eq),
             Token::NotEqualTo => Ok(Self::NEq),
@@ -433,7 +435,7 @@ impl<'a> BinaryOperator {
             Token::Percent => Ok(Self::Modulo),
             t if t.is_expr_start() => Ok(Self::Concat),
             _ => Err(ParsingError::UnexpectedToken(
-                span.clone(),
+                span,
                 "expected a binary operator.".into(),
             )),
         }
@@ -441,25 +443,25 @@ impl<'a> BinaryOperator {
 }
 
 impl UnaryPlaceOperator {
-    pub fn parse_prefix(value: &Token<'_>, span: &Span) -> Result<Self> {
+    pub fn parse_prefix(value: &Token<'_>, span: Span) -> Result<Self> {
         match value {
             Token::Increment => Ok(Self::IncrementL),
             Token::Decrement => Ok(Self::DecrementL),
-            _ => Err(ParsingError::OperatorExpectsVariable(span.clone())),
+            _ => Err(ParsingError::OperatorExpectsVariable(span)),
         }
     }
 
-    pub fn parse_suffix(value: &Token<'_>, span: &Span) -> Result<Self> {
+    pub fn parse_suffix(value: &Token<'_>, span: Span) -> Result<Self> {
         match value {
             Token::Increment => Ok(Self::IncrementR),
             Token::Decrement => Ok(Self::DecrementR),
-            _ => Err(ParsingError::OperatorExpectsVariable(span.clone())),
+            _ => Err(ParsingError::OperatorExpectsVariable(span)),
         }
     }
 }
 
 impl<'a> BinaryPlaceOperator {
-    pub fn parse(value: &Token<'a>, span: &Span) -> Result<Self> {
+    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
         match value {
             Token::Assignment => Ok(Self::Assignment),
             Token::PlusAssign => Ok(Self::AddAssign),
@@ -469,7 +471,7 @@ impl<'a> BinaryPlaceOperator {
             Token::CaretAssign => Ok(Self::PowAssign),
             Token::PercentAssign => Ok(Self::ModAssign),
             _ => Err(ParsingError::UnexpectedToken(
-                span.clone(),
+                span,
                 "expected a place operator.".into(),
             )),
         }
@@ -477,12 +479,12 @@ impl<'a> BinaryPlaceOperator {
 }
 
 impl<'a> ArrayOperator {
-    pub fn parse(value: &Token<'a>, span: &Span) -> Result<Self> {
+    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
         match value {
             Token::OpenBracket => Ok(Self::Index),
             Token::In => Ok(Self::In),
             _ => Err(ParsingError::UnexpectedToken(
-                span.clone(),
+                span,
                 "expected an array operator.".into(),
             )),
         }

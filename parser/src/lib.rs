@@ -27,7 +27,10 @@ pub use crate::{
     diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError},
     lex::Lexer,
 };
-use crate::{lex::TokenExt, pratt::Pratt};
+use crate::{
+    lex::{SpanExt, TokenExt},
+    pratt::Pratt,
+};
 
 type Result<T, E = ParsingError> = std::result::Result<T, E>;
 
@@ -251,7 +254,7 @@ impl<'a> Parser<'a> {
                     after_separator = consumed;
                 }
                 None => {
-                    break Err(ParsingError::UnclosedScope(start_span..lex.span().end));
+                    break Err(ParsingError::UnclosedScope(lex.span().since(start_span)));
                 }
             }
         }
@@ -266,11 +269,9 @@ impl<'a> Parser<'a> {
         let (peek, start) = lex.peek_with_span()?;
         let (peek, start) = (peek.ok()?, start.start);
         if peek.is_expr_start() {
-            Some(
-                self.parse_expression(lex, false).map(|e| {
-                    SimpleStatement::Expression(e, self.gen_metadata(start..lex.span().end))
-                }),
-            )
+            Some(self.parse_expression(lex, false).map(|e| {
+                SimpleStatement::Expression(e, self.gen_metadata(lex.span().since(start)))
+            }))
         } else {
             match peek {
                 token if let Some(name) = token.maps_to_command() => {
@@ -317,7 +318,7 @@ impl<'a> Parser<'a> {
                         .consume(&Token::Else)
                         .then(|| self.parse_statement_body(lex))
                         .transpose()?;
-                    let metadata = self.gen_metadata(start..lex.span().end);
+                    let metadata = self.gen_metadata(lex.span().since(start));
                     Statement::If { condition, then_body, else_body, metadata }
                 }
                 Token::For => {
@@ -400,7 +401,7 @@ impl<'a> Parser<'a> {
                         Some(Left(atom)) => branches.push((atom, body.into())),
                         _ => {}
                     }
-                    let metadata = self.gen_metadata(start..lex.span().end);
+                    let metadata = self.gen_metadata(lex.span().since(start));
 
                     Statement::Switch { scrutinee, branches, default, metadata }
                 }
@@ -408,14 +409,14 @@ impl<'a> Parser<'a> {
                     let condition = self.parse_parenthesized_expr(lex)?;
                     let then_body =
                         self.with_loop_context(|this| this.parse_statement_body(lex))?;
-                    let metadata = self.gen_metadata(start..lex.span().end);
+                    let metadata = self.gen_metadata(lex.span().since(start));
                     Statement::While { condition, then_body, metadata }
                 }
                 Token::Do => {
                     let then_body = self.with_loop_context(|this| this.parse_body(lex))?;
                     lex.expect(&Token::While, ParsingError::MissingWhileAfterDo)?;
                     let condition = self.parse_parenthesized_expr(lex)?;
-                    let metadata = self.gen_metadata(start..lex.span().end);
+                    let metadata = self.gen_metadata(lex.span().since(start));
                     Statement::DoWhile { then_body, condition, metadata }
                 }
                 Token::Break => {
@@ -438,7 +439,7 @@ impl<'a> Parser<'a> {
                         (!lex.peek_with(Token::is_stmnt_or_block_end))
                             .then(|| self.parse_expression(lex, true))
                             .transpose()?,
-                        self.gen_metadata(start..lex.span().end),
+                        self.gen_metadata(lex.span().since(start)),
                     )
                 }
                 Token::Next => Statement::Next(self.gen_metadata(lex.span())),
@@ -447,7 +448,7 @@ impl<'a> Parser<'a> {
                     (!lex.peek_with(Token::is_stmnt_or_block_end))
                         .then(|| self.parse_expression(lex, false))
                         .transpose()?,
-                    self.gen_metadata(start..lex.span().end),
+                    self.gen_metadata(lex.span().since(start)),
                 ),
                 _ => {
                     return Err(ParsingError::UnexpectedToken(
@@ -502,7 +503,7 @@ impl<'a> Parser<'a> {
 
         lex.expect(&Token::ClosedParent, ParsingError::InvalidForLoop)?;
         let body = self.with_loop_context(|this| this.parse_statement_body(lex))?;
-        let metadata = self.gen_metadata(start..lex.span().end);
+        let metadata = self.gen_metadata(lex.span().since(start));
         Ok(Statement::For { init, condition, update, body, metadata })
     }
 
@@ -535,7 +536,7 @@ impl<'a> Parser<'a> {
         )?;
 
         let body = self.with_loop_context(|this| this.parse_statement_body(lex))?;
-        let metadata = self.gen_metadata(start..lex.span().end);
+        let metadata = self.gen_metadata(lex.span().since(start));
         Ok(Statement::ForEach { variable, array, body, metadata })
     }
 
@@ -561,7 +562,7 @@ impl<'a> Parser<'a> {
         if terminator || lex.peek_is(&Token::ClosedBrace) {
             Ok(vec![in self.arena; statement].into())
         } else {
-            Err(ParsingError::ExpectedStatementEnd(start..lex.span().end))
+            Err(ParsingError::ExpectedStatementEnd(lex.span().since(start)))
         }
     }
 
@@ -591,11 +592,12 @@ impl<'a> Parser<'a> {
                 let is_err = args.len() > 1;
                 // We parse anyway to advance the lexer.
                 let start_extra = lex.span().start;
+                let parent_args = lex.span().since(start);
                 self.parse_command_args(lex, &mut args)?;
                 if is_err {
                     return Err(ParsingError::CommandDoubleCall(
-                        start..lex.span().end,
-                        start_extra..lex.span().end,
+                        parent_args,
+                        lex.span().since(start_extra),
                     ));
                 }
             }
@@ -605,7 +607,7 @@ impl<'a> Parser<'a> {
             self.parse_command_args(lex, &mut args).map(|_| args)?
         };
         let redirection = self.parse_command_redirection(lex)?;
-        let metadata = self.gen_metadata(start..lex.span().end);
+        let metadata = self.gen_metadata(lex.span().since(start));
         Ok(SimpleStatement::Command { name, args, redirection, metadata })
     }
 
@@ -618,7 +620,7 @@ impl<'a> Parser<'a> {
         let start = lex.span().start;
         let expr =
             self.parse_function_call(lex, |args| ExprNode::BuiltinCall(builtin, args), lex.span())?;
-        let metadata = self.gen_metadata(start..lex.span().end);
+        let metadata = self.gen_metadata(lex.span().since(start));
         Ok(SimpleStatement::Expression(expr, metadata))
     }
 
@@ -686,7 +688,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let metadata = self.gen_metadata(start..lex.span().end);
+        let metadata = self.gen_metadata(lex.span().since(start));
         Ok(SimpleStatement::Delete(var, index, metadata))
     }
 
@@ -802,7 +804,7 @@ impl<'a> Parser<'a> {
             &Token::ClosedParent,
             ParsingError::FunctionCallMissingParenthesis,
         )?;
-        Ok(Expr::node(expr, self, start..lex.span().end))
+        Ok(Expr::node(expr, self, lex.span().since(start)))
     }
 
     #[tracing::instrument]
@@ -869,7 +871,8 @@ impl<'a> Parser<'a> {
     }
 
     fn gen_metadata(&mut self, span: Span) -> MetaId {
-        self.ast.loc_metadata.store((self.file.clone(), span))
+        let span = AriadneSpan(self.file.clone(), span);
+        self.ast.loc_metadata.store(span)
     }
 }
 
@@ -922,9 +925,9 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
             Ok(Identifier { namespace, literal: self.literal })
         } else if !no_space {
             // Space between namespace and path specifier.
-            let space_span = Some(Left(span.end..lex.span().start));
+            let space_span = Some(Left(lex.span().up_from(span.end)));
             lex.consume_with(Token::is_ident_place);
-            let ident_span = span.start..lex.span().end;
+            let ident_span = lex.span().since(span.start);
             Err(ParsingError::ExpectedIdentifier(ident_span, space_span))
         } else if lex.peek_with(Token::is_ident_place) && lex.is_yuxtaposed() {
             lex.next();
@@ -934,9 +937,8 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
         } else {
             // Try to select space between the path specifier and next one.
             let space_span = (lex.peek().is_none() || !lex.is_yuxtaposed())
-                .then(|| lex.span().end..lex.peeked_span().map_or(lex.span().end, |s| s.start))
-                .map(Right);
-            let err_span = span.start..lex.peeked_span().unwrap_or(lex.span()).end;
+                .then(|| Right(lex.span_peeked_up_to(lex.span().end)));
+            let err_span = lex.span_peeked_since(span.start);
             Err(ParsingError::ExpectedIdentifier(err_span, space_span))
         }
     }
