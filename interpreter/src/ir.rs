@@ -69,6 +69,7 @@ pub enum Instruction {
     StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     StoreA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal, arg: Reg },
     LoadA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal },
+    PureCopy { dest: Reg, arg: Arg, ty: ArgTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
@@ -206,7 +207,8 @@ impl Display for Instruction {
             | Self::Negation { dest, arg, ty }
             | Self::ToInt { dest, arg, ty }
             | Self::Negative { dest, arg, ty }
-            | Self::Copy { dest, arg, ty } => {
+            | Self::Copy { dest, arg, ty }
+            | Self::PureCopy { dest, arg, ty } => {
                 write!(f, "{dest} <- {op}")?;
                 fmt_arg(f, arg, ty, " ")
             }
@@ -316,6 +318,7 @@ impl Instruction {
             Self::StoreA { .. } => "astore",
             Self::LoadA { .. } => "aload",
             Self::Copy { .. } => "cpy",
+            Self::PureCopy { .. } => "pcpy",
             Self::IntrinsicCall { .. } => "icall",
             Self::UserCall { .. } => "ucall",
             Self::IndirectCall { .. } => "vcall",

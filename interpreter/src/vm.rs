@@ -320,7 +320,7 @@ impl<'a> SymbolTable<'a> {
             .borrow()
             .get(key)
             .cloned()
-            .unwrap_or(Value::Unassigned)
+            .unwrap_or(Value::Untyped)
     }
 
     fn store_user_array_elem(&mut self, var: NonLocal, key: String, value: Value<'a>) {
@@ -441,6 +441,10 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::Copy { dest, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    self.write_reg(dest, val);
+                }
+                Instruction::PureCopy { dest, arg, ty } => {
+                    let val = arg.get_pure(ty, self, &mut MaybeUninit::uninit()).clone();
                     self.write_reg(dest, val);
                 }
                 Instruction::Eq { dest, lhs, rhs, tyl, tyr } => {
@@ -839,6 +843,23 @@ impl Arg {
         let rhs = unsafe { rhs.read_already_prepared(tyr, intrp, &stack_space_rhs) };
 
         f(lhs, rhs)
+    }
+
+    /// Gets a value without scalar/array side-effects.
+    fn get_pure<'v, 'a>(
+        self,
+        ty: ArgTy,
+        intrp: &'v Interpreter<'a>,
+        stack_space: &'v mut MaybeUninit<Value<'a>>,
+    ) -> &'v Value<'a> {
+        match ty {
+            ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
+            ArgTy::Rec => todo!(),
+            ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as _)),
+            ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
+            _ => todo!(),
+        }
     }
 
     /// Only exists to make the borrow checker happy. To be used in conjunction

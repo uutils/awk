@@ -256,7 +256,8 @@ fn typeof_value<'a>(v: &Value<'_>) -> Value<'a> {
         Value::String(_) => b"string",
         Value::Regex(_) => b"regexp",
         Value::Array(_) => b"array",
-        Value::Untyped | Value::Unassigned => b"untyped",
+        Value::Untyped => b"untyped",
+        Value::Unassigned => b"unassigned",
     };
     Value::String(name.into())
 }
