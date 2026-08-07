@@ -248,10 +248,13 @@ impl<'a> Parser<'a> {
                     lex.next();
                     break Err(ParsingError::ExpectedStatementEnd(lex.span()));
                 }
-                Some(_) => {
+                Some(_) if after_separator || depth > 0 => {
                     let (statement, consumed) = self.parse_statement_with_trailing(lex)?;
                     body.push(statement);
                     after_separator = consumed;
+                }
+                Some(_) => {
+                    break Err(ParsingError::ExpectedStatementEnd(lex.span()));
                 }
                 None => {
                     break Err(ParsingError::UnclosedScope(lex.span().since(start_span)));
@@ -302,6 +305,7 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
     ) -> Result<(Statement<'a>, bool)> {
+        let mut self_terminated = false;
         let statement = if let Some(statement) = self.parse_simple_statement(lex) {
             Statement::Simple(statement?)
         } else {
@@ -313,18 +317,21 @@ impl<'a> Parser<'a> {
             match next {
                 Token::If => {
                     let condition = self.parse_parenthesized_expr(lex)?;
-                    let then_body = self.parse_statement_body(lex)?;
-                    let else_body = lex
-                        .consume(&Token::Else)
-                        .then(|| self.parse_statement_body(lex))
-                        .transpose()?;
+                    let (then_body, then_terminated) = self.parse_statement_body(lex)?;
+                    let (else_body, terminated) = if lex.consume(&Token::Else) {
+                        let (body, terminated) = self.parse_statement_body(lex)?;
+                        (Some(body), terminated)
+                    } else {
+                        (None, then_terminated)
+                    };
+                    self_terminated = terminated;
                     let metadata = self.gen_metadata(lex.span().since(start));
                     Statement::If { condition, then_body, else_body, metadata }
                 }
                 Token::For => {
                     lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
 
-                    if lex.peek_is(&Token::Semicolon) {
+                    let (statement, terminated) = if lex.peek_is(&Token::Semicolon) {
                         self.parse_for_loop(lex, None, start)?
                     } else {
                         let enclosed = lex.consume(&Token::OpenParent);
@@ -340,7 +347,9 @@ impl<'a> Parser<'a> {
                         } else {
                             self.parse_for_ambiguous(lex, Some(stmnt), start)?
                         }
-                    }
+                    };
+                    self_terminated = terminated;
+                    statement
                 }
                 Token::Switch => {
                     let scrutinee = self.parse_parenthesized_expr(lex)?;
@@ -403,12 +412,15 @@ impl<'a> Parser<'a> {
                     }
                     let metadata = self.gen_metadata(lex.span().since(start));
 
+                    // Always ends in an explicit `}`, so it's self-terminated.
+                    self_terminated = true;
                     Statement::Switch { scrutinee, branches, default, metadata }
                 }
                 Token::While => {
                     let condition = self.parse_parenthesized_expr(lex)?;
-                    let then_body =
+                    let (then_body, terminated) =
                         self.with_loop_context(|this| this.parse_statement_body(lex))?;
+                    self_terminated = terminated;
                     let metadata = self.gen_metadata(lex.span().since(start));
                     Statement::While { condition, then_body, metadata }
                 }
@@ -459,7 +471,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let consumed = lex.consume_with(Token::is_stmnt_end);
+        let consumed = lex.consume_with(Token::is_stmnt_end) || self_terminated;
         Ok((statement, consumed))
     }
 
@@ -483,7 +495,7 @@ impl<'a> Parser<'a> {
         lex: &mut Lexer<'a>,
         init: Option<SimpleStatement<'a>>,
         start: usize,
-    ) -> Result<Statement<'a>> {
+    ) -> Result<(Statement<'a>, bool)> {
         lex.consume(&Token::Semicolon);
         lex.consume(&Token::Newline);
         let condition = (!lex.peek_is(&Token::Semicolon))
@@ -502,9 +514,12 @@ impl<'a> Parser<'a> {
         };
 
         lex.expect(&Token::ClosedParent, ParsingError::InvalidForLoop)?;
-        let body = self.with_loop_context(|this| this.parse_statement_body(lex))?;
+        let (body, terminated) = self.with_loop_context(|this| this.parse_statement_body(lex))?;
         let metadata = self.gen_metadata(lex.span().since(start));
-        Ok(Statement::For { init, condition, update, body, metadata })
+        Ok((
+            Statement::For { init, condition, update, body, metadata },
+            terminated,
+        ))
     }
 
     #[tracing::instrument]
@@ -513,7 +528,7 @@ impl<'a> Parser<'a> {
         lex: &mut Lexer<'a>,
         expr: Option<SimpleStatement<'a>>,
         start: usize,
-    ) -> Result<Statement<'a>> {
+    ) -> Result<(Statement<'a>, bool)> {
         let (array, variable) = match expr {
             Some(SimpleStatement::Expression(Expr::Node(node, _), _))
                 if matches!(&*node, ExprNode::ArrayOperation(ArrayOperator::In, _, _)) =>
@@ -535,24 +550,27 @@ impl<'a> Parser<'a> {
             ParsingError::UnclosedParenthesisInStatement,
         )?;
 
-        let body = self.with_loop_context(|this| this.parse_statement_body(lex))?;
+        let (body, terminated) = self.with_loop_context(|this| this.parse_statement_body(lex))?;
         let metadata = self.gen_metadata(lex.span().since(start));
-        Ok(Statement::ForEach { variable, array, body, metadata })
+        Ok((
+            Statement::ForEach { variable, array, body, metadata },
+            terminated,
+        ))
     }
 
     #[tracing::instrument]
-    fn parse_statement_body(&mut self, lex: &mut Lexer<'a>) -> Result<Body<'a>> {
+    fn parse_statement_body(&mut self, lex: &mut Lexer<'a>) -> Result<(Body<'a>, bool)> {
         // Ignore newlines in this position.
         lex.consume(&Token::Newline);
 
         // Braced body, with >=1 statements.
         if lex.peek_is(&Token::OpenBrace) {
-            return self.parse_body(lex);
+            return Ok((self.parse_body(lex)?, true));
         }
 
         // Empty body check. Accepts cases like `if (...);`.
         if lex.consume(&Token::Semicolon) {
-            return Ok(Vec::new_in(self.arena).into());
+            return Ok((Vec::new_in(self.arena).into(), true));
         }
 
         // Parses a single statement.
@@ -560,7 +578,7 @@ impl<'a> Parser<'a> {
         let (statement, terminator) = self.parse_statement_with_trailing(lex)?;
 
         if terminator || lex.peek_is(&Token::ClosedBrace) {
-            Ok(vec![in self.arena; statement].into())
+            Ok((vec![in self.arena; statement].into(), terminator))
         } else {
             Err(ParsingError::ExpectedStatementEnd(lex.span().since(start)))
         }
