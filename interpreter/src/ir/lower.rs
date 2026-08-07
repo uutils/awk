@@ -11,7 +11,7 @@ use bumpalo::{Bump, collections::Vec};
 use parser::{
     ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
     Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
-    SimpleStatement, Statement, UnaryPlaceOperator, Variable,
+    SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
 
 use crate::{
@@ -218,21 +218,16 @@ impl<'a> CodeGen<'a> {
                     // body:
                     //   ...; jmp continue
                     this.with_break_scope(|this| {
-                        let to_body = this.emit(Instruction::Jump { to: Label(0) });
-                        let continue_label = this.following_instr(0);
+                        let (branch, continue_label) = this.emit_jump(|this| {
+                            let continue_label = this.following_instr(0);
 
-                        let cond_reg = this.alloc_reg();
-                        this.lower_expr_into(condition, *cond_reg);
-                        let branch = this.emit(Instruction::Branch {
-                            condition: *cond_reg,
-                            then_label: Label(0),
-                            else_label: Label(0),
+                            let cond_reg = this.alloc_reg();
+                            this.lower_expr_into(condition, *cond_reg);
+                            let then_label = this.following_instr(1);
+                            let branch = this.emit(Instruction::br(*cond_reg, then_label));
+                            this.free_reg(cond_reg);
+                            (branch, continue_label)
                         });
-                        this.free_reg(cond_reg);
-
-                        let body_label = this.following_instr(0);
-                        this.bc.nth(to_body).set_label(body_label);
-                        this.bc.nth(branch).set_then_label(body_label);
 
                         this.with_continue_label(continue_label, |this| {
                             this.lower_body(then_body);
@@ -254,32 +249,30 @@ impl<'a> CodeGen<'a> {
                     //   init; jmp cond
                     // continue: update
                     // cond: brif body / end; body; jmp continue
-                    let to_cond = this.emit(Instruction::Jump { to: Label(0) });
-                    let continue_label = this.following_instr(0);
-                    if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                        this.with_metadata(*metadata, |this| {
-                            this.lower_expr(expr).free(this);
-                        });
-                    }
-                    let cond_label = this.following_instr(0);
-                    this.bc.nth(to_cond).set_label(cond_label);
-
-                    if let Some(condition) = condition {
-                        this.emit_branch(condition, |this| {
-                            this.with_break_scope(|this| {
-                                this.with_continue_label(continue_label, |this| {
-                                    this.lower_body(body);
-                                });
-                                this.emit(Instruction::Jump { to: continue_label });
+                    let continue_label = this.emit_jump(|this| {
+                        let continue_label = this.following_instr(0);
+                        if let Some(SimpleStatement::Expression(expr, metadata)) = update {
+                            this.with_metadata(*metadata, |this| {
+                                this.lower_expr(expr).free(this);
                             });
-                        });
-                    } else {
+                        }
+                        continue_label
+                    });
+
+                    let lower_for_body = |this: &mut Self| {
                         this.with_break_scope(|this| {
                             this.with_continue_label(continue_label, |this| {
                                 this.lower_body(body);
                             });
                             this.emit(Instruction::Jump { to: continue_label });
                         });
+                    };
+
+                    match condition {
+                        Some(condition) => {
+                            this.emit_branch(condition, lower_for_body);
+                        }
+                        None => lower_for_body(this),
                     }
                 });
             }
@@ -949,6 +942,42 @@ impl<'a> Bytecode<'a> {
 
     pub fn funs_code(&self) -> CodeRange {
         CodeRange(self.funs_label.0..self.begin_label.0)
+    }
+}
+
+impl Instruction {
+    pub(super) fn from_unary(op: UnaryOperator, dest: Reg, arg: TypedArg) -> Self {
+        let (arg, ty) = arg.into();
+        match op {
+            UnaryOperator::Record => Self::Record { dest, arg, ty },
+            UnaryOperator::Negation => Self::Negation { dest, arg, ty },
+            UnaryOperator::ToInt => Self::ToInt { dest, arg, ty },
+            UnaryOperator::Negative => Self::Negative { dest, arg, ty },
+        }
+    }
+
+    pub(super) fn from_binary(op: BinaryOperator, dest: Reg, lhs: TypedArg, rhs: TypedArg) -> Self {
+        let ((lhs, tyl), (rhs, tyr)) = (lhs.into(), rhs.into());
+        match op {
+            BinaryOperator::Concat => Self::Concat { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Eq => Self::Eq { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::NEq => Self::NEq { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Gt => Self::Gt { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Lt => Self::Lt { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::LtE => Self::LtE { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::GtE => Self::GtE { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::And | BinaryOperator::Or => {
+                unreachable!("&& and || are lowered with branches")
+            }
+            BinaryOperator::Matches => Self::Matches { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::MatchesNot => Self::MatchesNot { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Add => Self::Add { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Subtract => Self::Subtract { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Multiply => Self::Multiply { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Divide => Self::Divide { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Raise => Self::Raise { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::Modulo => Self::Modulo { dest, lhs, rhs, tyl, tyr },
+        }
     }
 }
 

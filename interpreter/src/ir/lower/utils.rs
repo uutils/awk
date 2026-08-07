@@ -5,10 +5,10 @@
 
 use std::{mem::forget, ops::Deref};
 
-use parser::{BinaryOperator, Identifier, UnaryOperator, Variable};
+use parser::{Identifier, Variable};
 
 use crate::{
-    CodeGen, Instruction,
+    CodeGen,
     ir::{Arg, ArgTy, IxWidth, NonLocal, Reg, RegWidth},
     vm::types::Value,
 };
@@ -132,42 +132,6 @@ impl RegsState {
         f(code);
         code.reg_pointer = code.reg_pointer.max(self.reg_pointer);
         code.free_regs.truncate(self.n_free_regs);
-    }
-}
-
-impl Instruction {
-    pub(super) fn from_unary(op: UnaryOperator, dest: Reg, arg: TypedArg) -> Self {
-        let (arg, ty) = arg.into();
-        match op {
-            UnaryOperator::Record => Self::Record { dest, arg, ty },
-            UnaryOperator::Negation => Self::Negation { dest, arg, ty },
-            UnaryOperator::ToInt => Self::ToInt { dest, arg, ty },
-            UnaryOperator::Negative => Self::Negative { dest, arg, ty },
-        }
-    }
-
-    pub(super) fn from_binary(op: BinaryOperator, dest: Reg, lhs: TypedArg, rhs: TypedArg) -> Self {
-        let ((lhs, tyl), (rhs, tyr)) = (lhs.into(), rhs.into());
-        match op {
-            BinaryOperator::Concat => Self::Concat { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Eq => Self::Eq { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::NEq => Self::NEq { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Gt => Self::Gt { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Lt => Self::Lt { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::LtE => Self::LtE { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::GtE => Self::GtE { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::And | BinaryOperator::Or => {
-                unreachable!("&& and || are lowered with branches")
-            }
-            BinaryOperator::Matches => Self::Matches { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::MatchesNot => Self::MatchesNot { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Add => Self::Add { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Subtract => Self::Subtract { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Multiply => Self::Multiply { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Divide => Self::Divide { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Raise => Self::Raise { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Modulo => Self::Modulo { dest, lhs, rhs, tyl, tyr },
-        }
     }
 }
 
