@@ -428,3 +428,29 @@ fn builtin_isarray_with_array_variable() {
         .succeeds()
         .stdout_only("1\n1\n");
 }
+
+#[test]
+fn typeof_basic_usage() {
+    let tests = [
+        ("BEGIN { print typeof(a) }", "untyped\n"),
+        (
+            "BEGIN { print typeof(a+1); print typeof(a) }",
+            "number\nunassigned\n",
+        ),
+        ("BEGIN { print typeof(\"foo\") }", "string\n"),
+        (
+            "BEGIN { print typeof(a[1]); print typeof(a) }",
+            "untyped\narray\n",
+        ),
+    ];
+    for (test, expected) in tests {
+        ucmd().arg(test).succeeds().stdout_only(expected);
+    }
+}
+
+#[test]
+fn array_fn_passing() {
+    ucmd().arg(
+        "function f(x, y) { print isarray(x); x[2]++ } BEGIN { a[2] = 1; f(a); f(a); print a[2]; }",
+    ).succeeds().stdout_only("1\n1\n3\n");
+}
