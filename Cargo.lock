@@ -622,6 +622,7 @@ dependencies = [
  "memchr",
  "parser",
  "regex",
+ "smallvec",
  "thiserror",
  "tracing",
 ]

@@ -181,11 +181,11 @@ pub struct CodeRange(pub(crate) Range<IxWidth>);
 
 impl<'a> Interpreter<'a> {
     pub fn new(compat: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
-        let n_regs = code.reg_pointer as usize + 1;
+        let n_regs = code.regs.hwm as usize + 1;
         Self {
             program_counter: 0,
             code_end: 0,
-            registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs]),
+            registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs + 1]),
             symbols: code.symbols,
             consts: code.consts,
             _compat: compat,

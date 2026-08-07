@@ -6,6 +6,7 @@
 use std::{mem::forget, ops::Deref};
 
 use parser::{Identifier, Variable};
+use smallvec::SmallVec;
 
 use crate::{
     CodeGen,
@@ -13,10 +14,21 @@ use crate::{
     vm::types::Value,
 };
 
+#[derive(Clone, Debug, Default)]
+pub struct RegAlloc {
+    ranges: SmallVec<[(Reg, RegWidth); 8]>,
+    pub(super) reg_pointer: RegWidth,
+    pub hwm: RegWidth,
+}
+
 #[must_use]
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct LinearReg(Reg);
+
+#[must_use]
+#[derive(Debug)]
+pub struct LinearRegRange(LinearReg, LinearReg);
 
 #[derive(Clone, Copy)]
 pub struct TypedArg(Arg, ArgTy);
@@ -28,10 +40,7 @@ pub enum Operand {
 }
 
 #[derive(Clone, Debug)]
-pub struct RegsState {
-    pub(super) reg_pointer: RegWidth,
-    n_free_regs: usize,
-}
+pub struct RegsState(pub(super) RegAlloc);
 
 impl LinearReg {
     pub fn into_inner(self) -> Reg {
@@ -51,7 +60,7 @@ impl Operand {
 
     pub fn free(self, code: &mut CodeGen) {
         if let Self::Reg(reg) = self {
-            code.free_reg(reg);
+            code.regs.free(reg);
         }
     }
 }
@@ -112,26 +121,134 @@ impl TypedArg {
     }
 }
 
-impl RegsState {
-    pub fn new(code: &CodeGen) -> Self {
-        Self {
-            reg_pointer: code.reg_pointer,
-            n_free_regs: code.free_regs.len(),
+impl RegAlloc {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Allocates a single register.
+    pub fn alloc(&mut self) -> LinearReg {
+        if let Some((start, len)) = self.ranges.last_mut() {
+            let reg = *start;
+            if *len == 1 {
+                self.ranges.pop();
+            } else {
+                start.0 += 1;
+                *len -= 1;
+            }
+            return LinearReg(reg);
+        }
+        LinearReg(self.bump_alloc(1))
+    }
+
+    /// Allocates a contiguous register range. Mainly used by
+    /// `gen_call_convention`-style instructions.
+    pub fn alloc_many(&mut self, need: RegWidth) -> LinearRegRange {
+        // Consider using `min_by_key` instead of `position` if there was enough
+        // fragmentation caused by this to slow down the allocator.
+        if let Some(i) = self.ranges.iter().position(|&(_, len)| len >= need) {
+            let (start, len) = self.ranges[i];
+            if len == need {
+                self.ranges.remove(i);
+            } else {
+                self.ranges[i] = (Reg(start.0 + need), len - need);
+            }
+            return LinearRegRange(LinearReg(start), LinearReg(Reg(start.0 + need)));
+        }
+        let start = self.bump_alloc(need);
+        LinearRegRange(LinearReg(start), LinearReg(Reg(start.0 + need)))
+    }
+
+    /// Marks one register as freed.
+    pub fn free(&mut self, reg: LinearReg) {
+        self.free_n(reg.into_inner(), 1);
+    }
+
+    /// Frees a register range.
+    pub fn free_many(&mut self, range: LinearRegRange) {
+        let LinearRegRange(LinearReg(start), LinearReg(end)) = range;
+        self.free_n(start, end.0 - start.0);
+        forget(range);
+    }
+
+    /// Marks a range of registers as freed.
+    fn free_n(&mut self, start: Reg, len: RegWidth) {
+        if start.0 + len == self.reg_pointer {
+            self.reg_pointer = start.0;
+            if let Some(&(s, l)) = self.ranges.last()
+                && s.0 + l == self.reg_pointer
+            {
+                self.reg_pointer = s.0;
+                self.ranges.pop();
+            }
+            return;
+        }
+        let i = self.ranges.partition_point(|&(s, _)| s.0 < start.0);
+        let merge_left = i > 0 && self.ranges[i - 1].0.0 + self.ranges[i - 1].1 == start.0;
+        let merge_right = i < self.ranges.len() && start.0 + len == self.ranges[i].0.0;
+        match (merge_left, merge_right) {
+            (true, true) => {
+                self.ranges[i - 1].1 += len + self.ranges[i].1;
+                self.ranges.remove(i);
+            }
+            (true, false) => self.ranges[i - 1].1 += len,
+            (false, true) => {
+                self.ranges[i].0 = start;
+                self.ranges[i].1 += len;
+            }
+            (false, false) => self.ranges.insert(i, (start, len)),
         }
     }
 
-    pub fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> (Self, T) {
-        let ret = f(code);
-        let old = code.reg_pointer;
-        code.reg_pointer = self.reg_pointer;
-        code.free_regs.truncate(self.n_free_regs);
-        (Self { reg_pointer: old, ..self }, ret)
+    /// Reserves some known registers before starting to allocate. Used in
+    /// function lowering, primarily, to reserve argument passing.
+    pub fn reserve(&mut self, n: RegWidth) {
+        debug_assert!(self.ranges.is_empty());
+        self.bump_alloc(n);
     }
 
-    pub fn scope_hwm<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) {
-        f(code);
-        code.reg_pointer = code.reg_pointer.max(self.reg_pointer);
-        code.free_regs.truncate(self.n_free_regs);
+    /// Allocates the next available register in width.
+    fn bump_alloc(&mut self, n: RegWidth) -> Reg {
+        let start = self.reg_pointer;
+        // TODO: nice errors.
+        self.reg_pointer = self.reg_pointer.checked_add(n).expect("register overflow");
+        self.hwm = self.hwm.max(self.reg_pointer);
+        Reg(start)
+    }
+}
+
+impl RegsState {
+    pub fn new(code: &CodeGen) -> Self {
+        Self(code.regs.clone())
+    }
+
+    /// Runs the closure and restores
+    pub fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> (Self, T) {
+        let ret = f(code);
+        let hwm = code.regs.hwm.max(self.0.hwm);
+
+        code.regs.reg_pointer = self.0.reg_pointer;
+        code.regs.ranges.clone_from(&self.0.ranges);
+        code.regs.hwm = hwm;
+
+        (self, ret)
+    }
+
+    /// Merges previous [`Self::scope`] usages to properly set the hwm.
+    pub fn scope_hwm<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> T {
+        let ret = f(code);
+
+        code.regs.hwm = code.regs.hwm.max(self.0.hwm);
+        code.regs.reg_pointer = self.0.reg_pointer;
+        code.regs.ranges = self.0.ranges;
+
+        ret
+    }
+}
+
+impl LinearRegRange {
+    pub fn as_range(&self) -> (Reg, Reg) {
+        (*self.0, *self.1)
     }
 }
 

@@ -5,7 +5,7 @@
 
 mod utils;
 
-use std::{borrow::Cow, vec::Vec as StdVec};
+use std::{borrow::Cow, mem::replace, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
 use parser::{
@@ -18,7 +18,7 @@ use crate::{
     CodeRange,
     ir::{
         ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
-        lower::utils::{LinearReg, Operand, RegsState, TypedArg, var_index},
+        lower::utils::{LinearRegRange, Operand, RegAlloc, RegsState, TypedArg, var_index},
     },
     vm::{Consts, Function, SymbolTable, types::Value},
 };
@@ -41,8 +41,7 @@ pub struct CodeGen<'a> {
     pub(crate) bc: Bytecode<'a>,
     pub(crate) consts: Consts<'a>,
     pub(crate) symbols: SymbolTable<'a>,
-    free_regs: Vec<'a, Reg>,
-    pub(crate) reg_pointer: RegWidth,
+    pub(crate) regs: RegAlloc,
     current_metadata: MetaId,
     break_exits: Option<StdVec<Label>>,
     continue_label: Option<Label>,
@@ -63,8 +62,7 @@ impl<'a> CodeGen<'a> {
             bc: Bytecode::with_capacity_in(64, arena),
             consts: Consts::new_in(arena),
             symbols: SymbolTable::new_in(arena),
-            free_regs: Vec::new_in(arena),
-            reg_pointer: 0,
+            regs: RegAlloc::new(),
             current_metadata: MetaId::default(),
             break_exits: None,
             continue_label: None,
@@ -114,7 +112,7 @@ impl<'a> CodeGen<'a> {
         if let Some(actions) = actions {
             self.lower_body(actions);
         } else {
-            let reg = self.alloc_reg();
+            let reg = self.regs.alloc();
 
             let (arg, ty) = TypedArg::new_imm(0).into();
             self.emit(Instruction::Record { dest: *reg, arg, ty });
@@ -126,7 +124,7 @@ impl<'a> CodeGen<'a> {
                 redir: None,
             });
 
-            self.free_reg(reg);
+            self.regs.free(reg);
         }
     }
 
@@ -150,8 +148,11 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_fun_body(&mut self, args: &[Identifier], body: &Body) -> (RegWidth, RegWidth) {
-        debug_assert_eq!(self.reg_pointer, 0);
+        debug_assert_eq!(self.regs.reg_pointer, 0);
         debug_assert!(self.local_args.is_empty());
+        // The VM dynamically allocates new regs in each stack frame, so we can
+        // restore the hwm mark at the end and save on registers.
+        let old_hwm = self.regs.hwm;
 
         // intern the arguments
         self.local_args.extend(
@@ -160,13 +161,13 @@ impl<'a> CodeGen<'a> {
         );
 
         let arity = RegWidth::try_from(args.len()).expect("Too many args!");
-        let (state, ()) = RegsState::new(self).scope(self, |this| {
-            this.reg_pointer += RegWidth::try_from(arity).expect("Too many args!");
+        let (_, ()) = RegsState::new(self).scope(self, |this| {
+            this.regs.reserve(arity);
             this.lower_body(body);
         });
-
         self.local_args.clear();
-        (arity, state.reg_pointer)
+
+        (arity, replace(&mut self.regs.hwm, old_hwm))
     }
 
     pub fn set_value(&mut self, var: &Identifier<'_>, value: &str) {
@@ -221,11 +222,11 @@ impl<'a> CodeGen<'a> {
                         let (branch, continue_label) = this.emit_jump(|this| {
                             let continue_label = this.following_instr(0);
 
-                            let cond_reg = this.alloc_reg();
+                            let cond_reg = this.regs.alloc();
                             this.lower_expr_into(condition, *cond_reg);
                             let then_label = this.following_instr(1);
                             let branch = this.emit(Instruction::br(*cond_reg, then_label));
-                            this.free_reg(cond_reg);
+                            this.regs.free(cond_reg);
                             (branch, continue_label)
                         });
 
@@ -283,15 +284,17 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
                 self.with_metadata(*metadata, |this| {
-                    let (start, end, redir) = this.gen_call_convention(args, |this| {
+                    let (range, redir) = this.gen_call_convention(args, |this| {
                         redirection.as_ref().map(|(r, expr)| {
-                            let redir_reg = this.alloc_reg();
+                            let redir_reg = this.regs.alloc();
                             this.lower_expr_into(expr, *redir_reg);
-                            this.free_reg(redir_reg);
+                            this.regs.free(redir_reg);
                             *r
                         })
                     });
+                    let (start, end) = range.as_range();
                     this.emit(Instruction::OutputCall { start, end, cmd: *name, redir });
+                    this.regs.free_many(range);
                 });
             }
             Statement::Simple(SimpleStatement::Delete(..)) => todo!(),
@@ -322,13 +325,13 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Exit(Some(expr), metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let dest = this.alloc_reg();
+                    let dest = this.regs.alloc();
                     this.lower_expr_into(expr, *dest);
 
                     let (arg, ty) = TypedArg::new_reg(*dest).into();
                     this.emit(Instruction::Exit { arg, ty });
 
-                    this.free_reg(dest);
+                    this.regs.free(dest);
                 });
             }
             Statement::Exit(None, metadata) => {
@@ -339,13 +342,13 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Return(Some(expr), metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let dest = this.alloc_reg();
+                    let dest = this.regs.alloc();
                     this.lower_expr_into(expr, *dest);
 
                     let (arg, ty) = TypedArg::new_reg(*dest).into();
                     this.emit(Instruction::Return { arg, ty });
 
-                    this.free_reg(dest);
+                    this.regs.free(dest);
                 });
             }
             Statement::Return(None, metadata) => {
@@ -372,9 +375,9 @@ impl<'a> CodeGen<'a> {
         branches: &[(Atom<'_>, Body<'_>)],
         default: Option<&(Body<'_>, usize)>,
     ) {
-        let scr = self.alloc_reg();
+        let scr = self.regs.alloc();
         self.lower_expr_into(scrutinee, *scr);
-        let cmp = self.alloc_reg();
+        let cmp = self.regs.alloc();
 
         let default_pos = default.map_or(branches.len(), |(_, pos)| *pos);
         let mut pending_branches = StdVec::new();
@@ -413,8 +416,8 @@ impl<'a> CodeGen<'a> {
 
         let no_match_target = default_label.unwrap_or(end_switch);
         self.bc.nth(no_match_jump).set_label(no_match_target);
-        self.free_reg(cmp);
-        self.free_reg(scr);
+        self.regs.free(cmp);
+        self.regs.free(scr);
     }
 
     fn emit_switch_case_match(
@@ -454,7 +457,7 @@ impl<'a> CodeGen<'a> {
                 self.with_metadata(*metadata, |this| this.lower_atom(atom))
             }
             Expr::Node(_, _) => {
-                let dest = self.alloc_reg();
+                let dest = self.regs.alloc();
                 self.lower_expr_into(expr, *dest);
                 Operand::Reg(dest)
             }
@@ -462,19 +465,19 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_atom(&mut self, atom: &Atom) -> Operand {
-        let dest = self.alloc_reg();
+        let dest = self.regs.alloc();
         match self.lower_atom_arg(atom, *dest) {
             arg if let Some(reg) = arg.as_reg() => {
                 if reg == *dest {
                     Operand::Reg(dest)
                 } else {
                     // If the atom is a function local, we get its register instead.
-                    self.free_reg(dest);
+                    self.regs.free(dest);
                     Operand::Imm(TypedArg::new_reg(reg))
                 }
             }
             imm => {
-                self.free_reg(dest);
+                self.regs.free(dest);
                 Operand::Imm(imm)
             }
         }
@@ -565,14 +568,14 @@ impl<'a> CodeGen<'a> {
                                 return;
                             };
 
-                            let lhs_reg = this.alloc_reg();
+                            let lhs_reg = this.regs.alloc();
                             let lhs = this.load_place(*lhs_reg, place);
                             let rhs = val.to_arg();
 
                             this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
                             this.store_place(place, dest, TypedArg::new_reg(dest));
 
-                            this.free_reg(lhs_reg);
+                            this.regs.free(lhs_reg);
                             val.free(this);
                         }
                         // Use optimized path for variables and records. Cannot
@@ -628,7 +631,7 @@ impl<'a> CodeGen<'a> {
                                         lhs,
                                         TypedArg::new_imm(0),
                                     ));
-                                    let tmp = this.alloc_reg();
+                                    let tmp = this.regs.alloc();
                                     let update_op = match op {
                                         UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
                                         UnaryPlaceOperator::DecrementR => BinaryOperator::Subtract,
@@ -636,7 +639,7 @@ impl<'a> CodeGen<'a> {
                                     };
                                     this.emit(Instruction::from_binary(update_op, *tmp, lhs, one));
                                     this.store_place(place, *tmp, TypedArg::new_reg(*tmp));
-                                    this.free_reg(tmp);
+                                    this.regs.free(tmp);
                                 }
                             }
                         }
@@ -646,18 +649,24 @@ impl<'a> CodeGen<'a> {
                         }
                         ExprNode::FunctionCall(name, args) => {
                             let name = this.symbols.get_user_fun(name, self.arena);
-                            let (start, end, ()) = this.gen_call_convention(args, |_| ());
+                            let (range, _) = this.gen_call_convention(args, |_| ());
+                            let (start, end) = range.as_range();
                             this.emit(Instruction::UserCall { dest, start, end, name });
+                            this.regs.free_many(range);
                         }
                         ExprNode::BuiltinCall(fun, args) => {
                             // Bypass regular variable lookups on type-info funs.
-                            let (start, end, _) = this.gen_call_convention(args, |_| ());
+                            let (range, _) = this.gen_call_convention(args, |_| ());
+                            let (start, end) = range.as_range();
                             this.emit(Instruction::IntrinsicCall { dest, start, end, fun: *fun });
+                            this.regs.free_many(range);
                         }
                         ExprNode::IndirectCall(place, args) => {
-                            let (start, end, ()) = this.gen_call_convention(args, |_| ());
+                            let (range, _) = this.gen_call_convention(args, |_| ());
+                            let (start, end) = range.as_range();
                             let (name, ty) = this.load_place(dest, &Place::Variable(*place)).into();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
+                            this.regs.free_many(range);
                         }
                         _ => todo!(),
                     }
@@ -679,7 +688,8 @@ impl<'a> CodeGen<'a> {
     }
 
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedArg {
-        let (start, end, _) = self.gen_call_convention(index, |_| ());
+        let (range, _) = self.gen_call_convention(index, |_| ());
+        let (start, end) = range.as_range();
         if let Variable::User(ident) = var {
             let (arg, ty) = TypedArg::new_ua(self, ident).into();
             self.emit(Instruction::LoadA { dest, arg, ty, start, end });
@@ -687,6 +697,7 @@ impl<'a> CodeGen<'a> {
             let (arg, ty) = TypedArg::new_ia(var).into();
             self.emit(Instruction::LoadA { dest, arg, ty, start, end });
         }
+        self.regs.free_many(range);
         // Element value was written to `dest`; subsequent ops must use the register.
         TypedArg::new_reg(dest)
     }
@@ -724,14 +735,18 @@ impl<'a> CodeGen<'a> {
             Place::Index(Variable::User(ident), index) => {
                 let (lhs, tyl) = TypedArg::new_ua(self, ident).into();
                 let (rhs, tyr) = src.into();
-                let (start, end, _) = self.gen_call_convention(index, |_| ());
+                let (range, _) = self.gen_call_convention(index, |_| ());
+                let (start, end) = range.as_range();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                self.regs.free_many(range);
             }
             Place::Index(var, index) => {
                 let (lhs, tyl) = TypedArg::new_ia(var).into();
                 let (rhs, tyr) = src.into();
-                let (start, end, _) = self.gen_call_convention(index, |_| ());
+                let (range, _) = self.gen_call_convention(index, |_| ());
+                let (start, end) = range.as_range();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                self.regs.free_many(range);
             }
             Place::ChainedIndex(_, _) => todo!(),
         }
@@ -739,10 +754,10 @@ impl<'a> CodeGen<'a> {
 
     fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
-            let rhs_reg = this.alloc_reg();
+            let rhs_reg = this.regs.alloc();
             this.lower_expr_into(rhs, *rhs_reg);
             this.truthify(dest, *rhs_reg);
-            this.free_reg(rhs_reg);
+            this.regs.free(rhs_reg);
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
@@ -758,10 +773,10 @@ impl<'a> CodeGen<'a> {
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
-            let rhs_reg = this.alloc_reg();
+            let rhs_reg = this.regs.alloc();
             this.lower_expr_into(rhs, *rhs_reg);
             this.truthify(dest, *rhs_reg);
-            this.free_reg(rhs_reg);
+            this.regs.free(rhs_reg);
         });
     }
 
@@ -779,11 +794,11 @@ impl<'a> CodeGen<'a> {
         condition_expr: &Expr<'_>,
         cb: impl FnOnce(&mut Self) -> T,
     ) -> (Label, T) {
-        let condition = self.alloc_reg();
+        let condition = self.regs.alloc();
         self.lower_expr_into(condition_expr, *condition);
         let then_label = self.following_instr(1);
         let if_label = self.emit(Instruction::br(*condition, then_label));
-        self.free_reg(condition);
+        self.regs.free(condition);
 
         let res = cb(self);
         let next = self.following_instr(0);
@@ -800,32 +815,20 @@ impl<'a> CodeGen<'a> {
         res
     }
 
-    fn alloc_reg(&mut self) -> LinearReg {
-        self.free_regs.pop().map_or_else(
-            || {
-                let current = self.reg_pointer;
-                self.reg_pointer = self.reg_pointer.checked_add(1).expect("register overflow");
-                Reg(current).into()
-            },
-            LinearReg::from,
-        )
-    }
-
     fn gen_call_convention<T>(
         &mut self,
         args: &[Expr<'_>],
         extra: impl FnOnce(&mut CodeGen) -> T,
-    ) -> (Reg, Reg, T) {
-        let (state, ret) = RegsState::new(self).scope(self, |this| {
-            let call_start = this.reg_pointer;
-            // TODO: Nicer error reporting.
-            let args_len = RegWidth::try_from(args.len()).expect("too many call args");
-            let call_end = call_start.checked_add(args_len).expect("register overflow");
+    ) -> (LinearRegRange, T) {
+        // TODO: Nicer error reporting.
+        let args_len = RegWidth::try_from(args.len()).expect("too many call args");
 
-            this.reg_pointer = call_end;
+        let range = self.regs.alloc_many(args_len);
+        let (call_start, _) = range.as_range();
+
+        let (state, ret) = RegsState::new(self).scope(self, |this| {
             for (i, arg) in args.iter().enumerate() {
-                let offset = i as RegWidth;
-                let dest = Reg(call_start.checked_add(offset).expect("register overflow"));
+                let dest = Reg(call_start.0 + i as RegWidth);
                 // Bypass Copy instruction for variables here, so we do not get
                 // scalar context shenanigans in the VM.
                 if let &Expr::Leaf(Atom::Variable(var), _) = arg {
@@ -835,14 +838,11 @@ impl<'a> CodeGen<'a> {
                     this.lower_expr_into(arg, dest);
                 }
             }
-            (Reg(call_start), Reg(call_end), extra(this))
+            extra(this)
         });
-        self.reg_pointer = self.reg_pointer.max(state.reg_pointer);
-        ret
-    }
 
-    fn free_reg(&mut self, reg: LinearReg) {
-        self.free_regs.push(reg.into_inner());
+        self.regs.reg_pointer = self.regs.reg_pointer.max(state.0.reg_pointer);
+        (range, ret)
     }
 
     fn register_const(&mut self, value: Value<'a>) -> NonLocal {
@@ -856,7 +856,7 @@ impl<'a> CodeGen<'a> {
     }
 
     pub fn bytecode(&mut self) -> Bytecode<'a> {
-        std::mem::replace(&mut self.bc, Bytecode::with_capacity_in(0, self.arena))
+        replace(&mut self.bc, Bytecode::with_capacity_in(0, self.arena))
     }
 
     fn with_metadata<R>(&mut self, metadata: MetaId, f: impl FnOnce(&mut Self) -> R) -> R {
