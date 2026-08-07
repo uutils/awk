@@ -61,11 +61,11 @@ impl<'a> Lexer<'a> {
     pub fn expect_with(
         &mut self,
         expected: impl FnOnce(&Token<'a>) -> bool,
-        msg: String,
+        err: impl FnOnce(Span) -> ParsingError,
     ) -> Result<Token<'a>> {
         match self.next() {
             Some(Ok(tok)) if expected(&tok) => Ok(tok),
-            Some(Ok(_)) => Err(ParsingError::UnexpectedToken(self.span(), msg)),
+            Some(Ok(_)) => Err(err(self.span())),
             Some(err @ Err(_)) => err.map_err(Into::into),
             None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
         }

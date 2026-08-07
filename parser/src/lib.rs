@@ -137,14 +137,14 @@ impl<'a> Parser<'a> {
                     Token::LoadDirective => {
                         let lib = lex.expect_string()?;
                         self.ast.loads.push(lib);
-                        lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
+                        lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
                     }
                     Token::IncludeDirective => {
                         let path = lex.expect_string()?;
                         let old_namespace = self.namespace;
                         let content = self.preprocessor.include_in(path.as_ref(), self.arena);
                         self.parse_top(&mut Lexer::new(content, self.arena), true)?;
-                        lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
+                        lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
                         self.namespace = old_namespace;
                     }
                     Token::NsIncludeDirective => {
@@ -152,13 +152,13 @@ impl<'a> Parser<'a> {
                         let old_namespace = self.namespace;
                         let content = self.preprocessor.include_in(path.as_ref(), self.arena);
                         self.parse_top(&mut Lexer::new(content, self.arena), false)?;
-                        lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
+                        lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
                         self.namespace = old_namespace;
                     }
                     Token::NamespaceDirective => {
                         let namespace = lex.expect_string()?;
                         let namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
-                        lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
+                        lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
                         if self.namespace == namespace {
                             continue; // skip counting.
                         }
