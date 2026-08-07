@@ -3,21 +3,39 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{borrow::Cow, mem::forget, ops::Deref, vec::Vec as StdVec};
+mod utils;
+
+use std::{borrow::Cow, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
 use parser::{
     ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, BuiltinFunction, Command,
     Expr, ExprNode, Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule,
-    RulePattern, SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
+    RulePattern, SimpleStatement, Statement, UnaryPlaceOperator, Variable,
 };
 
 use crate::{
     CodeRange,
-    ir::{Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth},
+    ir::{
+        ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
+        lower::utils::{LinearReg, Operand, RegsState, TypedArg, var_index},
+    },
     vm::{Consts, Function, SymbolTable, types::Value},
 };
+
+#[derive(Debug)]
+pub struct Bytecode<'a> {
+    pub code: Vec<'a, Instruction>,
+    pub functions: SymbolTable<'a>,
+    pub metadata: StdVec<MetaId>,
+    pub(crate) funs_label: Label,
+    pub(crate) begin_label: Label,
+    pub(crate) begin_file_label: Label,
+    pub(crate) end_file_label: Label,
+    pub(crate) end_label: Label,
+    pub(crate) rules_label: Label,
+}
 
 pub struct CodeGen<'a> {
     pub(crate) arena: &'a Bump,
@@ -30,20 +48,6 @@ pub struct CodeGen<'a> {
     break_exits: Option<StdVec<Label>>,
     continue_label: Option<Label>,
     local_args: StdVec<NonLocal>,
-}
-
-#[must_use]
-#[derive(Debug)]
-#[repr(transparent)]
-struct LinearReg(Reg);
-
-#[derive(Clone, Copy)]
-struct TypedArg(Arg, ArgTy);
-
-#[must_use]
-enum Operand {
-    Imm(TypedArg),  // carries data inline
-    Reg(LinearReg), // needs to be freed
 }
 
 impl<'a> CodeGen<'a> {
@@ -113,7 +117,7 @@ impl<'a> CodeGen<'a> {
         } else {
             let reg = self.alloc_reg();
 
-            let TypedArg(arg, ty) = TypedArg::new_imm(0);
+            let (arg, ty) = TypedArg::new_imm(0).into();
             self.emit(Instruction::Record { dest: *reg, arg, ty });
 
             self.emit(Instruction::OutputCall {
@@ -329,7 +333,7 @@ impl<'a> CodeGen<'a> {
                     let dest = this.alloc_reg();
                     this.lower_expr_into(expr, *dest);
 
-                    let TypedArg(arg, ty) = (*dest).into();
+                    let (arg, ty) = TypedArg::new_reg(*dest).into();
                     this.emit(Instruction::Exit { arg, ty });
 
                     this.free_reg(dest);
@@ -337,7 +341,7 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Exit(None, metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let TypedArg(arg, ty) = TypedArg::new_imm(0);
+                    let (arg, ty) = TypedArg::new_imm(0).into();
                     this.emit(Instruction::Exit { arg, ty });
                 });
             }
@@ -346,7 +350,7 @@ impl<'a> CodeGen<'a> {
                     let dest = this.alloc_reg();
                     this.lower_expr_into(expr, *dest);
 
-                    let TypedArg(arg, ty) = (*dest).into();
+                    let (arg, ty) = TypedArg::new_reg(*dest).into();
                     this.emit(Instruction::Return { arg, ty });
 
                     this.free_reg(dest);
@@ -381,13 +385,13 @@ impl<'a> CodeGen<'a> {
         let cmp = self.alloc_reg();
 
         let default_pos = default.map_or(branches.len(), |(_, pos)| *pos);
-        let mut pending_branches = Vec::new_in(self.arena);
+        let mut pending_branches = StdVec::new();
         for (i, (atom, _)) in branches.iter().enumerate() {
             pending_branches.push(self.emit_switch_case_match(*scr, *cmp, atom, i));
         }
         let no_match_jump = self.emit(Instruction::Jump { to: Label(0) });
 
-        let mut case_labels = Vec::with_capacity_in(branches.len(), self.arena);
+        let mut case_labels = StdVec::with_capacity(branches.len());
         case_labels.resize(branches.len(), Label(0));
         let mut default_label = None;
 
@@ -428,19 +432,18 @@ impl<'a> CodeGen<'a> {
         case: &Atom<'_>,
         case_ix: usize,
     ) -> (Label, usize) {
-        let lhs = TypedArg::from(scr);
-        let tyl = ArgTy::Reg;
+        let (lhs, tyl) = TypedArg::new_reg(scr).into();
 
         match case {
             Atom::Regex(r) | Atom::TypedRegex(r) => {
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
-                let TypedArg(rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into()));
-                self.emit(Instruction::Matches { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
+                let (rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into())).into();
+                self.emit(Instruction::Matches { dest: cmp, lhs, rhs, tyl, tyr });
             }
             atom => {
                 let case_val = self.lower_atom(atom);
-                let TypedArg(rhs, tyr) = case_val.to_arg();
-                self.emit(Instruction::Eq { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
+                let (rhs, tyr) = case_val.to_arg().into();
+                self.emit(Instruction::Eq { dest: cmp, lhs, rhs, tyl, tyr });
                 case_val.free(self);
             }
         }
@@ -475,7 +478,7 @@ impl<'a> CodeGen<'a> {
                 } else {
                     // If the atom is a function local, we get its register instead.
                     self.free_reg(dest);
-                    Operand::Imm(reg.into())
+                    Operand::Imm(TypedArg::new_reg(reg))
                 }
             }
             imm => {
@@ -502,17 +505,18 @@ impl<'a> CodeGen<'a> {
             }
             Atom::Regex(r) => {
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
-                let TypedArg(rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into()));
-                let TypedArg(lhs, tyl) = TypedArg(Arg { imm: 0 }, ArgTy::Rec);
+                let (rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into())).into();
+                let (lhs, tyl) = TypedArg::new_imm(0).into();
                 self.emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
-                dest.into()
+                TypedArg::new_reg(dest)
             }
             _ => todo!(),
         }
     }
 
     fn lower_atom_into(&mut self, atom: &Atom, dest: Reg) {
-        let t_arg @ TypedArg(arg, ty) = self.lower_atom_arg(atom, dest);
+        let t_arg = self.lower_atom_arg(atom, dest);
+        let (arg, ty) = t_arg.into();
 
         if t_arg.as_reg().is_none_or(|reg| reg != dest) {
             self.emit(Instruction::Copy { dest, arg, ty });
@@ -574,7 +578,7 @@ impl<'a> CodeGen<'a> {
                             let rhs = val.to_arg();
 
                             this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
-                            this.store_place(place, dest, dest.into());
+                            this.store_place(place, dest, TypedArg::new_reg(dest));
 
                             this.free_reg(lhs_reg);
                             val.free(this);
@@ -584,7 +588,7 @@ impl<'a> CodeGen<'a> {
                         ExprNode::UnaryPlaceOperation(op, place)
                             if matches!(place, Place::Record(_) | Place::Variable(_)) =>
                         {
-                            let TypedArg(arg, ty) = this.load_place(dest, place);
+                            let (arg, ty) = this.load_place(dest, place).into();
                             match op {
                                 UnaryPlaceOperator::IncrementL => {
                                     this.emit(Instruction::IncrementPre { dest, arg, ty });
@@ -614,7 +618,7 @@ impl<'a> CodeGen<'a> {
                                         lhs,
                                         one,
                                     ));
-                                    this.store_place(place, dest, dest.into());
+                                    this.store_place(place, dest, TypedArg::new_reg(dest));
                                 }
                                 UnaryPlaceOperator::DecrementL => {
                                     this.emit(Instruction::from_binary(
@@ -623,7 +627,7 @@ impl<'a> CodeGen<'a> {
                                         lhs,
                                         one,
                                     ));
-                                    this.store_place(place, dest, dest.into());
+                                    this.store_place(place, dest, TypedArg::new_reg(dest));
                                 }
                                 UnaryPlaceOperator::IncrementR | UnaryPlaceOperator::DecrementR => {
                                     this.emit(Instruction::from_binary(
@@ -639,7 +643,7 @@ impl<'a> CodeGen<'a> {
                                         _ => unreachable!(),
                                     };
                                     this.emit(Instruction::from_binary(update_op, *tmp, lhs, one));
-                                    this.store_place(place, *tmp, (*tmp).into());
+                                    this.store_place(place, *tmp, TypedArg::new_reg(*tmp));
                                     this.free_reg(tmp);
                                 }
                             }
@@ -660,8 +664,8 @@ impl<'a> CodeGen<'a> {
                                     if let &[Expr::Leaf(Atom::Variable(var), _)] =
                                         args.as_slice() =>
                                 {
-                                    let TypedArg(arg, ty) =
-                                        this.load_place(dest, &Place::Variable(var));
+                                    let (arg, ty) =
+                                        this.load_place(dest, &Place::Variable(var)).into();
                                     this.emit(Instruction::PureCopy { dest, arg, ty });
                                     (dest, Reg(dest.0 + 1), ())
                                 }
@@ -683,8 +687,7 @@ impl<'a> CodeGen<'a> {
                         }
                         ExprNode::IndirectCall(place, args) => {
                             let (start, end, ()) = this.gen_call_convention(args, |_| ());
-                            let TypedArg(name, ty) =
-                                this.load_place(dest, &Place::Variable(*place));
+                            let (name, ty) = this.load_place(dest, &Place::Variable(*place)).into();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                         }
                         _ => todo!(),
@@ -717,20 +720,21 @@ impl<'a> CodeGen<'a> {
             self.emit(Instruction::LoadA { dest, ty_place: ArgTy::IaVal, start, end, var });
         }
         // Element value was written to `dest`; subsequent ops must use the register.
-        dest.into()
+        TypedArg::new_reg(dest)
     }
 
     fn store_place(&mut self, place: &Place<'_>, dest: Reg, src: TypedArg) {
-        let TypedArg(arg, ty) = src;
+        let (arg, ty) = src.into();
         match place {
             Place::Record(expr) => {
                 let rec = self.lower_expr(expr);
-                let TypedArg(src, tys) = rec.to_arg();
+                let (src, tys) = rec.to_arg().into();
                 self.emit(Instruction::StoreR { dest, src, tys, arg, ty });
                 rec.free(self);
             }
             Place::Variable(Variable::User(ident)) => {
-                let t_arg @ TypedArg(var, ty_place) = TypedArg::new_us(self, ident);
+                let t_arg = TypedArg::new_us(self, ident);
+                let (var, ty_place) = t_arg.into();
 
                 if t_arg.as_reg().is_some_and(|reg| reg == dest) {
                     return; // Value already on destination.
@@ -790,14 +794,14 @@ impl<'a> CodeGen<'a> {
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
-            let TypedArg(arg, ty) = TypedArg::new_imm(0);
+            let (arg, ty) = TypedArg::new_imm(0).into();
             this.emit(Instruction::Copy { dest, arg, ty });
         });
     }
 
     fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
-            let TypedArg(arg, ty) = TypedArg::new_imm(1);
+            let (arg, ty) = TypedArg::new_imm(1).into();
             this.emit(Instruction::Copy { dest, arg, ty });
         });
         self.bc.nth(if_label).push_end_label();
@@ -811,10 +815,10 @@ impl<'a> CodeGen<'a> {
 
     /// Coerce `src` to an integer truth value (0 or 1), as gawk does via `mkbool()`.
     fn truthify(&mut self, dest: Reg, src: Reg) {
-        let TypedArg(arg, ty) = src.into();
+        let (arg, ty) = TypedArg::new_reg(src).into();
         self.emit(Instruction::Negation { dest, arg, ty });
 
-        let TypedArg(arg, ty) = dest.into();
+        let (arg, ty) = TypedArg::new_reg(dest).into();
         self.emit(Instruction::Negation { dest, arg, ty });
     }
 
@@ -845,11 +849,14 @@ impl<'a> CodeGen<'a> {
     }
 
     fn alloc_reg(&mut self) -> LinearReg {
-        self.free_regs.pop().map(LinearReg).unwrap_or_else(|| {
-            let current = self.reg_pointer;
-            self.reg_pointer = self.reg_pointer.checked_add(1).expect("register overflow");
-            LinearReg(Reg(current))
-        })
+        self.free_regs.pop().map_or_else(
+            || {
+                let current = self.reg_pointer;
+                self.reg_pointer = self.reg_pointer.checked_add(1).expect("register overflow");
+                Reg(current).into()
+            },
+            LinearReg::from,
+        )
     }
 
     fn gen_call_convention<T>(
@@ -875,11 +882,12 @@ impl<'a> CodeGen<'a> {
         ret
     }
 
-    fn spill_to_reg(&mut self, t_arg @ TypedArg(arg, ty): TypedArg) -> Either<Reg, LinearReg> {
+    fn spill_to_reg(&mut self, t_arg: TypedArg) -> Either<Reg, LinearReg> {
         if let Some(reg) = t_arg.as_reg() {
             Either::Left(reg)
         } else {
             let dest = self.alloc_reg();
+            let (arg, ty) = t_arg.into();
             self.emit(Instruction::Copy { dest: *dest, arg, ty });
             Either::Right(dest)
         }
@@ -941,25 +949,6 @@ impl<'a> CodeGen<'a> {
     }
 }
 
-#[derive(Debug)]
-pub struct Bytecode<'a> {
-    pub code: Vec<'a, Instruction>,
-    pub functions: SymbolTable<'a>,
-    pub metadata: StdVec<MetaId>,
-    pub(crate) funs_label: Label,
-    pub(crate) begin_label: Label,
-    pub(crate) begin_file_label: Label,
-    pub(crate) end_file_label: Label,
-    pub(crate) end_label: Label,
-    pub(crate) rules_label: Label,
-}
-
-#[derive(Clone, Debug)]
-struct RegsState {
-    reg_pointer: RegWidth,
-    n_free_regs: usize,
-}
-
 impl<'a> Bytecode<'a> {
     fn with_capacity_in(cap: usize, arena: &'a Bump) -> Self {
         Self {
@@ -1008,29 +997,6 @@ impl<'a> Bytecode<'a> {
     }
 }
 
-impl RegsState {
-    fn new(code: &CodeGen) -> Self {
-        Self {
-            reg_pointer: code.reg_pointer,
-            n_free_regs: code.free_regs.len(),
-        }
-    }
-
-    fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> (Self, T) {
-        let ret = f(code);
-        let old = code.reg_pointer;
-        code.reg_pointer = self.reg_pointer;
-        code.free_regs.truncate(self.n_free_regs);
-        (Self { reg_pointer: old, ..self }, ret)
-    }
-
-    fn scope_hwm<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) {
-        f(code);
-        code.reg_pointer = code.reg_pointer.max(self.reg_pointer);
-        code.free_regs.truncate(self.n_free_regs);
-    }
-}
-
 fn lower_assign_ops(op: BinaryPlaceOperator) -> Option<BinaryOperator> {
     match op {
         BinaryPlaceOperator::Assignment => None,
@@ -1040,150 +1006,5 @@ fn lower_assign_ops(op: BinaryPlaceOperator) -> Option<BinaryOperator> {
         BinaryPlaceOperator::DivAssign => Some(BinaryOperator::Divide),
         BinaryPlaceOperator::PowAssign => Some(BinaryOperator::Raise),
         BinaryPlaceOperator::ModAssign => Some(BinaryOperator::Modulo),
-    }
-}
-
-impl Instruction {
-    fn from_unary(op: UnaryOperator, dest: Reg, TypedArg(arg, ty): TypedArg) -> Self {
-        match op {
-            UnaryOperator::Record => Self::Record { dest, arg, ty },
-            UnaryOperator::Negation => Self::Negation { dest, arg, ty },
-            UnaryOperator::ToInt => Self::ToInt { dest, arg, ty },
-            UnaryOperator::Negative => Self::Negative { dest, arg, ty },
-        }
-    }
-
-    fn from_binary(
-        op: BinaryOperator,
-        dest: Reg,
-        TypedArg(lhs, tyl): TypedArg,
-        TypedArg(rhs, tyr): TypedArg,
-    ) -> Self {
-        match op {
-            BinaryOperator::Concat => Self::Concat { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Eq => Self::Eq { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::NEq => Self::NEq { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Gt => Self::Gt { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Lt => Self::Lt { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::LtE => Self::LtE { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::GtE => Self::GtE { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::And | BinaryOperator::Or => {
-                unreachable!("&& and || are lowered with branches")
-            }
-            BinaryOperator::Matches => Self::Matches { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::MatchesNot => Self::MatchesNot { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Add => Self::Add { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Subtract => Self::Subtract { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Multiply => Self::Multiply { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Divide => Self::Divide { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Raise => Self::Raise { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Modulo => Self::Modulo { dest, lhs, rhs, tyl, tyr },
-        }
-    }
-}
-
-impl LinearReg {
-    fn into_inner(self) -> Reg {
-        let inner = self.0;
-        forget(self);
-        inner
-    }
-}
-
-impl Operand {
-    fn to_arg(&self) -> TypedArg {
-        match self {
-            &Self::Imm(imm) => imm,
-            Self::Reg(reg) => reg.0.into(),
-        }
-    }
-
-    fn free(self, code: &mut CodeGen) {
-        if let Self::Reg(reg) = self {
-            code.free_reg(reg);
-        }
-    }
-}
-
-impl TypedArg {
-    fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        let sym = code.symbols.register_user_var(ident, code.arena);
-        if let Some(reg) = code.get_local_arg(sym) {
-            Self(Arg { reg }, ArgTy::Reg)
-        } else {
-            Self(Arg { sym }, ArgTy::UsVal)
-        }
-    }
-
-    fn new_is(var: &Variable<'_>) -> Self {
-        Self(Arg { sym: var_index(var) }, ArgTy::IsVal)
-    }
-
-    fn new_imm(imm: i32) -> Self {
-        Self(Arg { imm }, ArgTy::Imm)
-    }
-
-    fn new_immf(code: &mut CodeGen<'_>, n: f64) -> Self {
-        let sym = code.register_const(Value::Float(n));
-        Self(Arg { sym }, ArgTy::ImmF)
-    }
-
-    fn new_cnt<'a>(code: &mut CodeGen<'a>, val: Value<'a>) -> Self {
-        let sym = code.register_const(val);
-        Self(Arg { sym }, ArgTy::Cnt)
-    }
-
-    fn as_reg(self) -> Option<Reg> {
-        if matches!(self.1, ArgTy::Reg) {
-            // SAFETY: has been type-checked.
-            Some(unsafe { self.0.reg })
-        } else {
-            None
-        }
-    }
-}
-
-impl From<Reg> for TypedArg {
-    fn from(reg: Reg) -> Self {
-        Self(Arg { reg }, ArgTy::Reg)
-    }
-}
-
-impl Deref for LinearReg {
-    type Target = Reg;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-fn var_index(var: &Variable<'_>) -> NonLocal {
-    const { assert!(size_of::<(IxWidth, Identifier<'_>)>() == size_of::<Variable>()) }
-    const { assert!(align_of::<(IxWidth, Identifier<'_>)>() == align_of::<Variable>()) }
-
-    // SAFETY: The discriminant is repr(IxWidth).
-    let index = unsafe { *(&raw const *var).cast::<IxWidth>() };
-    debug_assert_ne!(index, 0); // User variable.
-
-    NonLocal(index)
-}
-
-#[cfg(debug_assertions)]
-impl Drop for LinearReg {
-    fn drop(&mut self) {
-        debug_assert!(false, "Leaked register {}!", self.0);
-    }
-}
-
-impl From<&LinearReg> for Reg {
-    fn from(value: &LinearReg) -> Self {
-        **value
-    }
-}
-
-// HACK: Either::either_into from a ref.
-impl From<&Self> for Reg {
-    fn from(value: &Self) -> Self {
-        *value
     }
 }
