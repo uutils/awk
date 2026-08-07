@@ -56,7 +56,6 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    #[tracing::instrument]
     pub fn new(arena: &'a Bump, dry: bool) -> Self {
         Self {
             ast: Ast::new(arena),
@@ -90,8 +89,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[tracing::instrument]
-    fn parse_top(&mut self, lex: &mut Lexer<'a>, awk_namespace: bool) -> Result<&Ast<'a>> {
+    fn parse_top(&mut self, lex: &mut Lexer<'a>, _awk_namespace: bool) -> Result<&Ast<'a>> {
         // Reset statement-context flags in case this parser is reused after an error.
         self.break_allowed = false;
         self.continue_allowed = false;
@@ -198,7 +196,6 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses up until `{`.
-    #[tracing::instrument]
     fn parse_pattern(&mut self, lex: &mut Lexer<'a>) -> Result<Pattern<'a>> {
         match lex.expect_peek()? {
             Token::BeginPattern => Ok(Right(SpecialPattern::Begin)),
@@ -218,7 +215,6 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses up until `}`. Inserts a lone print statement if none.
-    #[tracing::instrument]
     fn parse_body(&mut self, lex: &mut Lexer<'a>) -> Result<Body<'a>> {
         lex.expect(&Token::OpenBrace, ParsingError::ExpectedOpeningBrace)?;
         let mut body = Vec::new_in(self.arena);
@@ -264,7 +260,6 @@ impl<'a> Parser<'a> {
     }
 
     /// These are a subset of statements usable in places like for-loop defs.
-    #[tracing::instrument]
     fn parse_simple_statement(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -294,13 +289,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[tracing::instrument]
     fn parse_statement(&mut self, lex: &mut Lexer<'a>) -> Result<Statement<'a>> {
         self.parse_statement_with_trailing(lex)
             .map(|(statement, _)| statement)
     }
 
-    #[tracing::instrument]
     fn parse_statement_with_trailing(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -475,7 +468,6 @@ impl<'a> Parser<'a> {
         Ok((statement, consumed))
     }
 
-    #[tracing::instrument]
     fn parse_parenthesized_expr(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
         lex.expect(
             &Token::OpenParent,
@@ -489,7 +481,6 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    #[tracing::instrument]
     fn parse_for_loop(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -522,7 +513,6 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    #[tracing::instrument]
     fn parse_for_ambiguous(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -558,7 +548,6 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    #[tracing::instrument]
     fn parse_statement_body(&mut self, lex: &mut Lexer<'a>) -> Result<(Body<'a>, bool)> {
         // Ignore newlines in this position.
         lex.consume(&Token::Newline);
@@ -584,7 +573,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[tracing::instrument]
     fn parse_case(&mut self, lex: &mut Lexer<'a>) -> Result<Atom<'a>> {
         lex.expect(&Token::Case, ParsingError::MissingSwitchBranch)?;
         let next = lex.expect_next()?;
@@ -596,7 +584,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[tracing::instrument]
     fn parse_command(&mut self, lex: &mut Lexer<'a>, name: Command) -> Result<SimpleStatement<'a>> {
         let start = lex.span().start;
         let parent = lex.consume(&Token::OpenParent);
@@ -629,7 +616,6 @@ impl<'a> Parser<'a> {
         Ok(SimpleStatement::Command { name, args, redirection, metadata })
     }
 
-    #[tracing::instrument]
     fn parse_builtin_call(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -710,7 +696,6 @@ impl<'a> Parser<'a> {
         Ok(SimpleStatement::Delete(var, index, metadata))
     }
 
-    #[tracing::instrument]
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {
         let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
         let args = self.parse_signature(lex, &name)?;
@@ -721,7 +706,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    #[tracing::instrument]
     fn parse_signature(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -759,12 +743,10 @@ impl<'a> Parser<'a> {
         Ok(args)
     }
 
-    #[tracing::instrument]
     fn parse_expression(&mut self, lex: &mut Lexer<'a>, typed_regex: bool) -> Result<Expr<'a>> {
         Pratt::new(self, typed_regex).parse(lex)
     }
 
-    #[tracing::instrument]
     fn add_rule(&mut self, rule: Rule<'a>) {
         if self.concurrent {
             self.concurrent = false;
@@ -825,7 +807,6 @@ impl<'a> Parser<'a> {
         Ok(Expr::node(expr, self, lex.span().since(start)))
     }
 
-    #[tracing::instrument]
     fn parse_atom(
         &self,
         lex: &mut Lexer<'a>,
@@ -853,7 +834,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[tracing::instrument]
     fn get_place(
         &self,
         lex: &mut Lexer<'a>,

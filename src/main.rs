@@ -11,6 +11,7 @@ mod utils;
 
 use std::{
     env::args_os,
+    error::Error,
     fs,
     io::{BufWriter, Write, stdout},
     mem::take,
@@ -18,7 +19,6 @@ use std::{
 
 use bumpalo::Bump;
 use clap::Parser as _;
-use color_eyre::Result;
 use interpreter::{CodeGen, ExecMode, Interpreter};
 use parser::{FileCache, Parser};
 
@@ -34,8 +34,7 @@ fn main() {
     }
 }
 
-#[tracing::instrument]
-fn uu_main() -> Result<()> {
+fn uu_main() -> Result<(), Box<dyn Error>> {
     let args = match Args::try_parse_from(args_os()) {
         Ok(args) => args,
         Err(msg) => {

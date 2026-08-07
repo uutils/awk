@@ -10,10 +10,6 @@ use std::{
     process::exit,
 };
 
-use color_eyre::config::HookBuilder;
-use tracing_error::ErrorLayer;
-use tracing_subscriber::prelude::*;
-
 type ExitCode = i32;
 
 const AWK_PANIC_CODE: ExitCode = 2;
@@ -29,26 +25,11 @@ fn install_abort_hook() {
     }));
 }
 
-#[inline(always)]
-fn install_error_hooks() {
-    tracing_subscriber::registry()
-        // .with(EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().compact())
-        .with(ErrorLayer::default())
-        .init();
-
-    HookBuilder::default()
-        .capture_span_trace_by_default(true)
-        .install()
-        .unwrap();
-}
-
 /// Ensures exit code 2 on panics, which is GNU's behavior. Also installs
 /// color-eyre's panic hook.
 /// https://www.gnu.org/software/gawk/manual/html_node/Exit-Status.html
 #[inline(always)] // Hide from stack trace on panics.
 pub fn ensure_consistent_panic<T>(f: impl UnwindSafe + FnOnce() -> T) -> T {
-    install_error_hooks();
     if cfg!(panic = "abort") {
         // Prevents core dumps on panic. We _might_ want to carve an exception.
         install_abort_hook();
