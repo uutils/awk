@@ -13,6 +13,7 @@ use parser::{
     Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
     SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
+use smallvec::SmallVec;
 
 use crate::{
     CodeRange,
@@ -43,9 +44,9 @@ pub struct CodeGen<'a> {
     pub(crate) symbols: SymbolTable<'a>,
     pub(crate) regs: RegAlloc,
     current_metadata: MetaId,
-    break_exits: Option<StdVec<Label>>,
+    break_exits: Option<SmallVec<[Label; 4]>>,
     continue_label: Option<Label>,
-    local_args: StdVec<NonLocal>,
+    local_args: SmallVec<[NonLocal; 4]>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -66,7 +67,7 @@ impl<'a> CodeGen<'a> {
             current_metadata: MetaId::default(),
             break_exits: None,
             continue_label: None,
-            local_args: StdVec::new(),
+            local_args: SmallVec::new(),
         }
     }
 
@@ -380,13 +381,13 @@ impl<'a> CodeGen<'a> {
         let cmp = self.regs.alloc();
 
         let default_pos = default.map_or(branches.len(), |(_, pos)| *pos);
-        let mut pending_branches = StdVec::new();
+        let mut pending_branches = SmallVec::<[_; 8]>::new();
         for (i, (atom, _)) in branches.iter().enumerate() {
             pending_branches.push(self.emit_switch_case_match(*scr, *cmp, atom, i));
         }
         let no_match_jump = self.emit(Instruction::Jump { to: Label(0) });
 
-        let mut case_labels = StdVec::with_capacity(branches.len());
+        let mut case_labels = SmallVec::<[_; 8]>::new();
         case_labels.resize(branches.len(), Label(0));
         let mut default_label = None;
 
@@ -867,7 +868,7 @@ impl<'a> CodeGen<'a> {
 
     /// Run `f` as the body of a loop/`switch`, patching `break` jumps to the end.
     fn with_break_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let prev = self.break_exits.replace(StdVec::new());
+        let prev = self.break_exits.replace(SmallVec::new());
         let ret = f(self);
         let end = self.following_instr(0);
         if let Some(exits) = self.break_exits.take() {
