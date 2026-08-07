@@ -70,6 +70,20 @@ impl TypedArg {
         Self(Arg { sym: var_index(var) }, ArgTy::IsVal)
     }
 
+    pub fn new_ia(var: &Variable<'_>) -> Self {
+        let sym = var_index(var);
+        Self(Arg { sym }, ArgTy::IaVal)
+    }
+
+    pub fn new_ua(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+        let sym = code.symbols.register_user_var(ident, code.arena);
+        if let Some(reg) = code.get_local_arg(sym) {
+            Self(Arg { reg }, ArgTy::Reg)
+        } else {
+            Self(Arg { sym }, ArgTy::UaVal)
+        }
+    }
+
     pub fn new_imm(imm: i32) -> Self {
         Self(Arg { imm }, ArgTy::Imm)
     }
@@ -198,12 +212,5 @@ impl Drop for LinearReg {
 impl From<&LinearReg> for Reg {
     fn from(value: &LinearReg) -> Self {
         **value
-    }
-}
-
-// HACK: Either::either_into from a ref.
-impl From<&Self> for Reg {
-    fn from(value: &Self) -> Self {
-        *value
     }
 }

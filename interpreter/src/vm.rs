@@ -308,11 +308,7 @@ impl<'a> SymbolTable<'a> {
 
     fn user_array(&mut self, var: NonLocal) -> Rc<RefCell<ArrayMap<'a>>> {
         let v = self.user.get_index_mut(var).unwrap();
-        v.array_context();
-        match v {
-            Value::Array(arr) => Rc::clone(arr),
-            _ => unreachable!("array_context must leave an Array"),
-        }
+        v.as_array()
     }
 
     fn load_user_array_elem(&mut self, var: NonLocal, key: &str) -> Value<'a> {
@@ -533,10 +529,17 @@ impl<'a> Interpreter<'a> {
                     });
                     self.write_reg(dest, val);
                 }
-                Instruction::LoadA { dest, ty_place, start, end, var } => {
+                Instruction::LoadA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = match ty_place {
-                        ArgTy::UaVal => self.symbols.load_user_array_elem(var, &key),
+                    let val = match ty {
+                        ArgTy::Reg => arg
+                            .get_pure(ty, self, &mut MaybeUninit::uninit())
+                            .clone()
+                            .get_array(key),
+                        ArgTy::UaVal => {
+                            let var = unsafe { arg.sym };
+                            self.symbols.load_user_array_elem(var, &key)
+                        }
                         ArgTy::IaVal => todo!("intrinsic array load"),
                         _ => unreachable!(),
                     };
@@ -554,11 +557,17 @@ impl<'a> Interpreter<'a> {
                 Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
                     todo!()
                 }
-                Instruction::StoreA { dest, ty_place, start, end, var, arg } => {
+                Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.read_reg(arg).clone();
-                    match ty_place {
+                    let val = rhs.get_val(tyr, self, &mut MaybeUninit::uninit()).clone();
+                    match tyl {
+                        ArgTy::Reg => {
+                            lhs.get_pure(tyl, self, &mut MaybeUninit::uninit())
+                                .clone()
+                                .push_array(key, val.clone());
+                        }
                         ArgTy::UaVal => {
+                            let var = unsafe { lhs.sym };
                             self.symbols.store_user_array_elem(var, key, val.clone());
                         }
                         ArgTy::IaVal => todo!("intrinsic array store"),

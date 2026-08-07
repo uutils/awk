@@ -67,8 +67,8 @@ pub enum Instruction {
     // Intrinsic operations
     StoreS { dest: Reg, ty_place: ArgTy, var: NonLocal, arg: Arg, ty: ArgTy },
     StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
-    StoreA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal, arg: Reg },
-    LoadA { dest: Reg, ty_place: ArgTy, start: Reg, end: Reg, var: NonLocal },
+    StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: ArgTy, tyr: ArgTy },
+    LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: ArgTy },
     PureCopy { dest: Reg, arg: Arg, ty: ArgTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
@@ -240,11 +240,16 @@ impl Display for Instruction {
                 fmt_arg(f, src, tys, "")?;
                 fmt_arg(f, arg, ty, "), ")
             }
-            Self::StoreA { dest, ty_place, start, end, var, arg } => {
-                write!(f, "{dest} <- {op} {ty_place}({var}), {start}..{end}, {arg}")
+            Self::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, lhs, tyl, " ")?;
+                write!(f, ", {start}..{end}")?;
+                fmt_arg(f, rhs, tyr, ", ")
             }
-            Self::LoadA { dest, ty_place, start, end, var } => {
-                write!(f, "{dest} <- {op} {ty_place}({var}), {start}..{end})")
+            Self::LoadA { dest, arg, start, end, ty } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, arg, ty, " ")?;
+                write!(f, ", {start}..{end}")
             }
             Self::IncrementPost { dest, arg, ty }
             | Self::IncrementPre { dest, arg, ty }

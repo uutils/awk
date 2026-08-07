@@ -8,7 +8,6 @@ mod utils;
 use std::{borrow::Cow, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
-use either::Either;
 use parser::{
     ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
     Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
@@ -687,14 +686,13 @@ impl<'a> CodeGen<'a> {
     }
 
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedArg {
+        let (start, end, _) = self.gen_call_convention(index, |_| ());
         if let Variable::User(ident) = var {
-            let var = self.symbols.register_user_var(ident, self.arena);
-            let (start, end, _) = self.gen_call_convention(index, |_| ());
-            self.emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
+            let (arg, ty) = TypedArg::new_ua(self, ident).into();
+            self.emit(Instruction::LoadA { dest, arg, ty, start, end });
         } else {
-            let (start, end, _) = self.gen_call_convention(index, |_| ());
-            let var = var_index(var);
-            self.emit(Instruction::LoadA { dest, ty_place: ArgTy::IaVal, start, end, var });
+            let (arg, ty) = TypedArg::new_ia(var).into();
+            self.emit(Instruction::LoadA { dest, arg, ty, start, end });
         }
         // Element value was written to `dest`; subsequent ops must use the register.
         TypedArg::new_reg(dest)
@@ -731,32 +729,16 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::StoreS { dest, ty_place: ArgTy::IsVal, var, arg, ty });
             }
             Place::Index(Variable::User(ident), index) => {
-                let var = self.symbols.register_user_var(ident, self.arena);
+                let (lhs, tyl) = TypedArg::new_ua(self, ident).into();
+                let (rhs, tyr) = src.into();
                 let (start, end, _) = self.gen_call_convention(index, |_| ());
-                let arg = self.spill_to_reg(src);
-                self.emit(Instruction::StoreA {
-                    dest,
-                    start,
-                    end,
-                    var,
-                    ty_place: ArgTy::UaVal,
-                    arg: arg.as_ref().either_into(),
-                });
-                arg.map_right(|r| self.free_reg(r));
+                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
             }
             Place::Index(var, index) => {
+                let (lhs, tyl) = TypedArg::new_ia(var).into();
+                let (rhs, tyr) = src.into();
                 let (start, end, _) = self.gen_call_convention(index, |_| ());
-                let var = var_index(var);
-                let arg = self.spill_to_reg(src);
-                self.emit(Instruction::StoreA {
-                    dest,
-                    start,
-                    end,
-                    var,
-                    ty_place: ArgTy::IaVal,
-                    arg: arg.as_ref().either_into(),
-                });
-                arg.map_right(|r| self.free_reg(r));
+                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
             }
             Place::ChainedIndex(_, _) => todo!(),
         }
@@ -864,17 +846,6 @@ impl<'a> CodeGen<'a> {
         });
         self.reg_pointer = self.reg_pointer.max(state.reg_pointer);
         ret
-    }
-
-    fn spill_to_reg(&mut self, t_arg: TypedArg) -> Either<Reg, LinearReg> {
-        if let Some(reg) = t_arg.as_reg() {
-            Either::Left(reg)
-        } else {
-            let dest = self.alloc_reg();
-            let (arg, ty) = t_arg.into();
-            self.emit(Instruction::Copy { dest: *dest, arg, ty });
-            Either::Right(dest)
-        }
     }
 
     fn free_reg(&mut self, reg: LinearReg) {

@@ -50,7 +50,7 @@ impl Value<'_> {
     }
 }
 
-impl Value<'_> {
+impl<'a> Value<'a> {
     /// Called when loading a variable's value. Forces subsequent uses to be
     /// typed as an AWK scalar (anything that's not an array, basically).
     pub fn scalar_context(&mut self) -> &mut Self {
@@ -115,6 +115,24 @@ impl Value<'_> {
             return false;
         };
         regex::Regex::new(pattern).is_ok_and(|re| re.is_match(subject))
+    }
+
+    pub fn as_array(&mut self) -> Rc<RefCell<ArrayMap<'a>>> {
+        self.array_context();
+        match self {
+            Value::Array(arr) => Rc::clone(arr),
+            _ => unreachable!("array_context must leave an Array"),
+        }
+    }
+
+    pub fn push_array(&mut self, key: String, val: Self) {
+        let arr = self.as_array();
+        arr.borrow_mut().insert(key, val);
+    }
+
+    pub fn get_array(&mut self, key: String) -> Self {
+        let arr = self.as_array();
+        arr.borrow().get(&key).cloned().unwrap_or(Self::Untyped)
     }
 
     pub fn write_string(&self, f: &mut Vec<u8>) {
