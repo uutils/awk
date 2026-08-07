@@ -103,7 +103,11 @@ fn test_parser_statement_end_after_command() {
     test_parser!(is_err!(
         "{ print 1 { 1 + 1 } }",
         "{ print 1 { } }",
-        "{ printf \"%d\" 1 { } }"
+        "{ printf \"%d\" 1 { } }",
+        "{ print 1 print 2 }",
+        "{ 1 + 1 print 1 }",
+        "{ delete x print 1 }",
+        "{ 2 + 1 delete x }"
     ));
 }
 
