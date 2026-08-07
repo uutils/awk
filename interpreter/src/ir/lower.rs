@@ -285,7 +285,7 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
                 self.with_metadata(*metadata, |this| {
-                    let (range, redir) = this.gen_call_convention(args, |this| {
+                    let (range, redir) = this.gen_call_convention_patched(args, |this| {
                         redirection.as_ref().map(|(r, expr)| {
                             let redir_reg = this.regs.alloc();
                             this.lower_expr_into(expr, *redir_reg);
@@ -649,20 +649,20 @@ impl<'a> CodeGen<'a> {
                         }
                         ExprNode::FunctionCall(name, args) => {
                             let name = this.symbols.get_user_fun(name, self.arena);
-                            let (range, _) = this.gen_call_convention(args, |_| ());
+                            let range = this.gen_call_convention(args);
                             let (start, end) = range.as_range();
                             this.emit(Instruction::UserCall { dest, start, end, name });
                             this.regs.free_many(range);
                         }
                         ExprNode::BuiltinCall(fun, args) => {
                             // Bypass regular variable lookups on type-info funs.
-                            let (range, _) = this.gen_call_convention(args, |_| ());
+                            let range = this.gen_call_convention(args);
                             let (start, end) = range.as_range();
                             this.emit(Instruction::IntrinsicCall { dest, start, end, fun: *fun });
                             this.regs.free_many(range);
                         }
                         ExprNode::IndirectCall(place, args) => {
-                            let (range, _) = this.gen_call_convention(args, |_| ());
+                            let range = this.gen_call_convention(args);
                             let (start, end) = range.as_range();
                             let (name, ty) = this.load_place(dest, &Place::Variable(*place)).into();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
@@ -688,7 +688,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedArg {
-        let (range, _) = self.gen_call_convention(index, |_| ());
+        let range = self.gen_call_convention(index);
         let (start, end) = range.as_range();
         if let Variable::User(ident) = var {
             let (arg, ty) = TypedArg::new_ua(self, ident).into();
@@ -735,7 +735,7 @@ impl<'a> CodeGen<'a> {
             Place::Index(Variable::User(ident), index) => {
                 let (lhs, tyl) = TypedArg::new_ua(self, ident).into();
                 let (rhs, tyr) = src.into();
-                let (range, _) = self.gen_call_convention(index, |_| ());
+                let range = self.gen_call_convention(index);
                 let (start, end) = range.as_range();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 self.regs.free_many(range);
@@ -743,7 +743,7 @@ impl<'a> CodeGen<'a> {
             Place::Index(var, index) => {
                 let (lhs, tyl) = TypedArg::new_ia(var).into();
                 let (rhs, tyr) = src.into();
-                let (range, _) = self.gen_call_convention(index, |_| ());
+                let range = self.gen_call_convention(index);
                 let (start, end) = range.as_range();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 self.regs.free_many(range);
@@ -815,7 +815,11 @@ impl<'a> CodeGen<'a> {
         res
     }
 
-    fn gen_call_convention<T>(
+    fn gen_call_convention(&mut self, args: &[Expr<'_>]) -> LinearRegRange {
+        self.gen_call_convention_patched(args, |_| {}).0
+    }
+
+    fn gen_call_convention_patched<T>(
         &mut self,
         args: &[Expr<'_>],
         extra: impl FnOnce(&mut CodeGen) -> T,
