@@ -10,9 +10,9 @@ use std::{borrow::Cow, vec::Vec as StdVec};
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
 use parser::{
-    ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, BuiltinFunction, Command,
-    Expr, ExprNode, Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule,
-    RulePattern, SimpleStatement, Statement, UnaryPlaceOperator, Variable,
+    ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
+    Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
+    SimpleStatement, Statement, UnaryPlaceOperator, Variable,
 };
 
 use crate::{
@@ -659,30 +659,7 @@ impl<'a> CodeGen<'a> {
                         }
                         ExprNode::BuiltinCall(fun, args) => {
                             // Bypass regular variable lookups on type-info funs.
-                            let (start, end, _) = match fun {
-                                BuiltinFunction::Typeof | BuiltinFunction::Isarray
-                                    if let &[Expr::Leaf(Atom::Variable(var), _)] =
-                                        args.as_slice() =>
-                                {
-                                    let (arg, ty) =
-                                        this.load_place(dest, &Place::Variable(var)).into();
-                                    this.emit(Instruction::PureCopy { dest, arg, ty });
-                                    (dest, Reg(dest.0 + 1), ())
-                                }
-                                BuiltinFunction::Typeof | BuiltinFunction::Isarray
-                                    if let [expr] = args.as_slice() =>
-                                {
-                                    this.lower_expr_into(expr, dest);
-                                    (dest, Reg(dest.0 + 1), ())
-                                }
-                                BuiltinFunction::Typeof
-                                    if let &[Expr::Leaf(Atom::Variable(_var), _), ref _arg2] =
-                                        args.as_slice() =>
-                                {
-                                    todo!()
-                                }
-                                _ => this.gen_call_convention(args, |_| ()),
-                            };
+                            let (start, end, _) = this.gen_call_convention(args, |_| ());
                             this.emit(Instruction::IntrinsicCall { dest, start, end, fun: *fun });
                         }
                         ExprNode::IndirectCall(place, args) => {
@@ -873,8 +850,15 @@ impl<'a> CodeGen<'a> {
             this.reg_pointer = call_end;
             for (i, arg) in args.iter().enumerate() {
                 let offset = i as RegWidth;
-                let reg = Reg(call_start.checked_add(offset).expect("register overflow"));
-                this.lower_expr_into(arg, reg);
+                let dest = Reg(call_start.checked_add(offset).expect("register overflow"));
+                // Bypass Copy instruction for variables here, so we do not get
+                // scalar context shenanigans in the VM.
+                if let &Expr::Leaf(Atom::Variable(var), _) = arg {
+                    let (arg, ty) = this.load_place(dest, &Place::Variable(var)).into();
+                    this.emit(Instruction::PureCopy { dest, arg, ty });
+                } else {
+                    this.lower_expr_into(arg, dest);
+                }
             }
             (Reg(call_start), Reg(call_end), extra(this))
         });
