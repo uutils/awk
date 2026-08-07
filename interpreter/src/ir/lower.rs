@@ -18,7 +18,7 @@ use crate::{
     CodeRange,
     ir::{
         ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
-        lower::utils::{LinearRegRange, Operand, RegAlloc, RegsState, TypedArg, var_index},
+        lower::utils::{LinearRegRange, Operand, RegAlloc, TypedArg, var_index},
     },
     vm::{Consts, Function, SymbolTable, types::Value},
 };
@@ -161,7 +161,7 @@ impl<'a> CodeGen<'a> {
         );
 
         let arity = RegWidth::try_from(args.len()).expect("Too many args!");
-        let (_, ()) = RegsState::new(self).scope(self, |this| {
+        self.regs.clone().scope(self, |this| {
             this.regs.reserve(arity);
             this.lower_body(body);
         });
@@ -184,14 +184,14 @@ impl<'a> CodeGen<'a> {
         match stmnt {
             Statement::If { condition, then_body, else_body, metadata } => {
                 self.with_metadata(*metadata, |this| {
-                    let state = RegsState::new(this);
+                    let state = this.regs.clone();
                     let (if_label, _) =
                         this.emit_branch(condition, |this| this.lower_body(then_body));
 
                     if let Some(else_body) = else_body {
                         this.bc.nth(if_label).push_end_label();
                         this.emit_jump(|this| {
-                            state.scope_hwm(this, |this| this.lower_body(else_body));
+                            state.scope(this, |this| this.lower_body(else_body));
                         });
                     }
                 });
@@ -549,14 +549,13 @@ impl<'a> CodeGen<'a> {
                         },
                         ExprNode::Ternary(condition, true_then, false_then) => {
                             let (if_label, state) = this.emit_branch(condition, |this| {
-                                RegsState::new(this)
-                                    .scope(this, |this| this.lower_expr_into(true_then, dest))
-                                    .0
+                                let state = this.regs.clone();
+                                this.lower_expr_into(true_then, dest);
+                                state
                             });
                             this.bc.nth(if_label).push_end_label();
                             this.emit_jump(|this| {
-                                state
-                                    .scope_hwm(this, |this| this.lower_expr_into(false_then, dest));
+                                state.scope(this, |this| this.lower_expr_into(false_then, dest));
                             });
                         }
                         ExprNode::BinaryPlaceOperation(op, place, expr) => {
@@ -826,7 +825,7 @@ impl<'a> CodeGen<'a> {
         let range = self.regs.alloc_many(args_len);
         let (call_start, _) = range.as_range();
 
-        let (state, ret) = RegsState::new(self).scope(self, |this| {
+        let ret = self.regs.clone().scope(self, |this| {
             for (i, arg) in args.iter().enumerate() {
                 let dest = Reg(call_start.0 + i as RegWidth);
                 // Bypass Copy instruction for variables here, so we do not get
@@ -841,7 +840,6 @@ impl<'a> CodeGen<'a> {
             extra(this)
         });
 
-        self.regs.reg_pointer = self.regs.reg_pointer.max(state.0.reg_pointer);
         (range, ret)
     }
 

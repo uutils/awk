@@ -39,9 +39,6 @@ pub enum Operand {
     Reg(LinearReg), // needs to be freed
 }
 
-#[derive(Clone, Debug)]
-pub struct RegsState(pub(super) RegAlloc);
-
 impl LinearReg {
     pub fn into_inner(self) -> Reg {
         let inner = self.0;
@@ -215,32 +212,14 @@ impl RegAlloc {
         self.hwm = self.hwm.max(self.reg_pointer);
         Reg(start)
     }
-}
 
-impl RegsState {
-    pub fn new(code: &CodeGen) -> Self {
-        Self(code.regs.clone())
-    }
-
-    /// Runs the closure and restores
-    pub fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> (Self, T) {
-        let ret = f(code);
-        let hwm = code.regs.hwm.max(self.0.hwm);
-
-        code.regs.reg_pointer = self.0.reg_pointer;
-        code.regs.ranges.clone_from(&self.0.ranges);
-        code.regs.hwm = hwm;
-
-        (self, ret)
-    }
-
-    /// Merges previous [`Self::scope`] usages to properly set the hwm.
-    pub fn scope_hwm<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> T {
+    /// Runs the closure and restores the allocator's state to a previous point,
+    /// while still tracking high-water mark usage.
+    pub fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> T {
         let ret = f(code);
 
-        code.regs.hwm = code.regs.hwm.max(self.0.hwm);
-        code.regs.reg_pointer = self.0.reg_pointer;
-        code.regs.ranges = self.0.ranges;
+        code.regs.reg_pointer = self.reg_pointer;
+        code.regs.ranges = self.ranges;
 
         ret
     }
