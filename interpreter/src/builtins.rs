@@ -83,7 +83,6 @@ impl<'a> Interpreter<'a> {
             BuiltinFunction::Strtonum => Ok(Value::Float(strtonum(&require_args(args, 1, 1)?[0]))),
             BuiltinFunction::Typeof => Ok(typeof_value(&require_args(args, 1, 1)?[0])),
             BuiltinFunction::Isarray => {
-                // FIXME: array arguments currently hit scalar_context before dispatch.
                 let v = &require_args(args, 1, 1)?[0];
                 Ok(Value::Int(matches!(v, Value::Array(_)) as isize))
             }
@@ -411,8 +410,6 @@ mod tests {
             InterpreterError::ArityMismatch(_, 2, 1)
         ));
     }
-
-    // --- FIXME coverage (ignored until behavior is implemented) ---
 
     #[ignore = "FIXME: gawk fatals on negative shift counts"]
     #[test]

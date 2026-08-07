@@ -421,7 +421,6 @@ fn builtin_math_trig_basics() {
         .stdout_only("1\n0\n0\n1\n0\n");
 }
 
-#[ignore = "FIXME: array arguments currently hit scalar_context before dispatch"]
 #[test]
 fn builtin_isarray_with_array_variable() {
     ucmd()
