@@ -262,10 +262,26 @@ pub fn var_index(var: &Variable<'_>) -> NonLocal {
     NonLocal(index)
 }
 
+/// Poor man's linear types. The const fallback is a bit better, but has the
+/// trade-off that you're effectively at the compiler's will.
 #[cfg(debug_assertions)]
 impl Drop for LinearReg {
     fn drop(&mut self) {
         debug_assert!(false, "Leaked register {}!", self.0);
+    }
+}
+
+/// On release builds, we can rely on post-monomorphization errors to assert
+/// linearity. Kinda neat. Fully cursed. Remove it if getting false positives,
+/// but assert _they are_; the rt fallback not catching them is not an excuse.
+#[cfg(not(debug_assertions))]
+impl Drop for LinearReg {
+    fn drop(&mut self) {
+        fn evil<T>() {
+            let _ = std::marker::PhantomData::<T>;
+            const { panic!("Leaked register!") }
+        }
+        evil::<()>();
     }
 }
 
