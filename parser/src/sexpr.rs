@@ -66,9 +66,9 @@ impl Debug for Statement<'_> {
                             write!(f, "\n{pad}(pass)")
                         }
                     };
-                    write_fragment(f, init.as_ref().map(|x| x as _))?;
-                    write_fragment(f, condition.as_ref().map(|x| x as _))?;
-                    write_fragment(f, update.as_ref().map(|x| x as _))?;
+                    write_fragment(f, init.as_ref().map(|x| x as &dyn Debug))?;
+                    write_fragment(f, condition.as_ref().map(|x| x as &dyn Debug))?;
+                    write_fragment(f, update.as_ref().map(|x| x as &dyn Debug))?;
                     write!(f, "\n{pad}{body:#ni$?})")
                 } else {
                     let write_fragment = |f: &mut Formatter, x: Option<&dyn Debug>| {
@@ -78,9 +78,9 @@ impl Debug for Statement<'_> {
                             write!(f, " (pass)")
                         }
                     };
-                    write_fragment(f, init.as_ref().map(|x| x as _))?;
-                    write_fragment(f, condition.as_ref().map(|x| x as _))?;
-                    write_fragment(f, update.as_ref().map(|x| x as _))?;
+                    write_fragment(f, init.as_ref().map(|x| x as &dyn Debug))?;
+                    write_fragment(f, condition.as_ref().map(|x| x as &dyn Debug))?;
+                    write_fragment(f, update.as_ref().map(|x| x as &dyn Debug))?;
                     write!(f, " {body:?})")
                 }
             }

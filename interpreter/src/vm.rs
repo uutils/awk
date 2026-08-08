@@ -202,22 +202,22 @@ impl<'a, T> RawSymbolTable<'a, T> {
 
     pub fn register(&mut self, ident: &Identifier, value: T, bump: &'a Bump) -> NonLocal {
         if let Some(index) = self.0.get_index_of(ident) {
-            NonLocal(index as _)
+            NonLocal(index.try_into().unwrap())
         } else {
             let ident = Identifier {
                 namespace: bump.alloc_str(ident.namespace),
                 literal: bump.alloc_str(ident.literal),
             };
-            NonLocal(self.0.insert_full(ident, value).0 as _)
+            NonLocal(self.0.insert_full(ident, value).0.try_into().unwrap())
         }
     }
 
     pub fn get_index(&self, var: NonLocal) -> Option<&T> {
-        self.0.get_index(var.0 as _).map(|x| x.1)
+        self.0.get_index(var.0 as usize).map(|x| x.1)
     }
 
     pub fn get_index_mut(&mut self, var: NonLocal) -> Option<&mut T> {
-        self.0.get_index_mut(var.0 as _).map(|x| x.1)
+        self.0.get_index_mut(var.0 as usize).map(|x| x.1)
     }
 
     pub fn insert(&mut self, ident: Identifier<'a>, value: T) -> Option<T> {
@@ -227,7 +227,7 @@ impl<'a, T> RawSymbolTable<'a, T> {
     pub fn lookup(&mut self, ident: &Identifier) -> Option<(NonLocal, &mut T)> {
         self.0
             .get_index_of(ident)
-            .map(|ix| (NonLocal(ix as _), &mut self.0[ix]))
+            .map(|ix| (NonLocal(ix.try_into().unwrap()), &mut self.0[ix]))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&Identifier<'a>, &T)> {
@@ -614,14 +614,14 @@ impl<'a> Interpreter<'a> {
                     continue;
                 }
                 Instruction::Jump { to: Label(label) } => {
-                    self.program_counter = label as _;
+                    self.program_counter = label;
                     continue;
                 }
                 Instruction::Branch { then_label, else_label, condition } => {
                     if self.read_reg(condition).to_bool() {
-                        self.program_counter = then_label.0 as _;
+                        self.program_counter = then_label.0;
                     } else {
-                        self.program_counter = else_label.0 as _;
+                        self.program_counter = else_label.0;
                     }
                     continue;
                 }
@@ -864,7 +864,7 @@ impl Arg {
         match ty {
             ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Rec => todo!(),
-            ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as _)),
+            ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
             ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
             ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
             _ => todo!(),
@@ -884,7 +884,7 @@ impl Arg {
             ArgTy::Reg | ArgTy::Cnt | ArgTy::ImmF => {}
             ArgTy::Rec => todo!(),
             ArgTy::Imm => {
-                stack_space.write(Value::Int(unsafe { self.imm } as _));
+                stack_space.write(Value::Int(unsafe { self.imm } as isize));
             }
             ArgTy::UsVal => {
                 // Forces it a scalar without reading the value yet.

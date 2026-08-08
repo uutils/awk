@@ -18,7 +18,7 @@ use std::{
 };
 
 use bumpalo::Bump;
-use clap::Parser as _;
+use clap::Parser as ClapParser;
 use interpreter::{CodeGen, ExecMode, Interpreter};
 use parser::{FileCache, Parser};
 
