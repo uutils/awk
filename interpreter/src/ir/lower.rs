@@ -113,19 +113,17 @@ impl<'a> CodeGen<'a> {
         if let Some(actions) = actions {
             self.lower_body(actions);
         } else {
-            let reg = self.regs.alloc();
+            self.scoped_reg(|this, reg| {
+                let (arg, ty) = TypedArg::new_imm(0).into();
+                this.emit(Instruction::Record { dest: reg, arg, ty });
 
-            let (arg, ty) = TypedArg::new_imm(0).into();
-            self.emit(Instruction::Record { dest: *reg, arg, ty });
-
-            self.emit(Instruction::OutputCall {
-                start: *reg,
-                end: Reg((*reg).0 + 1),
-                cmd: Command::Print,
-                redir: None,
+                this.emit(Instruction::OutputCall {
+                    start: reg,
+                    end: Reg(reg.0 + 1),
+                    cmd: Command::Print,
+                    redir: None,
+                });
             });
-
-            self.regs.free(reg);
         }
     }
 
@@ -222,13 +220,12 @@ impl<'a> CodeGen<'a> {
                     this.with_break_scope(|this| {
                         let (branch, continue_label) = this.emit_jump(|this| {
                             let continue_label = this.following_instr(0);
-
-                            let cond_reg = this.regs.alloc();
-                            this.lower_expr_into(condition, *cond_reg);
-                            let then_label = this.following_instr(1);
-                            let branch = this.emit(Instruction::br(*cond_reg, then_label));
-                            this.regs.free(cond_reg);
-                            (branch, continue_label)
+                            this.scoped_reg(|this, cond_reg| {
+                                this.lower_expr_into(condition, cond_reg);
+                                let then_label = this.following_instr(1);
+                                let branch = this.emit(Instruction::br(cond_reg, then_label));
+                                (branch, continue_label)
+                            })
                         });
 
                         this.with_continue_label(continue_label, |this| {
@@ -287,9 +284,9 @@ impl<'a> CodeGen<'a> {
                 self.with_metadata(*metadata, |this| {
                     let (range, redir) = this.gen_call_convention_patched(args, |this| {
                         redirection.as_ref().map(|(r, expr)| {
-                            let redir_reg = this.regs.alloc();
-                            this.lower_expr_into(expr, *redir_reg);
-                            this.regs.free(redir_reg);
+                            this.scoped_reg(|this, redir_reg| {
+                                this.lower_expr_into(expr, redir_reg);
+                            });
                             *r
                         })
                     });
@@ -326,13 +323,12 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Exit(Some(expr), metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let dest = this.regs.alloc();
-                    this.lower_expr_into(expr, *dest);
+                    this.scoped_reg(|this, dest| {
+                        this.lower_expr_into(expr, dest);
 
-                    let (arg, ty) = TypedArg::new_reg(*dest).into();
-                    this.emit(Instruction::Exit { arg, ty });
-
-                    this.regs.free(dest);
+                        let (arg, ty) = TypedArg::new_reg(dest).into();
+                        this.emit(Instruction::Exit { arg, ty });
+                    });
                 });
             }
             Statement::Exit(None, metadata) => {
@@ -343,13 +339,12 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Return(Some(expr), metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let dest = this.regs.alloc();
-                    this.lower_expr_into(expr, *dest);
+                    this.scoped_reg(|this, dest| {
+                        this.lower_expr_into(expr, dest);
 
-                    let (arg, ty) = TypedArg::new_reg(*dest).into();
-                    this.emit(Instruction::Return { arg, ty });
-
-                    this.regs.free(dest);
+                        let (arg, ty) = TypedArg::new_reg(dest).into();
+                        this.emit(Instruction::Return { arg, ty });
+                    });
                 });
             }
             Statement::Return(None, metadata) => {
@@ -544,8 +539,8 @@ impl<'a> CodeGen<'a> {
                                     lhs.to_arg(),
                                     rhs.to_arg(),
                                 ));
-                                lhs.free(this);
                                 rhs.free(this);
+                                lhs.free(this);
                             }
                         },
                         ExprNode::Ternary(condition, true_then, false_then) => {
@@ -568,14 +563,13 @@ impl<'a> CodeGen<'a> {
                                 return;
                             };
 
-                            let lhs_reg = this.regs.alloc();
-                            let lhs = this.load_place(*lhs_reg, place);
-                            let rhs = val.to_arg();
+                            this.scoped_reg(|this, lhs_reg| {
+                                let lhs = this.load_place(lhs_reg, place);
+                                let rhs = val.to_arg();
 
-                            this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
-                            this.store_place(place, dest, TypedArg::new_reg(dest));
-
-                            this.regs.free(lhs_reg);
+                                this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
+                                this.store_place(place, dest, TypedArg::new_reg(dest));
+                            });
                             val.free(this);
                         }
                         // Use optimized path for variables and records. Cannot
@@ -631,15 +625,17 @@ impl<'a> CodeGen<'a> {
                                         lhs,
                                         TypedArg::new_imm(0),
                                     ));
-                                    let tmp = this.regs.alloc();
-                                    let update_op = match op {
-                                        UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
-                                        UnaryPlaceOperator::DecrementR => BinaryOperator::Subtract,
-                                        _ => unreachable!(),
-                                    };
-                                    this.emit(Instruction::from_binary(update_op, *tmp, lhs, one));
-                                    this.store_place(place, *tmp, TypedArg::new_reg(*tmp));
-                                    this.regs.free(tmp);
+                                    this.scoped_reg(|this, tmp| {
+                                        let op = match op {
+                                            UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
+                                            UnaryPlaceOperator::DecrementR => {
+                                                BinaryOperator::Subtract
+                                            }
+                                            _ => unreachable!(),
+                                        };
+                                        this.emit(Instruction::from_binary(op, tmp, lhs, one));
+                                        this.store_place(place, tmp, TypedArg::new_reg(tmp));
+                                    });
                                 }
                             }
                         }
@@ -654,17 +650,17 @@ impl<'a> CodeGen<'a> {
                             this.emit(Instruction::UserCall { dest, start, end, name });
                             this.regs.free_many(range);
                         }
-                        ExprNode::BuiltinCall(fun, args) => {
+                        &ExprNode::BuiltinCall(fun, ref args) => {
                             // Bypass regular variable lookups on type-info funs.
                             let range = this.gen_call_convention(args);
                             let (start, end) = range.as_range();
-                            this.emit(Instruction::IntrinsicCall { dest, start, end, fun: *fun });
+                            this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
                             this.regs.free_many(range);
                         }
-                        ExprNode::IndirectCall(place, args) => {
+                        &ExprNode::IndirectCall(place, ref args) => {
                             let range = this.gen_call_convention(args);
                             let (start, end) = range.as_range();
-                            let (name, ty) = this.load_place(dest, &Place::Variable(*place)).into();
+                            let (name, ty) = this.load_place(dest, &Place::Variable(place)).into();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
@@ -754,10 +750,10 @@ impl<'a> CodeGen<'a> {
 
     fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
-            let rhs_reg = this.regs.alloc();
-            this.lower_expr_into(rhs, *rhs_reg);
-            this.truthify(dest, *rhs_reg);
-            this.regs.free(rhs_reg);
+            this.scoped_reg(|this, rhs_reg| {
+                this.lower_expr_into(rhs, rhs_reg);
+                this.truthify(dest, rhs_reg);
+            });
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
@@ -773,10 +769,10 @@ impl<'a> CodeGen<'a> {
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
-            let rhs_reg = this.regs.alloc();
-            this.lower_expr_into(rhs, *rhs_reg);
-            this.truthify(dest, *rhs_reg);
-            this.regs.free(rhs_reg);
+            this.scoped_reg(|this, rhs_reg| {
+                this.lower_expr_into(rhs, rhs_reg);
+                this.truthify(dest, rhs_reg);
+            });
         });
     }
 
@@ -794,11 +790,11 @@ impl<'a> CodeGen<'a> {
         condition_expr: &Expr<'_>,
         cb: impl FnOnce(&mut Self) -> T,
     ) -> (Label, T) {
-        let condition = self.regs.alloc();
-        self.lower_expr_into(condition_expr, *condition);
-        let then_label = self.following_instr(1);
-        let if_label = self.emit(Instruction::br(*condition, then_label));
-        self.regs.free(condition);
+        let if_label = self.scoped_reg(|this, condition| {
+            this.lower_expr_into(condition_expr, condition);
+            let then_label = this.following_instr(1);
+            this.emit(Instruction::br(condition, then_label))
+        });
 
         let res = cb(self);
         let next = self.following_instr(0);
@@ -897,6 +893,14 @@ impl<'a> CodeGen<'a> {
             .iter()
             .enumerate()
             .find_map(|(i, &nl)| (nl == sym).then_some(Reg(i as RegWidth)))
+    }
+
+    /// Allocates a register and frees it at the end of the scope.
+    pub fn scoped_reg<T>(&mut self, f: impl FnOnce(&mut CodeGen, Reg) -> T) -> T {
+        let reg = self.regs.alloc();
+        let ret = f(self, *reg);
+        self.regs.free(reg);
+        ret
     }
 }
 
