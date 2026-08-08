@@ -698,6 +698,12 @@ fn test_parser_redirection() {
         { print >> "out" }
         { print | "cmd" }
         { print |& "cmd" }
+        { print (1 + 1)/2 > "cmd" }
+        { print (1, 2 > 3) }
+        { print (1 > 3, 2) > "cmd" }
+        { print 1, 2 | "cmd" }
+        { print 1 |& "cmd" }
+        { print 1 >> ("cmd" > "foo") }
     "#;
     test_parser!(source => {
         rules: [
@@ -705,6 +711,12 @@ fn test_parser_redirection() {
             (None, Some("(body (Print (>> \"out\")))")),
             (None, Some("(body (Print (| \"cmd\")))")),
             (None, Some("(body (Print (|& \"cmd\")))")),
+            (None, Some("(body (Print (Divide (Add 1 1) 2) (> \"cmd\")))")),
+            (None, Some("(body (Print 1 (Gt 2 3)))")),
+            (None, Some("(body (Print (Gt 1 3) 2 (> \"cmd\")))")),
+            (None, Some("(body (Print 1 2 (| \"cmd\")))")),
+            (None, Some("(body (Print 1 (|& \"cmd\")))")),
+            (None, Some("(body (Print 1 (>> (Gt \"cmd\" \"foo\"))))")),
         ],
     });
 }
