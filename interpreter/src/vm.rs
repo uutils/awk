@@ -3,6 +3,14 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
+//! The cornucopia of `inline` attrs is on purpose. I have measured it to 2x
+//! performance quite easily. If we move to a subroutine, TCO-style dispatch,
+//! which we should at least _try_[^ref], reassess it during the refactoring.
+//!
+//! [^ref]: <https://lordgoati.us/blog/tail-call/>
+
+#![allow(clippy::inline_always)]
+
 pub mod types;
 
 use std::{
@@ -212,24 +220,29 @@ impl<'a, T> RawSymbolTable<'a, T> {
         }
     }
 
+    #[inline(always)]
     pub fn get_index(&self, var: NonLocal) -> Option<&T> {
         self.0.get_index(var.0 as usize).map(|x| x.1)
     }
 
+    #[inline(always)]
     pub fn get_index_mut(&mut self, var: NonLocal) -> Option<&mut T> {
         self.0.get_index_mut(var.0 as usize).map(|x| x.1)
     }
 
+    #[inline(always)]
     pub fn insert(&mut self, ident: Identifier<'a>, value: T) -> Option<T> {
         self.0.insert(ident, value)
     }
 
+    #[inline(always)]
     pub fn lookup(&mut self, ident: &Identifier) -> Option<(NonLocal, &mut T)> {
         self.0
             .get_index_of(ident)
             .map(|ix| (NonLocal(ix.try_into().unwrap()), &mut self.0[ix]))
     }
 
+    #[inline(always)]
     pub fn iter(&self) -> impl Iterator<Item = (&Identifier<'a>, &T)> {
         self.0.iter()
     }
@@ -292,16 +305,19 @@ impl<'a> SymbolTable<'a> {
         self.argv = Value::Array(Rc::new(RefCell::new(map)));
     }
 
+    #[inline(always)]
     fn lookup_user_scalar(&mut self, var: NonLocal) -> &Value<'a> {
         let v = self.user.get_index_mut(var).unwrap();
         v.scalar_context()
     }
 
     // HACK: Please do not use this if you can help it.
+    #[inline(always)]
     fn raw_user_lookup(&self, var: NonLocal) -> &Value<'a> {
         self.user.get_index(var).unwrap()
     }
 
+    #[inline(always)]
     fn write_user_val(&mut self, var: NonLocal, value: Value<'a>) {
         *self.user.get_index_mut(var).unwrap() = value;
     }
@@ -323,10 +339,12 @@ impl<'a> SymbolTable<'a> {
         self.user_array(var).borrow_mut().insert(key, value);
     }
 
+    #[inline(always)]
     pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> NonLocal {
         self.user.register(var, Value::Untyped, bump)
     }
 
+    #[inline(always)]
     pub fn register_user_var_with(&mut self, var: &Identifier, val: &str, bump: &'a Bump) {
         let ident = Identifier {
             namespace: bump.alloc_str(var.namespace),
@@ -343,6 +361,7 @@ impl<'a> SymbolTable<'a> {
         );
     }
 
+    #[inline(always)]
     pub fn register_user_fun(
         &mut self,
         name: &Identifier,
@@ -357,10 +376,12 @@ impl<'a> SymbolTable<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> NonLocal {
         self.functions.register(name, None, bump)
     }
 
+    #[inline(always)]
     pub fn record(&self, value: Value<'a>) -> &Value<'a> {
         self.records
             .get(&(value.to_num() as usize))
@@ -375,6 +396,7 @@ impl<'a> Consts<'a> {
 }
 
 impl<'a> Interpreter<'a> {
+    #[inline(always)]
     pub fn run_code(&mut self, bc: &Bytecode, span: CodeRange) -> Result<Signal, InterpreterError> {
         self.program_counter = span.0.start;
         self.code_end = span.0.end;
@@ -647,11 +669,13 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Convenience wrapper to write a value at the current reg slice.
+    #[inline(always)]
     fn write_reg(&mut self, dest: Reg, val: impl Into<Value<'a>>) {
         self.registers.write(dest, self.reg_offset(), val);
     }
 
     /// Convenience wrapper to read a value from the current reg slice.
+    #[inline(always)]
     fn read_reg(&self, src: Reg) -> &Value<'a> {
         self.registers.get(src, self.reg_offset())
     }
@@ -667,6 +691,7 @@ impl<'a> Interpreter<'a> {
         self.code_end = prev_code_end;
     }
 
+    #[inline(always)]
     fn reg_offset(&self) -> IxWidth {
         self.frames.last().map_or(0, |frame| frame.reg_offset)
     }
@@ -781,22 +806,27 @@ impl<'a> Interpreter<'a> {
 }
 
 impl<'a> Registers<'a> {
+    #[inline(always)]
     fn reserve(&mut self, len: IxWidth) {
         let len = len as usize;
         if self.0.len() < len {
             self.0.resize(len, Value::Untyped);
         }
     }
+    #[inline(always)]
     fn index_of(reg: Reg, offset: IxWidth) -> usize {
         reg.0 as usize + offset as usize
     }
+    #[inline(always)]
     fn get(&self, src: Reg, offset: IxWidth) -> &Value<'a> {
         let ix = Self::index_of(src, offset);
         &self.0[ix]
     }
+    #[inline(always)]
     fn write(&mut self, dest: Reg, offset: IxWidth, src: impl Into<Value<'a>>) {
         self.0[dest.0 as usize + offset as usize] = src.into();
     }
+    #[inline(always)]
     fn get_range(&self, regs: Range<Reg>, offset: IxWidth) -> &[Value<'a>] {
         let start = Self::index_of(regs.start, offset);
         let end = Self::index_of(regs.end, offset);
@@ -821,6 +851,7 @@ impl Display for CodeGen<'_> {
 }
 
 impl Arg {
+    #[inline(always)]
     fn get_val<'v, 'a>(
         self,
         ty: ArgTy,
@@ -834,6 +865,7 @@ impl Arg {
         unsafe { self.read_already_prepared(ty, intrp, stack_space) }
     }
 
+    #[inline(always)]
     fn get_val2<'a, T>(
         lhs: Self,
         tyl: ArgTy,
@@ -855,6 +887,7 @@ impl Arg {
     }
 
     /// Gets a value without scalar/array side-effects.
+    #[inline(always)]
     fn get_pure<'v, 'a>(
         self,
         ty: ArgTy,
@@ -874,6 +907,7 @@ impl Arg {
     /// Only exists to make the borrow checker happy. To be used in conjunction
     /// w/ [`Self::read_already_prepared`]. Please, don't use either of these if
     /// you can help it; use [`Self::get_val`] or [`Self::get_val2`] instead.
+    #[inline(always)]
     fn prepare<'a>(
         self,
         ty: ArgTy,
@@ -898,6 +932,7 @@ impl Arg {
     ///
     /// Must have called [`Self::prepare`] with the exact same arguments. Only
     /// exists to make the borrowck happy via two-phased initialization (yuck).
+    #[inline(always)]
     unsafe fn read_already_prepared<'v, 'a>(
         self,
         ty: ArgTy,
