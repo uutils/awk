@@ -605,6 +605,14 @@ impl<'a> Parser<'a> {
                         lex.span().since(start_extra),
                     ));
                 }
+            // Handles ambiguities like `print (1 + 1) / 2`
+            } else if args.len() == 1 && !lex.peek_with(Token::is_stmnt_or_block_end) {
+                let mut parser = Pratt::new(self, false);
+                let lhs = args.pop().unwrap();
+                args.push(
+                    parser.fold_rhs(lex, lhs, start, 0, |t| Redirection::parse(t).is_some())?,
+                );
+                self.parse_command_args(lex, &mut args)?;
             }
             args
         } else {

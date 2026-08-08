@@ -82,7 +82,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         Ok(indices)
     }
 
-    fn fold_rhs(
+    pub fn fold_rhs(
         &mut self,
         lex: &mut Lexer<'a>,
         mut lhs: Expr<'a>,
