@@ -719,7 +719,7 @@ impl<'a> Interpreter<'a> {
         metadata: &[MetaId],
         f: impl FnOnce(&Value<'a>) -> T,
     ) -> Result<T, InterpreterError> {
-        match arg.get_array(ty, self, &mut MaybeUninit::uninit()) {
+        match arg.get_array(ty, self) {
             Some(val) => Ok(f(val)),
             None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
         }
@@ -972,20 +972,13 @@ impl Arg {
         }
     }
 
-    /// Gets a value without scalar/array side-effects.
+    /// Gets a value with array side-effects.
     #[inline(always)]
-    fn get_array<'v, 'a>(
-        self,
-        ty: ArgTy,
-        intrp: &'v mut Interpreter<'a>,
-        stack_space: &'v mut MaybeUninit<Value<'a>>,
-    ) -> Option<&'v Value<'a>> {
+    fn get_array<'v, 'a>(self, ty: ArgTy, intrp: &'v mut Interpreter<'a>) -> Option<&'v Value<'a>> {
         match ty {
             ArgTy::Reg => intrp.read_reg_mut(unsafe { self.reg }).array_context(),
-            ArgTy::Rec => todo!(),
-            ArgTy::Imm => Some(stack_space.write(Value::Int(unsafe { self.imm } as isize))),
-            ArgTy::Cnt | ArgTy::ImmF => Some(&intrp.consts.0[unsafe { self.sym.0 } as usize]),
-            ArgTy::UsVal => intrp.symbols.lookup_user_array(unsafe { self.sym }),
+            ArgTy::Rec | ArgTy::Imm | ArgTy::Cnt | ArgTy::IsVal => None,
+            ArgTy::UsVal | ArgTy::UaVal => intrp.symbols.lookup_user_array(unsafe { self.sym }),
             _ => todo!(),
         }
     }
