@@ -3,9 +3,9 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{mem::forget, ops::Deref};
+use std::{iter::repeat, mem::forget, ops::Deref};
 
-use parser::{Identifier, Variable};
+use parser::{BuiltinFunction, Identifier, Variable};
 use smallvec::SmallVec;
 
 use crate::{
@@ -288,5 +288,105 @@ impl Drop for LinearReg {
 impl From<&LinearReg> for Reg {
     fn from(value: &LinearReg) -> Self {
         **value
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub(super) enum RtType {
+    Scalar,
+    Array,
+    Any,
+}
+
+// Thin newtype wrapper is dependency-injected an will only implement IntoIterator.
+pub(super) struct CallConvGen(SmallVec<[RtType; 16]>);
+
+pub(super) trait CallConv {
+    fn convention(self, argc: RegWidth) -> impl Iterator<Item = RtType>;
+}
+
+impl CallConvGen {
+    fn new(fun: BuiltinFunction, argc: RegWidth) -> Self {
+        let argc = argc.into();
+        match fun {
+            BuiltinFunction::Length => Self(SmallVec::from_elem(RtType::Any, 1)),
+            BuiltinFunction::Substr => Self(SmallVec::from_elem(RtType::Scalar, 3)),
+            BuiltinFunction::Split => Self(SmallVec::from_slice(&[
+                RtType::Scalar,
+                RtType::Array,
+                RtType::Scalar,
+                RtType::Array,
+            ])),
+            BuiltinFunction::Sub => Self(SmallVec::from_elem(RtType::Scalar, 3)),
+            BuiltinFunction::Gsub => Self(SmallVec::from_elem(RtType::Scalar, 3)),
+            BuiltinFunction::Match => Self(SmallVec::from_slice(&[
+                RtType::Scalar,
+                RtType::Scalar,
+                RtType::Array,
+            ])),
+            BuiltinFunction::Index => Self(SmallVec::from_elem(RtType::Scalar, 2)),
+            BuiltinFunction::Sprintf => Self(SmallVec::from_elem(RtType::Scalar, argc)),
+            BuiltinFunction::Toupper => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Tolower => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Gensub => Self(SmallVec::from_elem(RtType::Scalar, 4)),
+            BuiltinFunction::Patsplit => Self(SmallVec::from_slice(&[
+                RtType::Scalar,
+                RtType::Array,
+                RtType::Scalar,
+                RtType::Array,
+            ])),
+            BuiltinFunction::Strtonum => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Close => Self(SmallVec::from_elem(RtType::Scalar, 2)),
+            BuiltinFunction::Fflush => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::System => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Int => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Sqrt => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Exp => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Log => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Sin => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Cos => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Atan2 => Self(SmallVec::from_elem(RtType::Scalar, 2)),
+            BuiltinFunction::Rand => Self(SmallVec::new()),
+            BuiltinFunction::Srand => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Systime => Self(SmallVec::new()),
+            BuiltinFunction::Mktime => Self(SmallVec::from_elem(RtType::Scalar, 2)),
+            BuiltinFunction::Strftime => Self(SmallVec::from_elem(RtType::Scalar, 3)),
+            BuiltinFunction::Typeof => Self(SmallVec::from_elem(RtType::Any, 1)),
+            BuiltinFunction::Isarray => Self(SmallVec::from_elem(RtType::Any, 1)),
+            BuiltinFunction::Asort => Self(SmallVec::from_slice(&[
+                RtType::Array,
+                RtType::Array,
+                RtType::Scalar,
+            ])),
+            BuiltinFunction::Asorti => Self(SmallVec::from_slice(&[
+                RtType::Array,
+                RtType::Array,
+                RtType::Scalar,
+            ])),
+            BuiltinFunction::And => Self(SmallVec::from_elem(RtType::Scalar, argc)),
+            BuiltinFunction::Or => Self(SmallVec::from_elem(RtType::Scalar, argc)),
+            BuiltinFunction::Xor => Self(SmallVec::from_elem(RtType::Scalar, argc)),
+            BuiltinFunction::Compl => Self(SmallVec::from_elem(RtType::Scalar, 1)),
+            BuiltinFunction::Lshift => Self(SmallVec::from_elem(RtType::Scalar, 2)),
+            BuiltinFunction::Rshift => Self(SmallVec::from_elem(RtType::Scalar, 2)),
+        }
+    }
+}
+
+impl CallConv for BuiltinFunction {
+    fn convention(self, argc: RegWidth) -> impl Iterator<Item = RtType> {
+        // Unexpected args are passed as-is so the error that triggers is
+        // always the nice one about arity, not unexpected typeck bs.
+        CallConvGen::new(self, argc)
+            .0
+            .into_iter()
+            .chain(repeat(RtType::Any))
+    }
+}
+
+impl CallConv for RtType {
+    fn convention(self, _argc: RegWidth) -> impl Iterator<Item = Self> {
+        repeat(self)
     }
 }

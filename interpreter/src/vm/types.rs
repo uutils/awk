@@ -53,6 +53,7 @@ impl Value<'_> {
 impl<'a> Value<'a> {
     /// Called when loading a variable's value. Forces subsequent uses to be
     /// typed as an AWK scalar (anything that's not an array, basically).
+    #[inline(always)]
     pub fn scalar_context(&mut self) -> &mut Self {
         // TODO: Exit "nicely" on Self::Array(_).
         match self {
@@ -63,6 +64,7 @@ impl<'a> Value<'a> {
         self
     }
 
+    #[inline(always)]
     pub fn array_context(&mut self) -> &mut Self {
         // TODO: Exit "nicely" on non-array scalars.
         match self {

@@ -311,6 +311,12 @@ impl<'a> SymbolTable<'a> {
         v.scalar_context()
     }
 
+    #[inline(always)]
+    fn lookup_user_array(&mut self, var: NonLocal) -> &Value<'a> {
+        let v = self.user.get_index_mut(var).unwrap();
+        v.array_context()
+    }
+
     // HACK: Please do not use this if you can help it.
     #[inline(always)]
     fn raw_user_lookup(&self, var: NonLocal) -> &Value<'a> {
@@ -459,6 +465,10 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::Copy { dest, arg, ty } => {
                     let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    self.write_reg(dest, val);
+                }
+                Instruction::ACopy { dest, arg, ty } => {
+                    let val = arg.get_array(ty, self, &mut MaybeUninit::uninit()).clone();
                     self.write_reg(dest, val);
                 }
                 Instruction::PureCopy { dest, arg, ty } => {
@@ -680,6 +690,12 @@ impl<'a> Interpreter<'a> {
         self.registers.get(src, self.reg_offset())
     }
 
+    /// Convenience wrapper to read a value from the current reg slice.
+    #[inline(always)]
+    fn read_reg_mut(&mut self, src: Reg) -> &mut Value<'a> {
+        self.registers.get_mut(src, self.reg_offset())
+    }
+
     fn ret(&mut self, val: Value<'a>) {
         let Some(CallFrame { reg_offset: _, ret_addr, prev_code_end, ret_dest }) =
             self.frames.pop()
@@ -823,6 +839,11 @@ impl<'a> Registers<'a> {
         &self.0[ix]
     }
     #[inline(always)]
+    fn get_mut(&mut self, src: Reg, offset: IxWidth) -> &mut Value<'a> {
+        let ix = Self::index_of(src, offset);
+        &mut self.0[ix]
+    }
+    #[inline(always)]
     fn write(&mut self, dest: Reg, offset: IxWidth, src: impl Into<Value<'a>>) {
         self.0[dest.0 as usize + offset as usize] = src.into();
     }
@@ -904,6 +925,24 @@ impl Arg {
         }
     }
 
+    /// Gets a value without scalar/array side-effects.
+    #[inline(always)]
+    fn get_array<'v, 'a>(
+        self,
+        ty: ArgTy,
+        intrp: &'v mut Interpreter<'a>,
+        stack_space: &'v mut MaybeUninit<Value<'a>>,
+    ) -> &'v Value<'a> {
+        match ty {
+            ArgTy::Reg => intrp.read_reg_mut(unsafe { self.reg }).array_context(),
+            ArgTy::Rec => todo!(),
+            ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
+            ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::UsVal => intrp.symbols.lookup_user_array(unsafe { self.sym }),
+            _ => todo!(),
+        }
+    }
+
     /// Only exists to make the borrow checker happy. To be used in conjunction
     /// w/ [`Self::read_already_prepared`]. Please, don't use either of these if
     /// you can help it; use [`Self::get_val`] or [`Self::get_val2`] instead.
@@ -915,7 +954,10 @@ impl Arg {
         stack_space: &mut MaybeUninit<Value<'a>>,
     ) {
         match ty {
-            ArgTy::Reg | ArgTy::Cnt | ArgTy::ImmF => {}
+            ArgTy::Reg => {
+                intrp.read_reg_mut(unsafe { self.reg }).scalar_context();
+            }
+            ArgTy::Cnt | ArgTy::ImmF => {}
             ArgTy::Rec => todo!(),
             ArgTy::Imm => {
                 stack_space.write(Value::Int(unsafe { self.imm } as isize));

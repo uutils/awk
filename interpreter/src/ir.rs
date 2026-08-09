@@ -46,6 +46,7 @@ pub enum Instruction {
     IncrementPre { dest: Reg, arg: Arg, ty: ArgTy },
     DecrementPre { dest: Reg, arg: Arg, ty: ArgTy },
     Copy { dest: Reg, arg: Arg, ty: ArgTy },
+    ACopy { dest: Reg, arg: Arg, ty: ArgTy },
 
     // Binary operations
     Eq { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
@@ -208,6 +209,7 @@ impl Display for Instruction {
             | Self::ToInt { dest, arg, ty }
             | Self::Negative { dest, arg, ty }
             | Self::Copy { dest, arg, ty }
+            | Self::ACopy { dest, arg, ty }
             | Self::PureCopy { dest, arg, ty } => {
                 write!(f, "{dest} <- {op}")?;
                 fmt_arg(f, arg, ty, " ")
@@ -323,6 +325,7 @@ impl Instruction {
             Self::StoreA { .. } => "astore",
             Self::LoadA { .. } => "aload",
             Self::Copy { .. } => "cpy",
+            Self::ACopy { .. } => "acpy",
             Self::PureCopy { .. } => "pcpy",
             Self::IntrinsicCall { .. } => "icall",
             Self::UserCall { .. } => "ucall",
