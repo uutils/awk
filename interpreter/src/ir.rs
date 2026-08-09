@@ -108,7 +108,6 @@ pub union Arg {
 pub enum ArgTy {
     Reg,
     Imm,
-    ImmF,
     Rec,
     Cnt,
     UsVal,
@@ -364,7 +363,6 @@ impl Display for ArgTy {
         match self {
             Self::Reg => write!(f, "r"),
             Self::Imm => write!(f, "imm"),
-            Self::ImmF => write!(f, "immf"),
             Self::Rec => write!(f, "$"),
             Self::Cnt => write!(f, "mem"),
             Self::UsVal => write!(f, "us"),

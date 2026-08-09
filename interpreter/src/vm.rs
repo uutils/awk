@@ -966,7 +966,7 @@ impl Arg {
             ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Rec => todo!(),
             ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
-            ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
             ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
             _ => todo!(),
         }
@@ -997,7 +997,7 @@ impl Arg {
             ArgTy::Reg => {
                 intrp.read_reg_mut(unsafe { self.reg }).scalar_context()?;
             }
-            ArgTy::Cnt | ArgTy::ImmF => {}
+            ArgTy::Cnt => {}
             ArgTy::Rec => todo!(),
             ArgTy::Imm => {
                 stack_space.write(Value::Int(unsafe { self.imm } as isize));
@@ -1026,7 +1026,7 @@ impl Arg {
             ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Rec => todo!(),
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
-            ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
             ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
             _ => todo!(),
         }

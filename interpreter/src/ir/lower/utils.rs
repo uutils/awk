@@ -96,7 +96,7 @@ impl TypedArg {
 
     pub fn new_immf(code: &mut CodeGen<'_>, n: f64) -> Self {
         let sym = code.register_const(Value::Float(n));
-        Self(Arg { sym }, ArgTy::ImmF)
+        Self(Arg { sym }, ArgTy::Cnt)
     }
 
     pub fn new_cnt<'a>(code: &mut CodeGen<'a>, val: Value<'a>) -> Self {
