@@ -109,7 +109,7 @@ pub enum ExprNode<'a> {
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
     BinaryPlaceOperation(BinaryPlaceOperator, Place<'a>, Expr<'a>),
     ArrayOperation(ArrayOperator, Variable<'a>, Vec<'a, Expr<'a>>),
-    NestedArray(Expr<'a>, Vec<'a, Expr<'a>>),
+    ChainedIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
     Ternary(Expr<'a>, Expr<'a>, Expr<'a>),
     Getline(Getline<'a>),
 }
@@ -173,7 +173,7 @@ pub enum Place<'a> {
     Record(Expr<'a>),
     Variable(Variable<'a>),
     Index(Variable<'a>, Vec<'a, Expr<'a>>),
-    ChainedIndex(Expr<'a>, Vec<'a, Expr<'a>>),
+    ChainedIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
 }
 
 /// GNU docs: https://www.gnu.org/software/gawk/manual/html_node/Redirection.html
@@ -501,13 +501,13 @@ impl<'a> Place<'a> {
                     &*node,
                     &ExprNode::UnaryOperation(UnaryOperator::Record, _)
                         | &ExprNode::ArrayOperation(ArrayOperator::Index, _, _)
-                        | &ExprNode::NestedArray(_, _)
+                        | &ExprNode::ChainedIndex(_, _)
                 ) =>
             {
                 match Box::into_inner(node) {
                     ExprNode::UnaryOperation(_, index) => Ok(Self::Record(index)),
                     ExprNode::ArrayOperation(_, var, index) => Ok(Self::Index(var, index)),
-                    ExprNode::NestedArray(arr, indices) => Ok(Self::ChainedIndex(arr, indices)),
+                    ExprNode::ChainedIndex(arr, indices) => Ok(Self::ChainedIndex(arr, indices)),
                     _ => unreachable!("Box is magic; handled awkwardly in the match guard."),
                 }
             }

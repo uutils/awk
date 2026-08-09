@@ -149,31 +149,21 @@ impl<'a, 'b> Pratt<'a, 'b> {
                                 Expr::node(op.expr(var, index), self.parser, node_span)
                             }
                             Ok(Place::Index(var, index)) => {
-                                let inner_span = span.up_from(expr_anchor);
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
-                                let inner = Expr::node(
-                                    ExprNode::ArrayOperation(ArrayOperator::Index, var, index),
-                                    self.parser,
-                                    inner_span,
-                                );
+                                let indices = vec![in self.parser.arena; index, new_indices];
                                 let node_span = lex.span().since(expr_anchor);
                                 Expr::node(
-                                    ExprNode::NestedArray(inner, new_indices),
+                                    ExprNode::ChainedIndex(var, indices),
                                     self.parser,
                                     node_span,
                                 )
                             }
-                            Ok(Place::ChainedIndex(arr, indices)) => {
-                                let inner_span = span.up_from(expr_anchor);
+                            Ok(Place::ChainedIndex(var, mut indices)) => {
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
-                                let inner = Expr::node(
-                                    ExprNode::NestedArray(arr, indices),
-                                    self.parser,
-                                    inner_span,
-                                );
+                                indices.push(new_indices);
                                 let node_span = lex.span().since(expr_anchor);
                                 Expr::node(
-                                    ExprNode::NestedArray(inner, new_indices),
+                                    ExprNode::ChainedIndex(var, indices),
                                     self.parser,
                                     node_span,
                                 )
@@ -510,24 +500,14 @@ impl<'a, 'b> Pratt<'a, 'b> {
                         return Ok(Place::Index(var, index));
                     }
 
-                    let mut lhs = Expr::node(
-                        ExprNode::ArrayOperation(ArrayOperator::Index, var, index),
-                        self.parser,
-                        lex.span().since(start),
-                    );
+                    let mut indices = vec![in self.parser.arena; index];
 
                     while lex.peek_is(&Token::OpenBracket) {
                         let index = self.parse_index_exprs(lex, ArrayOperator::Index, start)?;
-                        if lex.peek_is(&Token::OpenBracket) {
-                            lhs = Expr::node(
-                                ExprNode::NestedArray(lhs, index),
-                                self.parser,
-                                lex.span().since(start),
-                            );
-                        } else {
-                            return Ok(Place::ChainedIndex(lhs, index));
-                        }
+                        indices.push(index);
                     }
+
+                    return Ok(Place::ChainedIndex(var, indices));
                 }
                 expr
             }

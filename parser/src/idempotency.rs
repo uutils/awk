@@ -326,12 +326,12 @@ impl Place<'_> {
                     bt(write_expr_args(f, args, 0, namespace))
                 )
             }
-            Self::ChainedIndex(arr, args) => {
-                fmt_seq!(
-                    f,
-                    arr.fmt(f, 0, 0, namespace),
-                    bt(write_expr_args(f, args, 0, namespace))
-                )
+            Self::ChainedIndex(var, index) => {
+                fmt_seq!(f, var.fmt(f, namespace))?;
+                for args in index {
+                    fmt_seq!(f, bt(write_expr_args(f, args, 0, namespace)))?;
+                }
+                Ok(())
             }
         }
     }
@@ -450,16 +450,18 @@ impl ExprNode<'_> {
                     )
                 )
             }
-            Self::NestedArray(arr, args) => {
+            Self::ChainedIndex(var, indices) => {
                 let left_bp = ArrayOperator::Index.binding_power().0;
                 fmt_seq!(
                     f,
                     maybe(
                         left_bp < parent_bp,
-                        p(
-                            arr.fmt(f, indent, left_bp, namespace),
-                            bt(write_expr_args(f, args, indent, namespace))
-                        )
+                        p(var.fmt(f, namespace), {
+                            for args in indices {
+                                fmt_seq!(f, bt(write_expr_args(f, args, 0, namespace)))?;
+                            }
+                            Ok(())
+                        })
                     )
                 )
             }

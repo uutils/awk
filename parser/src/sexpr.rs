@@ -209,12 +209,18 @@ impl Debug for Expr<'_> {
                     }
                     write!(f, ")")
                 }
-                ExprNode::NestedArray(inner, args) => {
-                    write!(f, "(Index {inner:?}")?;
-                    for arg in args {
-                        write!(f, " {arg:?}")?;
+                ExprNode::ChainedIndex(var, indices) => {
+                    for _ in 0..indices.len() {
+                        write!(f, "(Index ")?;
                     }
-                    write!(f, ")")
+                    write!(f, "{var:?}")?;
+                    for index in indices {
+                        for i in index {
+                            write!(f, " {i:?}")?;
+                        }
+                        write!(f, ")")?;
+                    }
+                    Ok(())
                 }
                 ExprNode::UnaryPlaceOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
@@ -315,12 +321,18 @@ impl Debug for Place<'_> {
                 }
                 write!(f, ")")
             }
-            Self::ChainedIndex(expr, index) => {
-                write!(f, "(Index {expr:?}")?;
-                for i in index {
-                    write!(f, " {i:?}")?;
+            Self::ChainedIndex(var, indices) => {
+                for _ in 0..indices.len() {
+                    write!(f, "(Index ")?;
                 }
-                write!(f, ")")
+                write!(f, "{var:?}")?;
+                for index in indices {
+                    for i in index {
+                        write!(f, " {i:?}")?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
             }
         }
     }
