@@ -619,8 +619,8 @@ impl<'a> Interpreter<'a> {
                         .get_val(ty, self, &mut MaybeUninit::uninit())
                         .to_string();
                     // TODO: Proper parsing, catch indirect calls to built-ins,
-                    //       native funs and namespace tracking in metadata.
-                    let (namespace, literal) = name.split_once("::").unwrap_or(("", &name));
+                    //       native funs.
+                    let (namespace, literal) = name.split_once("::").unwrap_or(("awk", &name));
                     let Some((name, _)) = self
                         .symbols
                         .functions

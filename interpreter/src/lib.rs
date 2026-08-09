@@ -79,9 +79,13 @@ impl Diagnostic for InterpreterError {
                 issue so we can help!\nCurrently, GNU AWK does not provide an user-configurable \
                 limit, but we are considering supporting this."
             }
-            Self::UnknownIndFunction(_, name) => {
-                &format!("This code tried to call the unknown function `{name}` indirectly.")
-            }
+            Self::UnknownIndFunction(_, name) => &format!(
+                "This code tried to call the unknown function `{name}` indirectly. Likely, this \
+                means one\nof two things: either the function was undefined, or you probably \
+                forgot to include its\nnamespace if it was not defied in the \"awk\" default one. \
+                It is a footgun that indirect\ncalls ignore the current namespace, always using \
+                the default one if not present."
+            ),
             Self::DivByZeroAttempted(_, _) => {
                 "Division and modular arithmetic by zero is always fatal in AWK. To avoid this, \
                 you can use an\nif statement or a ternary expression. You may optionally introduce \
