@@ -45,8 +45,9 @@ pub enum Instruction {
     DecrementPost { dest: Reg, arg: Arg, ty: ArgTy },
     IncrementPre { dest: Reg, arg: Arg, ty: ArgTy },
     DecrementPre { dest: Reg, arg: Arg, ty: ArgTy },
-    Copy { dest: Reg, arg: Arg, ty: ArgTy },
-    ACopy { dest: Reg, arg: Arg, ty: ArgTy },
+    CopyP { dest: Reg, arg: Arg, ty: ArgTy },
+    CopyS { dest: Reg, arg: Arg, ty: ArgTy },
+    CopyA { dest: Reg, arg: Arg, ty: ArgTy },
 
     // Binary operations
     Eq { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
@@ -70,7 +71,6 @@ pub enum Instruction {
     StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: ArgTy, tyr: ArgTy },
     LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: ArgTy },
-    PureCopy { dest: Reg, arg: Arg, ty: ArgTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
@@ -208,9 +208,9 @@ impl Display for Instruction {
             | Self::Negation { dest, arg, ty }
             | Self::ToInt { dest, arg, ty }
             | Self::Negative { dest, arg, ty }
-            | Self::Copy { dest, arg, ty }
-            | Self::ACopy { dest, arg, ty }
-            | Self::PureCopy { dest, arg, ty } => {
+            | Self::CopyS { dest, arg, ty }
+            | Self::CopyA { dest, arg, ty }
+            | Self::CopyP { dest, arg, ty } => {
                 write!(f, "{dest} <- {op}")?;
                 fmt_arg(f, arg, ty, " ")
             }
@@ -324,9 +324,9 @@ impl Instruction {
             Self::StoreR { .. } => "rstore",
             Self::StoreA { .. } => "astore",
             Self::LoadA { .. } => "aload",
-            Self::Copy { .. } => "cpy",
-            Self::ACopy { .. } => "acpy",
-            Self::PureCopy { .. } => "pcpy",
+            Self::CopyS { .. } => "scpy",
+            Self::CopyA { .. } => "acpy",
+            Self::CopyP { .. } => "pcpy",
             Self::IntrinsicCall { .. } => "icall",
             Self::UserCall { .. } => "ucall",
             Self::IndirectCall { .. } => "vcall",

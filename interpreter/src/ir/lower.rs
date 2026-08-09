@@ -511,7 +511,7 @@ impl<'a> CodeGen<'a> {
         let (arg, ty) = t_arg.into();
 
         if t_arg.as_reg().is_none_or(|reg| reg != dest) {
-            self.emit(Instruction::Copy { dest, arg, ty });
+            self.emit(Instruction::CopyP { dest, arg, ty });
         }
     }
 
@@ -717,7 +717,7 @@ impl<'a> CodeGen<'a> {
                 }
 
                 let store = match ty_place {
-                    ArgTy::Reg => Instruction::Copy { dest, arg, ty },
+                    ArgTy::Reg => Instruction::CopyP { dest, arg, ty },
                     ArgTy::UsVal => {
                         Instruction::StoreS { dest, ty_place, var: unsafe { var.sym }, arg, ty }
                     }
@@ -759,14 +759,14 @@ impl<'a> CodeGen<'a> {
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
             let (arg, ty) = TypedArg::new_imm(0).into();
-            this.emit(Instruction::Copy { dest, arg, ty });
+            this.emit(Instruction::CopyP { dest, arg, ty });
         });
     }
 
     fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
             let (arg, ty) = TypedArg::new_imm(1).into();
-            this.emit(Instruction::Copy { dest, arg, ty });
+            this.emit(Instruction::CopyP { dest, arg, ty });
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
@@ -836,9 +836,9 @@ impl<'a> CodeGen<'a> {
                 if let &Expr::Leaf(Atom::Variable(var), _) = arg {
                     let (arg, ty) = this.load_place(dest, &Place::Variable(var)).into();
                     let instr = match rt_ty {
-                        RtType::Scalar => Instruction::Copy { dest, arg, ty },
-                        RtType::Array => Instruction::ACopy { dest, arg, ty },
-                        RtType::Any => Instruction::PureCopy { dest, arg, ty },
+                        RtType::Scalar => Instruction::CopyS { dest, arg, ty },
+                        RtType::Array => Instruction::CopyA { dest, arg, ty },
+                        RtType::Any => Instruction::CopyP { dest, arg, ty },
                     };
                     this.emit(instr);
                 } else {

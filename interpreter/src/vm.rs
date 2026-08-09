@@ -463,15 +463,15 @@ impl<'a> Interpreter<'a> {
                         _ => unreachable!(),
                     }
                 }
-                Instruction::Copy { dest, arg, ty } => {
+                Instruction::CopyS { dest, arg, ty } => {
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
                     self.write_reg(dest, val);
                 }
-                Instruction::ACopy { dest, arg, ty } => {
+                Instruction::CopyA { dest, arg, ty } => {
                     let val = self.get_array(arg, ty, metadata, Value::clone)?;
                     self.write_reg(dest, val);
                 }
-                Instruction::PureCopy { dest, arg, ty } => {
+                Instruction::CopyP { dest, arg, ty } => {
                     let val = arg.get_pure(ty, self, &mut MaybeUninit::uninit()).clone();
                     self.write_reg(dest, val);
                 }
