@@ -29,12 +29,18 @@ pub enum InterpreterError {
     UnknownIndFunction(AriadneSpan, String),
     #[error("Attempted to divide `{}` by zero here!", quacks_like_a_float(.1))]
     DivByZeroAttempted(AriadneSpan, String),
+    #[error("Attempted to use an array as a scalar value!")]
+    ScalarUseOfArrary(AriadneSpan),
+    #[error("Attempted to use a scalar as an array value!")]
+    ArrayUseOfScalar(AriadneSpan),
 }
 
 impl InterpreterError {
     pub fn emit_diagnostic(&self, store: &mut DiagnosticStore) {
         match self {
-            Self::DivByZeroAttempted(span, _)
+            Self::ArrayUseOfScalar(span)
+            | Self::ScalarUseOfArrary(span)
+            | Self::DivByZeroAttempted(span, _)
             | Self::UnknownIndFunction(span, _)
             | Self::RecursionDepth(span)
             | Self::ArityMismatch(span, _, _)
@@ -49,7 +55,9 @@ impl Diagnostic for InterpreterError {
     }
     fn span(&self) -> Option<Span> {
         match self {
-            &Self::DivByZeroAttempted(AriadneSpan(_, span), _)
+            &Self::ArrayUseOfScalar(AriadneSpan(_, span))
+            | &Self::ScalarUseOfArrary(AriadneSpan(_, span))
+            | &Self::DivByZeroAttempted(AriadneSpan(_, span), _)
             | &Self::UnknownIndFunction(AriadneSpan(_, span), _)
             | &Self::RecursionDepth(AriadneSpan(_, span))
             | &Self::ArityMismatch(AriadneSpan(_, span), _, _)
@@ -94,6 +102,7 @@ impl Diagnostic for InterpreterError {
                 operator, which forces values into numbers. Otherwise, some\nvalues of `b`, like \
                 an empty string, would still trigger this error. It also parses the \"+nan\"."
             }
+            _ => return,
         };
         report.set_help(note);
     }

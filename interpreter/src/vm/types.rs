@@ -54,25 +54,25 @@ impl<'a> Value<'a> {
     /// Called when loading a variable's value. Forces subsequent uses to be
     /// typed as an AWK scalar (anything that's not an array, basically).
     #[inline(always)]
-    pub fn scalar_context(&mut self) -> &mut Self {
+    pub fn scalar_context(&mut self) -> Option<&Self> {
         // TODO: Exit "nicely" on Self::Array(_).
         match self {
             Self::Untyped => *self = Self::Unassigned,
-            Self::Array(_) => panic!("Attempted to use array in scalar context!"),
+            Self::Array(_) => return None,
             _ => {}
         }
-        self
+        Some(self)
     }
 
     #[inline(always)]
-    pub fn array_context(&mut self) -> &mut Self {
+    pub fn array_context(&mut self) -> Option<&Self> {
         // TODO: Exit "nicely" on non-array scalars.
         match self {
             Self::Untyped => *self = Self::empty_array(),
             Self::Array(_) => {}
-            _ => panic!("Attempted to use scalar as array!"),
+            _ => return None,
         }
-        self
+        Some(self)
     }
 
     pub fn to_bool(&self) -> bool {

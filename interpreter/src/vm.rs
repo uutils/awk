@@ -306,13 +306,13 @@ impl<'a> SymbolTable<'a> {
     }
 
     #[inline(always)]
-    fn lookup_user_scalar(&mut self, var: NonLocal) -> &Value<'a> {
+    fn lookup_user_scalar(&mut self, var: NonLocal) -> Option<&Value<'a>> {
         let v = self.user.get_index_mut(var).unwrap();
         v.scalar_context()
     }
 
     #[inline(always)]
-    fn lookup_user_array(&mut self, var: NonLocal) -> &Value<'a> {
+    fn lookup_user_array(&mut self, var: NonLocal) -> Option<&Value<'a>> {
         let v = self.user.get_index_mut(var).unwrap();
         v.array_context()
     }
@@ -421,15 +421,15 @@ impl<'a> Interpreter<'a> {
             match instr {
                 Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
                 Instruction::Negation { dest, arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_bool();
+                    let val = self.get_val(arg, ty, metadata, Value::to_bool)?;
                     self.write_reg(dest, !val);
                 }
                 Instruction::ToInt { dest, arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_num();
+                    let val = self.get_val(arg, ty, metadata, Value::to_num)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Negative { dest, arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_num();
+                    let val = self.get_val(arg, ty, metadata, Value::to_num)?;
                     self.write_reg(dest, -val);
                 }
                 Instruction::IncrementPost { dest, arg, ty }
@@ -447,9 +447,9 @@ impl<'a> Interpreter<'a> {
                     );
 
                     let (added, res) = {
-                        let mut stack_space = MaybeUninit::uninit();
-                        let val = arg.get_val(ty, self, &mut stack_space);
-                        (val + rhs, val + if is_post { &Value::Int(0) } else { rhs })
+                        self.get_val(arg, ty, metadata, |val| {
+                            (val + rhs, val + if is_post { &Value::Int(0) } else { rhs })
+                        })?
                     };
                     self.write_reg(dest, res);
 
@@ -464,11 +464,11 @@ impl<'a> Interpreter<'a> {
                     }
                 }
                 Instruction::Copy { dest, arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    let val = self.get_val(arg, ty, metadata, Value::clone)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::ACopy { dest, arg, ty } => {
-                    let val = arg.get_array(ty, self, &mut MaybeUninit::uninit()).clone();
+                    let val = self.get_array(arg, ty, metadata, Value::clone)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::PureCopy { dest, arg, ty } => {
@@ -476,89 +476,91 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::Eq { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs == rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs == rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::NEq { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs != rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs != rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Gt { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs > rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs > rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Lt { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs < rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs < rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::LtE { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs <= rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs <= rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::GtE { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs >= rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs >= rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Matches { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| match rhs {
-                        Value::Regex(pat) => lhs.matches_regex(pat),
-                        _ => false,
-                    });
+                    let val =
+                        self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| match rhs {
+                            Value::Regex(pat) => lhs.matches_regex(pat),
+                            _ => false,
+                        })?;
                     self.write_reg(dest, val);
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| match rhs {
-                        Value::Regex(pat) => lhs.matches_regex(pat),
-                        _ => false,
-                    });
+                    let val =
+                        self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| match rhs {
+                            Value::Regex(pat) => lhs.matches_regex(pat),
+                            _ => false,
+                        })?;
                     self.write_reg(dest, !val);
                 }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs + rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs + rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Subtract { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs - rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs - rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Multiply { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs * rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs * rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Divide { dest, lhs, rhs, tyl, tyr } => {
-                    let Some(val) = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs / rhs)
+                    let Some(val) =
+                        self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs / rhs)?
                     else {
-                        let uninit = &mut MaybeUninit::uninit();
                         return Err(InterpreterError::DivByZeroAttempted(
                             self.get_span(metadata),
-                            lhs.get_val(tyl, self, uninit).to_string(),
+                            self.get_val(lhs, tyl, metadata, Value::to_string)?,
                         ));
                     };
                     self.write_reg(dest, val);
                 }
                 Instruction::Raise { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs ^ rhs);
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs ^ rhs)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::Modulo { dest, lhs, rhs, tyl, tyr } => {
-                    let Some(val) = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| lhs % rhs)
+                    let Some(val) =
+                        self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs % rhs)?
                     else {
-                        let uninit = &mut MaybeUninit::uninit();
                         return Err(InterpreterError::DivByZeroAttempted(
                             self.get_span(metadata),
-                            lhs.get_val(tyl, self, uninit).to_string(),
+                            self.get_val(lhs, tyl, metadata, Value::to_string)?,
                         ));
                     };
                     self.write_reg(dest, val);
                 }
                 Instruction::Concat { dest, lhs, rhs, tyl, tyr } => {
-                    let val = Arg::get_val2(lhs, tyl, rhs, tyr, self, |lhs, rhs| {
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| {
                         let mut buf =
                             StdVec::with_capacity(lhs.string_size_hint() + rhs.string_size_hint());
                         lhs.write_string(&mut buf);
                         rhs.write_string(&mut buf);
                         buf
-                    });
+                    })?;
                     self.write_reg(dest, val);
                 }
                 Instruction::LoadA { dest, arg, start, end, ty } => {
@@ -578,7 +580,7 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    let val = self.get_val(arg, ty, metadata, Value::clone)?;
                     match ty_place {
                         ArgTy::UsVal => self.symbols.write_user_val(var, val.clone()),
                         ArgTy::IsVal => todo!(),
@@ -591,7 +593,7 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
                     let key = self.make_array_key(start, end);
-                    let val = rhs.get_val(tyr, self, &mut MaybeUninit::uninit()).clone();
+                    let val = self.get_val(rhs, tyr, metadata, Value::clone)?;
                     match tyl {
                         ArgTy::Reg => {
                             lhs.get_pure(tyl, self, &mut MaybeUninit::uninit())
@@ -625,9 +627,7 @@ impl<'a> Interpreter<'a> {
                     continue;
                 }
                 Instruction::IndirectCall { dest, start, end, name, ty } => {
-                    let name = name
-                        .get_val(ty, self, &mut MaybeUninit::uninit())
-                        .to_string();
+                    let name = self.get_val(name, ty, metadata, Value::to_string)?;
                     // TODO: Proper parsing, catch indirect calls to built-ins,
                     //       native funs.
                     let (namespace, literal) = name.split_once("::").unwrap_or(("awk", &name));
@@ -658,11 +658,11 @@ impl<'a> Interpreter<'a> {
                     continue;
                 }
                 Instruction::Exit { arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).to_int();
+                    let val = self.get_val(arg, ty, metadata, Value::to_int)?;
                     return Ok(Signal::Terminal(CtrlSig::Exit(val as i32)));
                 }
                 Instruction::Return { arg, ty } => {
-                    let val = arg.get_val(ty, self, &mut MaybeUninit::uninit()).clone();
+                    let val = self.get_val(arg, ty, metadata, Value::clone)?;
                     self.ret(val);
                     continue;
                 }
@@ -676,6 +676,53 @@ impl<'a> Interpreter<'a> {
             self.program_counter += 1;
         }
         Ok(Signal::Terminal(CtrlSig::End))
+    }
+
+    /// Convenience wrapper to add errors from context metadata.
+    #[inline(always)]
+    fn get_val<T>(
+        &mut self,
+        arg: Arg,
+        ty: ArgTy,
+        metadata: &[MetaId],
+        f: impl FnOnce(&Value<'a>) -> T,
+    ) -> Result<T, InterpreterError> {
+        match arg.get_val(ty, self, &mut MaybeUninit::uninit()) {
+            Some(x) => Ok(f(x)),
+            None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
+        }
+    }
+
+    /// Convenience wrapper to add errors from context metadata.
+    #[inline(always)]
+    fn get_val2<T>(
+        &mut self,
+        lhs: Arg,
+        tyl: ArgTy,
+        rhs: Arg,
+        tyr: ArgTy,
+        metadata: &[MetaId],
+        f: impl FnOnce(&Value<'a>, &Value<'a>) -> T,
+    ) -> Result<T, InterpreterError> {
+        match Arg::get_val2(lhs, tyl, rhs, tyr, self, f) {
+            Some(x) => Ok(x),
+            None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
+        }
+    }
+
+    /// Convenience wrapper to add errors from context metadata.
+    #[inline(always)]
+    fn get_array<T>(
+        &mut self,
+        arg: Arg,
+        ty: ArgTy,
+        metadata: &[MetaId],
+        f: impl FnOnce(&Value<'a>) -> T,
+    ) -> Result<T, InterpreterError> {
+        match arg.get_array(ty, self, &mut MaybeUninit::uninit()) {
+            Some(val) => Ok(f(val)),
+            None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
+        }
     }
 
     /// Convenience wrapper to write a value at the current reg slice.
@@ -879,11 +926,11 @@ impl Arg {
         intrp: &'v mut Interpreter<'a>,
         // We have super let at home.
         stack_space: &'v mut MaybeUninit<Value<'a>>,
-    ) -> &'v Value<'a> {
-        self.prepare(ty, intrp, stack_space);
+    ) -> Option<&'v Value<'a>> {
+        self.prepare(ty, intrp, stack_space)?;
 
         // SAFETY: called `Arg::prepare` beforehand with the right args.
-        unsafe { self.read_already_prepared(ty, intrp, stack_space) }
+        Some(unsafe { self.read_already_prepared(ty, intrp, stack_space) })
     }
 
     #[inline(always)]
@@ -894,17 +941,17 @@ impl Arg {
         tyr: ArgTy,
         intrp: &mut Interpreter<'a>,
         f: impl FnOnce(&Value<'a>, &Value<'a>) -> T,
-    ) -> T {
+    ) -> Option<T> {
         let mut stack_space_lhs = MaybeUninit::uninit();
         let mut stack_space_rhs = MaybeUninit::uninit();
-        lhs.prepare(tyl, intrp, &mut stack_space_lhs);
-        rhs.prepare(tyr, intrp, &mut stack_space_rhs);
+        lhs.prepare(tyl, intrp, &mut stack_space_lhs)?;
+        rhs.prepare(tyr, intrp, &mut stack_space_rhs)?;
 
         // SAFETY: called `Arg::prepare` beforehand with the right args.
         let lhs = unsafe { lhs.read_already_prepared(tyl, intrp, &stack_space_lhs) };
         let rhs = unsafe { rhs.read_already_prepared(tyr, intrp, &stack_space_rhs) };
 
-        f(lhs, rhs)
+        Some(f(lhs, rhs))
     }
 
     /// Gets a value without scalar/array side-effects.
@@ -932,12 +979,12 @@ impl Arg {
         ty: ArgTy,
         intrp: &'v mut Interpreter<'a>,
         stack_space: &'v mut MaybeUninit<Value<'a>>,
-    ) -> &'v Value<'a> {
+    ) -> Option<&'v Value<'a>> {
         match ty {
             ArgTy::Reg => intrp.read_reg_mut(unsafe { self.reg }).array_context(),
             ArgTy::Rec => todo!(),
-            ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
-            ArgTy::Cnt | ArgTy::ImmF => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::Imm => Some(stack_space.write(Value::Int(unsafe { self.imm } as isize))),
+            ArgTy::Cnt | ArgTy::ImmF => Some(&intrp.consts.0[unsafe { self.sym.0 } as usize]),
             ArgTy::UsVal => intrp.symbols.lookup_user_array(unsafe { self.sym }),
             _ => todo!(),
         }
@@ -952,10 +999,10 @@ impl Arg {
         ty: ArgTy,
         intrp: &mut Interpreter<'a>,
         stack_space: &mut MaybeUninit<Value<'a>>,
-    ) {
+    ) -> Option<()> {
         match ty {
             ArgTy::Reg => {
-                intrp.read_reg_mut(unsafe { self.reg }).scalar_context();
+                intrp.read_reg_mut(unsafe { self.reg }).scalar_context()?;
             }
             ArgTy::Cnt | ArgTy::ImmF => {}
             ArgTy::Rec => todo!(),
@@ -968,6 +1015,7 @@ impl Arg {
             }
             _ => todo!(),
         }
+        Some(())
     }
 
     /// # SAFETY
