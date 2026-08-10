@@ -4,7 +4,7 @@
 // files that was distributed with this source code.
 
 //! The cornucopia of `inline` attrs is on purpose. I have measured it to 2x
-//! performance quite easily. If we move to a subroutine, TCO-style dispatch,
+//! performance quite easily. If we switch to a direct, tail-call dispatch,
 //! which we should at least _try_[^ref], reassess it during the refactoring.
 //!
 //! [^ref]: <https://lordgoati.us/blog/tail-call/>
