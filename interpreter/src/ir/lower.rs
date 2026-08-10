@@ -668,6 +668,7 @@ impl<'a> CodeGen<'a> {
                             let (lhs, tyl) =
                                 this.load_place(dest, &Place::Variable(var)).into_place();
                             this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
+                            index.free(this);
                         }
                         &ExprNode::ArrayOperation(ArrayOperator::In, var, ref indices) => {
                             let (arg, ty) =
