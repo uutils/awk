@@ -96,7 +96,7 @@ pub struct RawSymbolTable<'a, T>(IndexMap<Identifier<'a>, T, RandomState, &'a Bu
 
 #[derive(Debug)]
 pub struct SymbolTable<'a> {
-    user: RawSymbolTable<'a, Value<'a>>,
+    pub user: RawSymbolTable<'a, Value<'a>>,
     functions: RawSymbolTable<'a, Option<Function>>,
     // separate table for cheap invalidation. It's an arena _visibly shrugs_.
     records: HashMap<usize, Value<'a>, RandomState, &'a Bump>,
@@ -341,6 +341,17 @@ impl<'a> SymbolTable<'a> {
             .unwrap_or(Value::Untyped)
     }
 
+    fn load_user_mdim(&mut self, var: NonLocal, key: String) -> Value<'a> {
+        self.user_array(var)
+            .borrow_mut()
+            .entry(key)
+            .and_modify(|x| {
+                x.array_context();
+            })
+            .or_insert_with(|| Value::Array(Rc::default()))
+            .clone()
+    }
+
     fn store_user_array_elem(&mut self, var: NonLocal, key: String, value: Value<'a>) {
         self.user_array(var).borrow_mut().insert(key, value);
     }
@@ -575,7 +586,30 @@ impl<'a> Interpreter<'a> {
                             self.symbols.load_user_array_elem(var, &key)
                         }
                         ArgTy::IaVal => todo!("intrinsic array load"),
-                        _ => unreachable!(),
+                        x => unreachable!("{x}"),
+                    };
+                    self.write_reg(dest, val);
+                }
+                Instruction::LoadM { dest, arg, start, end, ty } => {
+                    let key = self.make_array_key(start, end);
+                    let val = match ty {
+                        ArgTy::Reg => arg
+                            .get_pure(ty, self, &mut MaybeUninit::uninit())
+                            .clone()
+                            .make_mdim_at(key),
+                        ArgTy::UaVal => {
+                            let var = unsafe { arg.sym };
+                            match self.symbols.load_user_mdim(var, key).array_context() {
+                                Some(val) => val.clone(),
+                                None => {
+                                    return Err(InterpreterError::ScalarUseOfArrary(
+                                        self.get_span(metadata),
+                                    ));
+                                }
+                            }
+                        }
+                        ArgTy::IaVal => todo!("intrinsic array load"),
+                        x => unreachable!("{x}"),
                     };
                     self.write_reg(dest, val);
                 }
@@ -979,7 +1013,7 @@ impl Arg {
             ArgTy::Reg => intrp.read_reg_mut(unsafe { self.reg }).array_context(),
             ArgTy::Rec | ArgTy::Imm | ArgTy::Cnt | ArgTy::IsVal => None,
             ArgTy::UsVal | ArgTy::UaVal => intrp.symbols.lookup_user_array(unsafe { self.sym }),
-            _ => todo!(),
+            ArgTy::IaVal => todo!(),
         }
     }
 

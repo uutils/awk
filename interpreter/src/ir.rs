@@ -71,6 +71,7 @@ pub enum Instruction {
     StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: ArgTy, tyr: ArgTy },
     LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: ArgTy },
+    LoadM { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: ArgTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
@@ -112,10 +113,8 @@ pub enum ArgTy {
     Cnt,
     UsVal,
     UaVal,
-    UmVal,
     IsVal,
     IaVal,
-    ImVal,
 }
 
 impl Instruction {
@@ -247,7 +246,8 @@ impl Display for Instruction {
                 write!(f, ", {start}..{end}")?;
                 fmt_arg(f, rhs, tyr, ", ")
             }
-            Self::LoadA { dest, arg, start, end, ty } => {
+            Self::LoadA { dest, arg, start, end, ty }
+            | Self::LoadM { dest, arg, start, end, ty } => {
                 write!(f, "{dest} <- {op}")?;
                 fmt_arg(f, arg, ty, " ")?;
                 write!(f, ", {start}..{end}")
@@ -323,6 +323,7 @@ impl Instruction {
             Self::StoreR { .. } => "rstore",
             Self::StoreA { .. } => "astore",
             Self::LoadA { .. } => "aload",
+            Self::LoadM { .. } => "mload",
             Self::CopyS { .. } => "scpy",
             Self::CopyA { .. } => "acpy",
             Self::CopyP { .. } => "pcpy",
@@ -367,10 +368,8 @@ impl Display for ArgTy {
             Self::Cnt => write!(f, "mem"),
             Self::UsVal => write!(f, "us"),
             Self::UaVal => write!(f, "ua"),
-            Self::UmVal => write!(f, "um"),
             Self::IsVal => write!(f, "is"),
             Self::IaVal => write!(f, "ia"),
-            Self::ImVal => write!(f, "im"),
         }
     }
 }

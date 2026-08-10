@@ -137,6 +137,17 @@ impl<'a> Value<'a> {
         arr.borrow().get(&key).cloned().unwrap_or(Self::Untyped)
     }
 
+    pub fn make_mdim_at(&mut self, key: String) -> Self {
+        self.as_array()
+            .borrow_mut()
+            .entry(key)
+            .and_modify(|x| {
+                x.array_context();
+            })
+            .or_insert_with(|| Value::Array(Rc::default()))
+            .clone()
+    }
+
     pub fn write_string(&self, f: &mut Vec<u8>) {
         match self {
             Self::String(s) | Self::Regex(s) => f.extend_from_slice(s),

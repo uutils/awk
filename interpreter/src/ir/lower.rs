@@ -644,6 +644,7 @@ impl<'a> CodeGen<'a> {
                         ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
                             this.load_index(dest, var, index);
                         }
+                        ExprNode::ArrayOperation(ArrayOperator::In, _, _) => todo!(),
                         ExprNode::FunctionCall(name, args) => {
                             let name = this.symbols.get_user_fun(name, self.arena);
                             let range = this.gen_call_convention(RtType::Any, args);
@@ -665,7 +666,26 @@ impl<'a> CodeGen<'a> {
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
-                        _ => todo!(),
+                        &ExprNode::ChainedIndex(var, ref indices) => {
+                            let (mut arg, mut ty) = match &var {
+                                Variable::User(ident) => TypedArg::new_ua(this, ident).into(),
+                                var => TypedArg::new_ia(var).into(),
+                            };
+
+                            for (i, index) in indices.iter().enumerate() {
+                                let range = this.gen_call_convention(RtType::Scalar, index);
+                                let (start, end) = range.as_range();
+                                let instr = if i == indices.len() - 1 {
+                                    Instruction::LoadA { dest, arg, start, end, ty }
+                                } else {
+                                    Instruction::LoadM { dest, arg, start, end, ty }
+                                };
+                                this.emit(instr);
+                                (arg, ty) = TypedArg::new_reg(dest).into();
+                                this.regs.free_many(range);
+                            }
+                        }
+                        &ExprNode::Getline(_) => todo!(),
                     }
                 });
             }
@@ -745,7 +765,28 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 self.regs.free_many(range);
             }
-            Place::ChainedIndex(_, _) => todo!(),
+            &Place::ChainedIndex(var, ref indices) => {
+                let (mut arg, mut ty) = match &var {
+                    Variable::User(ident) => TypedArg::new_ua(self, ident).into(),
+                    var => TypedArg::new_ia(var).into(),
+                };
+                let last = indices.len() - 1;
+
+                for index in &indices[..last] {
+                    let range = self.gen_call_convention(RtType::Scalar, index);
+                    let (start, end) = range.as_range();
+                    self.emit(Instruction::LoadM { dest, arg, start, end, ty });
+                    (arg, ty) = TypedArg::new_reg(dest).into();
+                    self.regs.free_many(range);
+                }
+
+                let range = self.gen_call_convention(RtType::Scalar, &indices[last]);
+                let (start, end) = range.as_range();
+                let (lhs, tyl) = TypedArg::new_reg(dest).into();
+                let (rhs, tyr) = src.into();
+                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                self.regs.free_many(range);
+            }
         }
     }
 
