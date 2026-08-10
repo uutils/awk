@@ -14,7 +14,10 @@ pub mod lower;
 #[cfg(test)]
 mod tests;
 
-use std::fmt::{self, Debug, Display, Formatter};
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    ops::Deref,
+};
 
 use parser::{BuiltinFunction, Command, Redirection};
 
@@ -41,13 +44,13 @@ pub enum Instruction {
     Negation { dest: Reg, arg: Arg, ty: ArgTy },
     ToInt { dest: Reg, arg: Arg, ty: ArgTy },
     Negative { dest: Reg, arg: Arg, ty: ArgTy },
-    IncrementPost { dest: Reg, arg: Arg, ty: ArgTy },
-    DecrementPost { dest: Reg, arg: Arg, ty: ArgTy },
-    IncrementPre { dest: Reg, arg: Arg, ty: ArgTy },
-    DecrementPre { dest: Reg, arg: Arg, ty: ArgTy },
+    IncrementPost { dest: Reg, arg: Arg, ty: PlaceTy },
+    DecrementPost { dest: Reg, arg: Arg, ty: PlaceTy },
+    IncrementPre { dest: Reg, arg: Arg, ty: PlaceTy },
+    DecrementPre { dest: Reg, arg: Arg, ty: PlaceTy },
     CopyP { dest: Reg, arg: Arg, ty: ArgTy },
     CopyS { dest: Reg, arg: Arg, ty: ArgTy },
-    CopyA { dest: Reg, arg: Arg, ty: ArgTy },
+    CopyA { dest: Reg, arg: Arg, ty: PlaceTy },
 
     // Binary operations
     Eq { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
@@ -67,11 +70,11 @@ pub enum Instruction {
     Concat { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
 
     // Intrinsic operations
-    StoreS { dest: Reg, ty_place: ArgTy, var: NonLocal, arg: Arg, ty: ArgTy },
+    StoreS { dest: Reg, ty_place: PlaceTy, var: NonLocal, arg: Arg, ty: ArgTy },
     StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
-    StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: ArgTy, tyr: ArgTy },
-    LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: ArgTy },
-    LoadM { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: ArgTy },
+    StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: PlaceTy, tyr: ArgTy },
+    LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    LoadM { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
@@ -106,6 +109,7 @@ pub union Arg {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ArgTy {
     Reg,
     Imm,
@@ -116,6 +120,22 @@ pub enum ArgTy {
     IsVal,
     IaVal,
 }
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum PlaceTy {
+    Reg = ArgTy::Reg as u8,
+    Rec = ArgTy::Rec as u8,
+    UsVal = ArgTy::UsVal as u8,
+    UaVal = ArgTy::UaVal as u8,
+    IsVal = ArgTy::IsVal as u8,
+    IaVal = ArgTy::IaVal as u8,
+}
+
+const _: () = {
+    assert!(size_of::<PlaceTy>() == size_of::<ArgTy>());
+    assert!(align_of::<PlaceTy>() == align_of::<ArgTy>());
+};
 
 impl Instruction {
     fn set_label(&mut self, label: Label) {
@@ -187,6 +207,48 @@ impl Instruction {
     }
 }
 
+impl From<PlaceTy> for ArgTy {
+    #[inline(always)]
+    fn from(value: PlaceTy) -> Self {
+        match value {
+            PlaceTy::Reg => Self::Reg,
+            PlaceTy::Rec => Self::Rec,
+            PlaceTy::UsVal => Self::UsVal,
+            PlaceTy::UaVal => Self::UaVal,
+            PlaceTy::IsVal => Self::IsVal,
+            PlaceTy::IaVal => Self::IaVal,
+        }
+    }
+}
+
+/// Deref polymorphism is not _that_ bad.
+impl Deref for PlaceTy {
+    type Target = ArgTy;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: The target is declared as a strict superset with equal repr.
+        unsafe { &*(&raw const *self).cast::<Self::Target>() }
+    }
+}
+
+impl TryFrom<ArgTy> for PlaceTy {
+    type Error = ();
+
+    #[inline(always)]
+    fn try_from(value: ArgTy) -> Result<Self, Self::Error> {
+        match value {
+            ArgTy::Rec => Ok(Self::Rec),
+            ArgTy::Reg => Ok(Self::Reg),
+            ArgTy::UsVal => Ok(Self::UsVal),
+            ArgTy::UaVal => Ok(Self::UaVal),
+            ArgTy::IsVal => Ok(Self::IsVal),
+            ArgTy::IaVal => Ok(Self::IaVal),
+            _ => Err(()),
+        }
+    }
+}
+
 impl Debug for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "0x{:032x}", self.to_bytes())
@@ -207,8 +269,11 @@ impl Display for Instruction {
             | Self::ToInt { dest, arg, ty }
             | Self::Negative { dest, arg, ty }
             | Self::CopyS { dest, arg, ty }
-            | Self::CopyA { dest, arg, ty }
             | Self::CopyP { dest, arg, ty } => {
+                write!(f, "{dest} <- {op}")?;
+                fmt_arg(f, arg, ty, " ")
+            }
+            Self::CopyA { dest, arg, ty } => {
                 write!(f, "{dest} <- {op}")?;
                 fmt_arg(f, arg, ty, " ")
             }
@@ -232,6 +297,7 @@ impl Display for Instruction {
                 fmt_arg(f, rhs, tyr, ", ")
             }
             Self::StoreS { dest, ty_place, var, arg, ty } => {
+                let ty_place = ArgTy::from(*ty_place);
                 write!(f, "{dest} <- {op} {ty_place}({var})")?;
                 fmt_arg(f, arg, ty, ", ")
             }

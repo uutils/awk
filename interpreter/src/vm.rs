@@ -32,7 +32,7 @@ use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirectio
 use crate::{
     InterpreterError,
     ir::{
-        Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth,
+        Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
         lower::{Bytecode, CodeGen},
     },
     vm::types::{ArrayMap, Value},
@@ -187,6 +187,58 @@ pub struct Consts<'a>(pub(crate) Vec<'a, Value<'a>>);
 #[derive(Debug, Clone)]
 pub struct CodeRange(pub(crate) Range<IxWidth>);
 
+/// Newtype of (Arg, PlaceTy).
+#[derive(Clone, Copy)]
+struct Place {
+    arg: Arg,
+    ty: PlaceTy,
+}
+
+impl Place {
+    #[inline(always)]
+    fn new(arg: Arg, ty: PlaceTy) -> Self {
+        Self { arg, ty }
+    }
+
+    /// Single source of truth for mapping `(Arg, PlaceTy) |=> &mut Value`.
+    #[inline(always)]
+    fn resolve<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> &'v mut Value<'a> {
+        match self.ty {
+            PlaceTy::Reg => intrp.read_reg_mut(unsafe { self.arg.reg }),
+            PlaceTy::UsVal | PlaceTy::UaVal => intrp.symbols.user_mut(unsafe { self.arg.sym }),
+            PlaceTy::IsVal | PlaceTy::IaVal => todo!("intrinsic var place"),
+            PlaceTy::Rec => todo!(),
+        }
+    }
+
+    /// Pure read, without typeck.
+    #[inline(always)]
+    fn read<'v, 'a>(self, intrp: &'v Interpreter<'a>) -> &'v Value<'a> {
+        match self.ty {
+            PlaceTy::Reg => intrp.read_reg(unsafe { self.arg.reg }),
+            PlaceTy::UsVal | PlaceTy::UaVal => intrp.symbols.user(unsafe { self.arg.sym }),
+            _ => todo!(),
+        }
+    }
+
+    /// Forces scalar typeck and returns the resolved place.
+    #[inline(always)]
+    fn scalar<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> Option<&'v mut Value<'a>> {
+        self.resolve(intrp).scalar_context()
+    }
+
+    /// Forces array typeck and returns the resolved place.
+    #[inline(always)]
+    fn array<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> Option<&'v mut Value<'a>> {
+        self.resolve(intrp).array_context()
+    }
+
+    #[inline(always)]
+    fn write<'a>(self, intrp: &mut Interpreter<'a>, val: Value<'a>) {
+        *self.resolve(intrp) = val;
+    }
+}
+
 impl<'a> Interpreter<'a> {
     pub fn new(compat: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
         let n_regs = code.regs.hwm as usize + 1;
@@ -306,54 +358,13 @@ impl<'a> SymbolTable<'a> {
     }
 
     #[inline(always)]
-    fn lookup_user_scalar(&mut self, var: NonLocal) -> Option<&Value<'a>> {
-        let v = self.user.get_index_mut(var).unwrap();
-        v.scalar_context()
+    fn user_mut(&mut self, var: NonLocal) -> &mut Value<'a> {
+        self.user.get_index_mut(var).unwrap()
     }
 
     #[inline(always)]
-    fn lookup_user_array(&mut self, var: NonLocal) -> Option<&Value<'a>> {
-        let v = self.user.get_index_mut(var).unwrap();
-        v.array_context()
-    }
-
-    // HACK: Please do not use this if you can help it.
-    #[inline(always)]
-    fn raw_user_lookup(&self, var: NonLocal) -> &Value<'a> {
+    fn user(&self, var: NonLocal) -> &Value<'a> {
         self.user.get_index(var).unwrap()
-    }
-
-    #[inline(always)]
-    fn write_user_val(&mut self, var: NonLocal, value: Value<'a>) {
-        *self.user.get_index_mut(var).unwrap() = value;
-    }
-
-    fn user_array(&mut self, var: NonLocal) -> Rc<RefCell<ArrayMap<'a>>> {
-        let v = self.user.get_index_mut(var).unwrap();
-        v.as_array()
-    }
-
-    fn load_user_array_elem(&mut self, var: NonLocal, key: &str) -> Value<'a> {
-        self.user_array(var)
-            .borrow()
-            .get(key)
-            .cloned()
-            .unwrap_or(Value::Untyped)
-    }
-
-    fn load_user_mdim(&mut self, var: NonLocal, key: String) -> Value<'a> {
-        self.user_array(var)
-            .borrow_mut()
-            .entry(key)
-            .and_modify(|x| {
-                x.array_context();
-            })
-            .or_insert_with(|| Value::Array(Rc::default()))
-            .clone()
-    }
-
-    fn store_user_array_elem(&mut self, var: NonLocal, key: String, value: Value<'a>) {
-        self.user_array(var).borrow_mut().insert(key, value);
     }
 
     #[inline(always)]
@@ -447,7 +458,6 @@ impl<'a> Interpreter<'a> {
                 | Instruction::IncrementPre { dest, arg, ty }
                 | Instruction::DecrementPost { dest, arg, ty }
                 | Instruction::DecrementPre { dest, arg, ty } => {
-                    let raw_arg = arg;
                     let rhs = &Value::Int(match instr {
                         Instruction::IncrementPost { .. } | Instruction::IncrementPre { .. } => 1,
                         _ => -1,
@@ -457,22 +467,18 @@ impl<'a> Interpreter<'a> {
                         Instruction::IncrementPost { .. } | Instruction::DecrementPost { .. }
                     );
 
-                    let (added, res) = {
-                        self.get_val(arg, ty, metadata, |val| {
-                            (val + rhs, val + if is_post { &Value::Int(0) } else { rhs })
-                        })?
+                    let place = Place::new(arg, ty);
+                    let Some(slot) = place.scalar(self) else {
+                        return Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata)));
                     };
-                    self.write_reg(dest, res);
-
-                    // TODO: refactor generic writes into a helper
-                    match ty {
-                        ArgTy::Reg => {
-                            self.write_reg(unsafe { raw_arg.reg }, added);
-                        }
-                        ArgTy::UsVal => self.symbols.write_user_val(unsafe { raw_arg.sym }, added),
-                        ArgTy::IsVal => todo!(),
-                        _ => unreachable!(),
-                    }
+                    let new_val = &*slot + (rhs);
+                    let observed = if is_post {
+                        slot.clone()
+                    } else {
+                        new_val.clone()
+                    };
+                    *slot = new_val;
+                    self.write_reg(dest, observed);
                 }
                 Instruction::CopyS { dest, arg, ty } => {
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
@@ -516,6 +522,7 @@ impl<'a> Interpreter<'a> {
                             Value::Regex(pat) => lhs.matches_regex(pat),
                             _ => false,
                         })?;
+
                     self.write_reg(dest, val);
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
@@ -524,6 +531,7 @@ impl<'a> Interpreter<'a> {
                             Value::Regex(pat) => lhs.matches_regex(pat),
                             _ => false,
                         })?;
+
                     self.write_reg(dest, !val);
                 }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
@@ -547,6 +555,7 @@ impl<'a> Interpreter<'a> {
                             self.get_val(lhs, tyl, metadata, Value::to_string)?,
                         ));
                     };
+
                     self.write_reg(dest, val);
                 }
                 Instruction::Raise { dest, lhs, rhs, tyl, tyr } => {
@@ -562,6 +571,7 @@ impl<'a> Interpreter<'a> {
                             self.get_val(lhs, tyl, metadata, Value::to_string)?,
                         ));
                     };
+
                     self.write_reg(dest, val);
                 }
                 Instruction::Concat { dest, lhs, rhs, tyl, tyr } => {
@@ -572,54 +582,27 @@ impl<'a> Interpreter<'a> {
                         rhs.write_string(&mut buf);
                         buf
                     })?;
+
                     self.write_reg(dest, val);
                 }
                 Instruction::LoadA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = match ty {
-                        ArgTy::Reg => arg
-                            .get_pure(ty, self, &mut MaybeUninit::uninit())
-                            .clone()
-                            .get_array(key),
-                        ArgTy::UaVal => {
-                            let var = unsafe { arg.sym };
-                            self.symbols.load_user_array_elem(var, &key)
-                        }
-                        ArgTy::IaVal => todo!("intrinsic array load"),
-                        x => unreachable!("{x}"),
-                    };
+                    let val = self.array_elem_get(Place::new(arg, ty), key, metadata)?;
+
                     self.write_reg(dest, val);
                 }
                 Instruction::LoadM { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = match ty {
-                        ArgTy::Reg => arg
-                            .get_pure(ty, self, &mut MaybeUninit::uninit())
-                            .clone()
-                            .make_mdim_at(key),
-                        ArgTy::UaVal => {
-                            let var = unsafe { arg.sym };
-                            match self.symbols.load_user_mdim(var, key).array_context() {
-                                Some(val) => val.clone(),
-                                None => {
-                                    return Err(InterpreterError::ScalarUseOfArrary(
-                                        self.get_span(metadata),
-                                    ));
-                                }
-                            }
-                        }
-                        ArgTy::IaVal => todo!("intrinsic array load"),
-                        x => unreachable!("{x}"),
-                    };
+                    let val = self.array_elem_mdim(Place::new(arg, ty), key, metadata)?;
+
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
+                    debug_assert!(matches!(ty_place, PlaceTy::UsVal | PlaceTy::IsVal));
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
-                    match ty_place {
-                        ArgTy::UsVal => self.symbols.write_user_val(var, val.clone()),
-                        ArgTy::IsVal => todo!(),
-                        _ => unreachable!(),
-                    }
+                    let place = Place::new(Arg { sym: var }, ty_place);
+
+                    place.write(self, val.clone());
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
@@ -628,24 +611,14 @@ impl<'a> Interpreter<'a> {
                 Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
                     let key = self.make_array_key(start, end);
                     let val = self.get_val(rhs, tyr, metadata, Value::clone)?;
-                    match tyl {
-                        ArgTy::Reg => {
-                            lhs.get_pure(tyl, self, &mut MaybeUninit::uninit())
-                                .clone()
-                                .push_array(key, val.clone());
-                        }
-                        ArgTy::UaVal => {
-                            let var = unsafe { lhs.sym };
-                            self.symbols.store_user_array_elem(var, key, val.clone());
-                        }
-                        ArgTy::IaVal => todo!("intrinsic array store"),
-                        _ => unreachable!(),
-                    }
+
+                    self.array_elem_set(Place::new(lhs, tyl), key, val.clone(), metadata)?;
                     self.write_reg(dest, val);
                 }
                 Instruction::IntrinsicCall { dest, start, end, fun } => {
                     let offset = self.reg_offset();
                     let args = self.registers.get_range(start..end, offset);
+
                     match self.call_builtin(fun, args) {
                         Ok(val) => self.write_reg(dest, val),
                         Err(err) => {
@@ -744,16 +717,56 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    #[inline(always)]
+    fn array_elem_get(
+        &mut self,
+        place: Place,
+        key: String,
+        metadata: &[MetaId],
+    ) -> Result<Value<'a>, InterpreterError> {
+        place
+            .array(self)
+            .and_then(|arr| arr.get_array_elem(key))
+            .ok_or_else(|| InterpreterError::ScalarUseOfArrary(self.get_span(metadata)))
+    }
+
+    #[inline(always)]
+    fn array_elem_mdim(
+        &mut self,
+        place: Place,
+        key: String,
+        metadata: &[MetaId],
+    ) -> Result<Value<'a>, InterpreterError> {
+        place
+            .array(self)
+            .and_then(|arr| arr.array_elem_mdim(key))
+            .ok_or_else(|| InterpreterError::ScalarUseOfArrary(self.get_span(metadata)))
+    }
+
+    #[inline(always)]
+    fn array_elem_set(
+        &mut self,
+        place: Place,
+        key: String,
+        val: Value<'a>,
+        metadata: &[MetaId],
+    ) -> Result<(), InterpreterError> {
+        place
+            .array(self)
+            .and_then(|arr| arr.set_array_elem(key, val))
+            .ok_or_else(|| InterpreterError::ScalarUseOfArrary(self.get_span(metadata)))
+    }
+
     /// Convenience wrapper to add errors from context metadata.
     #[inline(always)]
     fn get_array<T>(
         &mut self,
         arg: Arg,
-        ty: ArgTy,
+        ty: PlaceTy,
         metadata: &[MetaId],
         f: impl FnOnce(&Value<'a>) -> T,
     ) -> Result<T, InterpreterError> {
-        match arg.get_array(ty, self) {
+        match Place::new(arg, ty).array(self) {
             Some(val) => Ok(f(val)),
             None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
         }
@@ -997,23 +1010,10 @@ impl Arg {
         stack_space: &'v mut MaybeUninit<Value<'a>>,
     ) -> &'v Value<'a> {
         match ty {
-            ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
-            ArgTy::Rec => todo!(),
             ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
             ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
-            ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
-            _ => todo!(),
-        }
-    }
-
-    /// Gets a value with array side-effects.
-    #[inline(always)]
-    fn get_array<'v, 'a>(self, ty: ArgTy, intrp: &'v mut Interpreter<'a>) -> Option<&'v Value<'a>> {
-        match ty {
-            ArgTy::Reg => intrp.read_reg_mut(unsafe { self.reg }).array_context(),
-            ArgTy::Rec | ArgTy::Imm | ArgTy::Cnt | ArgTy::IsVal => None,
-            ArgTy::UsVal | ArgTy::UaVal => intrp.symbols.lookup_user_array(unsafe { self.sym }),
-            ArgTy::IaVal => todo!(),
+            ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
+            _ => unreachable!(),
         }
     }
 
@@ -1028,21 +1028,16 @@ impl Arg {
         stack_space: &mut MaybeUninit<Value<'a>>,
     ) -> Option<()> {
         match ty {
-            ArgTy::Reg => {
-                intrp.read_reg_mut(unsafe { self.reg }).scalar_context()?;
-            }
-            ArgTy::Cnt => {}
-            ArgTy::Rec => todo!(),
             ArgTy::Imm => {
                 stack_space.write(Value::Int(unsafe { self.imm } as isize));
+                Some(())
             }
-            ArgTy::UsVal => {
-                // Forces it a scalar without reading the value yet.
-                intrp.symbols.lookup_user_scalar(unsafe { self.sym });
+            ArgTy::Cnt => Some(()),
+            ty if let Ok(place) = ty.try_into() => {
+                Place::new(self, place).scalar(intrp).map(|_| ())
             }
-            _ => todo!(),
+            _ => unreachable!(),
         }
-        Some(())
     }
 
     /// # SAFETY
@@ -1057,12 +1052,10 @@ impl Arg {
         stack_space: &'v MaybeUninit<Value<'a>>,
     ) -> &'v Value<'a> {
         match ty {
-            ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
-            ArgTy::Rec => todo!(),
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
             ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
-            ArgTy::UsVal => intrp.symbols.raw_user_lookup(unsafe { self.sym }),
-            _ => todo!(),
+            ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
+            _ => unreachable!(),
         }
     }
 }

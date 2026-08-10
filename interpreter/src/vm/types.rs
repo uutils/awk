@@ -54,8 +54,7 @@ impl<'a> Value<'a> {
     /// Called when loading a variable's value. Forces subsequent uses to be
     /// typed as an AWK scalar (anything that's not an array, basically).
     #[inline(always)]
-    pub fn scalar_context(&mut self) -> Option<&Self> {
-        // TODO: Exit "nicely" on Self::Array(_).
+    pub fn scalar_context(&mut self) -> Option<&mut Self> {
         match self {
             Self::Untyped => *self = Self::Unassigned,
             Self::Array(_) => return None,
@@ -65,8 +64,7 @@ impl<'a> Value<'a> {
     }
 
     #[inline(always)]
-    pub fn array_context(&mut self) -> Option<&Self> {
-        // TODO: Exit "nicely" on non-array scalars.
+    pub fn array_context(&mut self) -> Option<&mut Self> {
         match self {
             Self::Untyped => *self = Self::empty_array(),
             Self::Array(_) => {}
@@ -119,33 +117,33 @@ impl<'a> Value<'a> {
         regex::Regex::new(pattern).is_ok_and(|re| re.is_match(subject))
     }
 
-    pub fn as_array(&mut self) -> Rc<RefCell<ArrayMap<'a>>> {
-        self.array_context();
-        match self {
-            Value::Array(arr) => Rc::clone(arr),
-            _ => unreachable!("array_context must leave an Array"),
-        }
+    pub fn as_array(&mut self) -> Option<Rc<RefCell<ArrayMap<'a>>>> {
+        let Self::Array(arr) = self.array_context()? else {
+            unreachable!("array_context() leaves an Array variant on success")
+        };
+        Some(Rc::clone(arr))
     }
 
-    pub fn push_array(&mut self, key: String, val: Self) {
-        let arr = self.as_array();
-        arr.borrow_mut().insert(key, val);
+    pub fn set_array_elem(&mut self, key: String, val: Self) -> Option<()> {
+        self.as_array()?.borrow_mut().insert(key, val);
+        Some(())
     }
 
-    pub fn get_array(&mut self, key: String) -> Self {
-        let arr = self.as_array();
-        arr.borrow().get(&key).cloned().unwrap_or(Self::Untyped)
-    }
-
-    pub fn make_mdim_at(&mut self, key: String) -> Self {
+    pub fn get_array_elem(&mut self, key: String) -> Option<Self> {
         self.as_array()
-            .borrow_mut()
-            .entry(key)
-            .and_modify(|x| {
-                x.array_context();
-            })
-            .or_insert_with(|| Value::Array(Rc::default()))
-            .clone()
+            .map(|arr| arr.borrow().get(&key).cloned().unwrap_or(Self::Untyped))
+    }
+
+    pub fn array_elem_mdim(&mut self, key: String) -> Option<Self> {
+        self.as_array().map(|arr| {
+            arr.borrow_mut()
+                .entry(key)
+                .and_modify(|x| {
+                    x.array_context();
+                })
+                .or_insert_with(|| Value::Array(Rc::default()))
+                .clone()
+        })
     }
 
     pub fn write_string(&self, f: &mut Vec<u8>) {
