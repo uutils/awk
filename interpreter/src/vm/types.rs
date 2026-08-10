@@ -134,6 +134,10 @@ impl<'a> Value<'a> {
             .map(|arr| arr.borrow().get(&key).cloned().unwrap_or(Self::Untyped))
     }
 
+    pub fn has_array_elem(&mut self, key: String) -> Option<bool> {
+        self.as_array().map(|arr| arr.borrow().get(&key).is_some())
+    }
+
     pub fn array_elem_mdim(&mut self, key: String) -> Option<Self> {
         self.as_array().map(|arr| {
             arr.borrow_mut()

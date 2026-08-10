@@ -615,6 +615,28 @@ impl<'a> Interpreter<'a> {
                     self.array_elem_set(Place::new(lhs, tyl), key, val.clone(), metadata)?;
                     self.write_reg(dest, val);
                 }
+                Instruction::DeleteA { arg, ty } => {
+                    let place = Place::new(arg, ty);
+                    // Remember typedness
+                    *place.resolve(self) = Value::empty_array();
+                }
+                Instruction::DeleteM { arg, ty, start, end } => {
+                    let key = self.make_array_key(start, end);
+                    // Forget typedness
+                    self.array_elem_set(Place::new(arg, ty), key, Value::Untyped, metadata)?;
+                }
+                Instruction::In { dest, lhs, rhs, tyr, tyl } => {
+                    let key = self.get_val(rhs, tyr, metadata, Value::to_string)?;
+                    let val = self.has_array_elem(Place::new(lhs, tyl), key, metadata)?;
+
+                    self.write_reg(dest, val);
+                }
+                Instruction::InA { dest, arg, start, end, ty } => {
+                    let key = self.make_array_key(start, end);
+                    let val = self.has_array_elem(Place::new(arg, ty), key, metadata)?;
+
+                    self.write_reg(dest, val);
+                }
                 Instruction::IntrinsicCall { dest, start, end, fun } => {
                     let offset = self.reg_offset();
                     let args = self.registers.get_range(start..end, offset);
@@ -727,7 +749,7 @@ impl<'a> Interpreter<'a> {
         place
             .array(self)
             .and_then(|arr| arr.get_array_elem(key))
-            .ok_or_else(|| InterpreterError::ScalarUseOfArrary(self.get_span(metadata)))
+            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
     #[inline(always)]
@@ -740,7 +762,7 @@ impl<'a> Interpreter<'a> {
         place
             .array(self)
             .and_then(|arr| arr.array_elem_mdim(key))
-            .ok_or_else(|| InterpreterError::ScalarUseOfArrary(self.get_span(metadata)))
+            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
     #[inline(always)]
@@ -754,7 +776,20 @@ impl<'a> Interpreter<'a> {
         place
             .array(self)
             .and_then(|arr| arr.set_array_elem(key, val))
-            .ok_or_else(|| InterpreterError::ScalarUseOfArrary(self.get_span(metadata)))
+            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
+    }
+
+    #[inline(always)]
+    fn has_array_elem(
+        &mut self,
+        place: Place,
+        key: String,
+        metadata: &[MetaId],
+    ) -> Result<bool, InterpreterError> {
+        place
+            .array(self)
+            .and_then(|arr| arr.has_array_elem(key))
+            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
     /// Convenience wrapper to add errors from context metadata.
@@ -768,7 +803,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<T, InterpreterError> {
         match Place::new(arg, ty).array(self) {
             Some(val) => Ok(f(val)),
-            None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
+            None => Err(InterpreterError::ArrayUseOfScalar(self.get_span(metadata))),
         }
     }
 

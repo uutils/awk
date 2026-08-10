@@ -298,7 +298,21 @@ impl<'a> CodeGen<'a> {
                     this.regs.free_many(range);
                 });
             }
-            Statement::Simple(SimpleStatement::Delete(..)) => todo!(),
+            &Statement::Simple(SimpleStatement::Delete(var, Some(ref index), _)) => self
+                .scoped_reg(|this, tmp| {
+                    let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
+                    let range = this.gen_call_convention(RtType::Scalar, index);
+                    let (start, end) = range.as_range();
+
+                    this.emit(Instruction::DeleteM { arg, ty, start, end });
+                    this.regs.free_many(range);
+                }),
+            &Statement::Simple(SimpleStatement::Delete(var, None, _)) => {
+                self.scoped_reg(|this, tmp| {
+                    let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
+                    this.emit(Instruction::DeleteA { arg, ty });
+                });
+            }
             Statement::Switch { scrutinee, branches, default, metadata } => {
                 self.with_metadata(*metadata, |this| {
                     this.lower_switch(scrutinee, branches, default.as_ref());
@@ -646,7 +660,23 @@ impl<'a> CodeGen<'a> {
                         ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
                             this.load_index(dest, var, index);
                         }
-                        ExprNode::ArrayOperation(ArrayOperator::In, _, _) => todo!(),
+                        &ExprNode::ArrayOperation(ArrayOperator::In, var, ref index)
+                            if let [expr] = index.as_slice() =>
+                        {
+                            let index = this.lower_expr(expr);
+                            let (rhs, tyr) = index.to_arg().into_arg();
+                            let (lhs, tyl) =
+                                this.load_place(dest, &Place::Variable(var)).into_place();
+                            this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
+                        }
+                        &ExprNode::ArrayOperation(ArrayOperator::In, var, ref indices) => {
+                            let (arg, ty) =
+                                this.load_place(dest, &Place::Variable(var)).into_place();
+                            let range = this.gen_call_convention(RtType::Scalar, indices);
+                            let (start, end) = range.as_range();
+                            this.emit(Instruction::InA { dest, arg, start, end, ty });
+                            this.regs.free_many(range);
+                        }
                         ExprNode::FunctionCall(name, args) => {
                             let name = this.symbols.get_user_fun(name, self.arena);
                             let range = this.gen_call_convention(RtType::Any, args);
