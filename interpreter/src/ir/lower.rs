@@ -19,7 +19,9 @@ use crate::{
     CodeRange,
     ir::{
         Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
-        lower::utils::{CallConv, LinearRegRange, Operand, RegAlloc, RtType, TypedArg, var_index},
+        lower::utils::{
+            CallConv, LinearRegRange, Operand, RegAlloc, RtType, TypedArg, TypedPlace, var_index,
+        },
     },
     vm::{Consts, Function, SymbolTable, types::Value},
 };
@@ -114,7 +116,7 @@ impl<'a> CodeGen<'a> {
             self.lower_body(actions);
         } else {
             self.scoped_reg(|this, reg| {
-                let (arg, ty) = TypedArg::new_imm(0).into();
+                let (arg, ty) = TypedArg::new_imm(0).into_arg();
                 this.emit(Instruction::Record { dest: reg, arg, ty });
 
                 this.emit(Instruction::OutputCall {
@@ -327,14 +329,14 @@ impl<'a> CodeGen<'a> {
                     this.scoped_reg(|this, dest| {
                         this.lower_expr_into(expr, dest);
 
-                        let (arg, ty) = TypedArg::new_reg(dest).into();
+                        let (arg, ty) = TypedArg::new_reg(dest).into_arg();
                         this.emit(Instruction::Exit { arg, ty });
                     });
                 });
             }
             Statement::Exit(None, metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let (arg, ty) = TypedArg::new_imm(0).into();
+                    let (arg, ty) = TypedArg::new_imm(0).into_arg();
                     this.emit(Instruction::Exit { arg, ty });
                 });
             }
@@ -343,7 +345,7 @@ impl<'a> CodeGen<'a> {
                     this.scoped_reg(|this, dest| {
                         this.lower_expr_into(expr, dest);
 
-                        let (arg, ty) = TypedArg::new_reg(dest).into();
+                        let (arg, ty) = TypedArg::new_reg(dest).into_arg();
                         this.emit(Instruction::Return { arg, ty });
                     });
                 });
@@ -424,17 +426,17 @@ impl<'a> CodeGen<'a> {
         case: &Atom<'_>,
         case_ix: usize,
     ) -> (Label, usize) {
-        let (lhs, tyl) = TypedArg::new_reg(scr).into();
+        let (lhs, tyl) = TypedArg::new_reg(scr).into_arg();
 
         match case {
             Atom::Regex(r) | Atom::TypedRegex(r) => {
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
-                let (rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into())).into();
+                let (rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into())).into_arg();
                 self.emit(Instruction::Matches { dest: cmp, lhs, rhs, tyl, tyr });
             }
             atom => {
                 let case_val = self.lower_atom(atom);
-                let (rhs, tyr) = case_val.to_arg().into();
+                let (rhs, tyr) = case_val.to_arg().into_arg();
                 self.emit(Instruction::Eq { dest: cmp, lhs, rhs, tyl, tyr });
                 case_val.free(self);
             }
@@ -497,8 +499,8 @@ impl<'a> CodeGen<'a> {
             }
             Atom::Regex(r) => {
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
-                let (rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into())).into();
-                let (lhs, tyl) = TypedArg::new_imm(0).into();
+                let (rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into())).into_arg();
+                let (lhs, tyl) = TypedArg::new_imm(0).into_arg();
                 self.emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
                 TypedArg::new_reg(dest)
             }
@@ -508,7 +510,7 @@ impl<'a> CodeGen<'a> {
 
     fn lower_atom_into(&mut self, atom: &Atom, dest: Reg) {
         let t_arg = self.lower_atom_arg(atom, dest);
-        let (arg, ty) = t_arg.into();
+        let (arg, ty) = t_arg.into_arg();
 
         if t_arg.as_reg().is_none_or(|reg| reg != dest) {
             self.emit(Instruction::CopyP { dest, arg, ty });
@@ -565,7 +567,7 @@ impl<'a> CodeGen<'a> {
                             };
 
                             this.scoped_reg(|this, lhs_reg| {
-                                let lhs = this.load_place(lhs_reg, place);
+                                let lhs = this.load_place(lhs_reg, place).into();
                                 let rhs = val.to_arg();
 
                                 this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
@@ -578,8 +580,7 @@ impl<'a> CodeGen<'a> {
                         ExprNode::UnaryPlaceOperation(op, place)
                             if matches!(place, Place::Record(_) | Place::Variable(_)) =>
                         {
-                            let (arg, ty) = this.load_place(dest, place).into();
-                            let ty = ty.try_into().unwrap();
+                            let (arg, ty) = this.load_place(dest, place).into_place();
                             match op {
                                 UnaryPlaceOperator::IncrementL => {
                                     this.emit(Instruction::IncrementPre { dest, arg, ty });
@@ -598,7 +599,7 @@ impl<'a> CodeGen<'a> {
                         // Unoptimized path for values in arrays.
                         ExprNode::UnaryPlaceOperation(op, place) => {
                             // Note: val may alias with dest.
-                            let lhs = this.load_place(dest, place);
+                            let lhs = this.load_place(dest, place).into();
                             let one = TypedArg::new_imm(1);
 
                             match op {
@@ -663,16 +664,18 @@ impl<'a> CodeGen<'a> {
                         &ExprNode::IndirectCall(place, ref args) => {
                             let range = this.gen_call_convention(RtType::Any, args);
                             let (start, end) = range.as_range();
-                            let (name, ty) = this.load_place(dest, &Place::Variable(place)).into();
+                            let (name, ty) =
+                                this.load_place(dest, &Place::Variable(place)).into_arg();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
                         &ExprNode::ChainedIndex(var, ref indices) => {
-                            let (mut arg, ty) = match &var {
-                                Variable::User(ident) => TypedArg::new_ua(this, ident).into(),
-                                var => TypedArg::new_ia(var).into(),
+                            let (mut arg, mut ty) = match &var {
+                                Variable::User(ident) => {
+                                    TypedPlace::new_ua(this, ident).into_place()
+                                }
+                                var => TypedPlace::new_ia(var).into_place(),
                             };
-                            let mut ty = ty.try_into().unwrap();
 
                             for (i, index) in indices.iter().enumerate() {
                                 let range = this.gen_call_convention(RtType::Scalar, index);
@@ -683,8 +686,7 @@ impl<'a> CodeGen<'a> {
                                     Instruction::LoadM { dest, arg, start, end, ty }
                                 };
                                 this.emit(instr);
-                                let (arg_n, ty_n) = TypedArg::new_reg(dest).into();
-                                (arg, ty) = (arg_n, ty_n.try_into().unwrap());
+                                (arg, ty) = TypedPlace::new_reg(dest).into_place();
                                 this.regs.free_many(range);
                             }
                         }
@@ -695,48 +697,45 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn load_place(&mut self, dest: Reg, place: &Place<'_>) -> TypedArg {
+    fn load_place(&mut self, dest: Reg, place: &Place<'_>) -> TypedPlace {
         match place {
             Place::Record(_) => {
                 todo!()
             }
-            Place::Variable(Variable::User(ident)) => TypedArg::new_us(self, ident),
-            Place::Variable(var) => TypedArg::new_is(var),
+            Place::Variable(Variable::User(ident)) => TypedPlace::new_us(self, ident),
+            Place::Variable(var) => TypedPlace::new_is(var),
             Place::Index(var, index) => self.load_index(dest, var, index),
             Place::ChainedIndex(_, _) => todo!(),
         }
     }
 
-    fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedArg {
+    fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedPlace {
         let range = self.gen_call_convention(RtType::Scalar, index);
         let (start, end) = range.as_range();
         if let Variable::User(ident) = var {
-            let (arg, ty) = TypedArg::new_ua(self, ident).into();
-            let ty = ty.try_into().unwrap();
+            let (arg, ty) = TypedPlace::new_ua(self, ident).into_place();
             self.emit(Instruction::LoadA { dest, arg, ty, start, end });
         } else {
-            let (arg, ty) = TypedArg::new_ia(var).into();
-            let ty = ty.try_into().unwrap();
+            let (arg, ty) = TypedPlace::new_ia(var).into_place();
             self.emit(Instruction::LoadA { dest, arg, ty, start, end });
         }
         self.regs.free_many(range);
         // Element value was written to `dest`; subsequent ops must use the register.
-        TypedArg::new_reg(dest)
+        TypedPlace::new_reg(dest)
     }
 
     fn store_place(&mut self, place: &Place<'_>, dest: Reg, src: TypedArg) {
-        let (arg, ty) = src.into();
+        let (arg, ty) = src.into_arg();
         match place {
             Place::Record(expr) => {
                 let rec = self.lower_expr(expr);
-                let (src, tys) = rec.to_arg().into();
+                let (src, tys) = rec.to_arg().into_arg();
                 self.emit(Instruction::StoreR { dest, src, tys, arg, ty });
                 rec.free(self);
             }
             Place::Variable(Variable::User(ident)) => {
-                let t_arg = TypedArg::new_us(self, ident);
-                let (var, ty_place) = t_arg.into();
-                let ty_place = ty_place.try_into().unwrap();
+                let t_arg = TypedPlace::new_us(self, ident);
+                let (var, ty_place) = t_arg.into_place();
 
                 if t_arg.as_reg().is_some_and(|reg| reg == dest) {
                     return; // Value already on destination.
@@ -756,45 +755,40 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::StoreS { dest, ty_place: PlaceTy::IsVal, var, arg, ty });
             }
             Place::Index(Variable::User(ident), index) => {
-                let (lhs, tyl) = TypedArg::new_ua(self, ident).into();
-                let tyl = tyl.try_into().unwrap();
-                let (rhs, tyr) = src.into();
+                let (lhs, tyl) = TypedPlace::new_ua(self, ident).into_place();
+                let (rhs, tyr) = src.into_arg();
                 let range = self.gen_call_convention(RtType::Scalar, index);
                 let (start, end) = range.as_range();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 self.regs.free_many(range);
             }
             Place::Index(var, index) => {
-                let (lhs, tyl) = TypedArg::new_ia(var).into();
-                let tyl = tyl.try_into().unwrap();
-                let (rhs, tyr) = src.into();
+                let (lhs, tyl) = TypedPlace::new_ia(var).into_place();
+                let (rhs, tyr) = src.into_arg();
                 let range = self.gen_call_convention(RtType::Scalar, index);
                 let (start, end) = range.as_range();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 self.regs.free_many(range);
             }
             &Place::ChainedIndex(var, ref indices) => {
-                let (mut arg, ty) = match &var {
-                    Variable::User(ident) => TypedArg::new_ua(self, ident).into(),
-                    var => TypedArg::new_ia(var).into(),
+                let (mut arg, mut ty) = match &var {
+                    Variable::User(ident) => TypedPlace::new_ua(self, ident).into_place(),
+                    var => TypedPlace::new_ia(var).into_place(),
                 };
-                let mut ty = ty.try_into().unwrap();
                 let last = indices.len() - 1;
 
                 for index in &indices[..last] {
                     let range = self.gen_call_convention(RtType::Scalar, index);
                     let (start, end) = range.as_range();
                     self.emit(Instruction::LoadM { dest, arg, start, end, ty });
-                    let (arg_n, ty_n) = TypedArg::new_reg(dest).into();
-                    (arg, ty) = (arg_n, ty_n.try_into().unwrap());
+                    (arg, ty) = TypedPlace::new_reg(dest).into_place();
                     self.regs.free_many(range);
                 }
 
                 let range = self.gen_call_convention(RtType::Scalar, &indices[last]);
                 let (start, end) = range.as_range();
-                let (lhs, tyl) = TypedArg::new_reg(dest).into();
-                let (rhs, tyr) = src.into();
-                let tyl = tyl.try_into().unwrap();
+                let (lhs, tyl) = TypedPlace::new_reg(dest).into_place();
+                let (rhs, tyr) = src.into_arg();
                 self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 self.regs.free_many(range);
             }
@@ -810,14 +804,14 @@ impl<'a> CodeGen<'a> {
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
-            let (arg, ty) = TypedArg::new_imm(0).into();
+            let (arg, ty) = TypedArg::new_imm(0).into_arg();
             this.emit(Instruction::CopyP { dest, arg, ty });
         });
     }
 
     fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
-            let (arg, ty) = TypedArg::new_imm(1).into();
+            let (arg, ty) = TypedArg::new_imm(1).into_arg();
             this.emit(Instruction::CopyP { dest, arg, ty });
         });
         self.bc.nth(if_label).push_end_label();
@@ -831,10 +825,10 @@ impl<'a> CodeGen<'a> {
 
     /// Coerce `src` to an integer truth value (0 or 1), as gawk does via `mkbool()`.
     fn truthify(&mut self, dest: Reg, src: Reg) {
-        let (arg, ty) = TypedArg::new_reg(src).into();
+        let (arg, ty) = TypedArg::new_reg(src).into_arg();
         self.emit(Instruction::Negation { dest, arg, ty });
 
-        let (arg, ty) = TypedArg::new_reg(dest).into();
+        let (arg, ty) = TypedArg::new_reg(dest).into_arg();
         self.emit(Instruction::Negation { dest, arg, ty });
     }
 
@@ -886,13 +880,11 @@ impl<'a> CodeGen<'a> {
                 // Bypass Copy instruction for variables here, so we do not get
                 // scalar context shenanigans in the VM.
                 if let &Expr::Leaf(Atom::Variable(var), _) = arg {
-                    let (arg, ty) = this.load_place(dest, &Place::Variable(var)).into();
+                    let (arg, ty) = this.load_place(dest, &Place::Variable(var)).into_place();
                     let instr = match rt_ty {
-                        RtType::Scalar => Instruction::CopyS { dest, arg, ty },
-                        RtType::Array => {
-                            Instruction::CopyA { dest, arg, ty: ty.try_into().unwrap() }
-                        }
-                        RtType::Any => Instruction::CopyP { dest, arg, ty },
+                        RtType::Scalar => Instruction::CopyS { dest, arg, ty: *ty },
+                        RtType::Array => Instruction::CopyA { dest, arg, ty },
+                        RtType::Any => Instruction::CopyP { dest, arg, ty: *ty },
                     };
                     this.emit(instr);
                 } else {
@@ -1015,7 +1007,7 @@ impl<'a> Bytecode<'a> {
 
 impl Instruction {
     pub(super) fn from_unary(op: UnaryOperator, dest: Reg, arg: TypedArg) -> Self {
-        let (arg, ty) = arg.into();
+        let (arg, ty) = arg.into_arg();
         match op {
             UnaryOperator::Record => Self::Record { dest, arg, ty },
             UnaryOperator::Negation => Self::Negation { dest, arg, ty },
@@ -1025,7 +1017,7 @@ impl Instruction {
     }
 
     pub(super) fn from_binary(op: BinaryOperator, dest: Reg, lhs: TypedArg, rhs: TypedArg) -> Self {
-        let ((lhs, tyl), (rhs, tyr)) = (lhs.into(), rhs.into());
+        let ((lhs, tyl), (rhs, tyr)) = (lhs.into_arg(), rhs.into_arg());
         match op {
             BinaryOperator::Concat => Self::Concat { dest, lhs, rhs, tyl, tyr },
             BinaryOperator::Eq => Self::Eq { dest, lhs, rhs, tyl, tyr },

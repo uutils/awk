@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use crate::{
     CodeGen,
-    ir::{Arg, ArgTy, IxWidth, NonLocal, Reg, RegWidth},
+    ir::{Arg, ArgTy, IxWidth, NonLocal, PlaceTy, Reg, RegWidth},
     vm::types::Value,
 };
 
@@ -32,6 +32,9 @@ pub struct LinearRegRange(LinearReg, LinearReg);
 
 #[derive(Clone, Copy)]
 pub struct TypedArg(Arg, ArgTy);
+
+#[derive(Clone, Copy)]
+pub struct TypedPlace(Arg, PlaceTy);
 
 #[must_use]
 pub enum Operand {
@@ -64,30 +67,11 @@ impl Operand {
 
 impl TypedArg {
     pub fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        let sym = code.symbols.register_user_var(ident, code.arena);
-        if let Some(reg) = code.get_local_arg(sym) {
-            Self(Arg { reg }, ArgTy::Reg)
-        } else {
-            Self(Arg { sym }, ArgTy::UsVal)
-        }
+        TypedPlace::new_us(code, ident).into()
     }
 
     pub fn new_is(var: &Variable<'_>) -> Self {
-        Self(Arg { sym: var_index(var) }, ArgTy::IsVal)
-    }
-
-    pub fn new_ia(var: &Variable<'_>) -> Self {
-        let sym = var_index(var);
-        Self(Arg { sym }, ArgTy::IaVal)
-    }
-
-    pub fn new_ua(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        let sym = code.symbols.register_user_var(ident, code.arena);
-        if let Some(reg) = code.get_local_arg(sym) {
-            Self(Arg { reg }, ArgTy::Reg)
-        } else {
-            Self(Arg { sym }, ArgTy::UaVal)
-        }
+        TypedPlace::new_is(var).into()
     }
 
     pub fn new_imm(imm: i32) -> Self {
@@ -105,7 +89,7 @@ impl TypedArg {
     }
 
     pub fn new_reg(reg: impl Into<Reg>) -> Self {
-        Self(Arg { reg: reg.into() }, ArgTy::Reg)
+        TypedPlace::new_reg(reg).into()
     }
 
     pub fn as_reg(self) -> Option<Reg> {
@@ -115,6 +99,43 @@ impl TypedArg {
         } else {
             None
         }
+    }
+}
+
+impl TypedPlace {
+    pub fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+        let sym = code.symbols.register_user_var(ident, code.arena);
+        if let Some(reg) = code.get_local_arg(sym) {
+            Self(Arg { reg }, PlaceTy::Reg)
+        } else {
+            Self(Arg { sym }, PlaceTy::UsVal)
+        }
+    }
+
+    pub fn new_is(var: &Variable<'_>) -> Self {
+        Self(Arg { sym: var_index(var) }, PlaceTy::IsVal)
+    }
+
+    pub fn new_ia(var: &Variable<'_>) -> Self {
+        let sym = var_index(var);
+        Self(Arg { sym }, PlaceTy::IaVal)
+    }
+
+    pub fn new_ua(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+        let sym = code.symbols.register_user_var(ident, code.arena);
+        if let Some(reg) = code.get_local_arg(sym) {
+            Self(Arg { reg }, PlaceTy::Reg)
+        } else {
+            Self(Arg { sym }, PlaceTy::UaVal)
+        }
+    }
+
+    pub fn new_reg(reg: impl Into<Reg>) -> Self {
+        Self(Arg { reg: reg.into() }, PlaceTy::Reg)
+    }
+
+    pub fn as_reg(self) -> Option<Reg> {
+        TypedArg::from(self).as_reg()
     }
 }
 
@@ -226,26 +247,49 @@ impl RegAlloc {
 }
 
 impl LinearRegRange {
+    #[inline(always)]
     pub fn as_range(&self) -> (Reg, Reg) {
         (*self.0, *self.1)
     }
 }
 
 impl From<Reg> for LinearReg {
+    #[inline(always)]
     fn from(reg: Reg) -> Self {
         Self(reg)
     }
 }
 
-impl From<TypedArg> for (Arg, ArgTy) {
-    fn from(value: TypedArg) -> Self {
-        (value.0, value.1)
+impl TypedArg {
+    #[inline(always)]
+    pub fn into_arg(self) -> (Arg, ArgTy) {
+        (self.0, self.1)
+    }
+}
+
+impl TypedPlace {
+    #[inline(always)]
+    pub fn into_arg(self) -> (Arg, ArgTy) {
+        (self.0, *self.1)
+    }
+
+    #[inline(always)]
+    pub fn into_place(self) -> (Arg, PlaceTy) {
+        (self.0, self.1)
+    }
+}
+
+impl From<TypedPlace> for TypedArg {
+    #[inline(always)]
+    fn from(value: TypedPlace) -> Self {
+        Self(value.0, *value.1)
     }
 }
 
 impl Deref for LinearReg {
     type Target = Reg;
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
