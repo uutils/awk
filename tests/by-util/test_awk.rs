@@ -454,3 +454,11 @@ fn array_fn_passing() {
         "function f(x, y) { print isarray(x); x[2]++ } BEGIN { a[2] = 1; f(a); f(a); print a[2]; }",
     ).succeeds().stdout_only("1\n1\n3\n");
 }
+
+#[test]
+fn mdim_array_basic() {
+    ucmd()
+        .arg(r#"BEGIN { print a[1,4][1,"foo"][2,2,1] = 1; print a[1,4][1,"foo"][2,2,1] }"#)
+        .succeeds()
+        .stdout_only("1\n1\n");
+}
