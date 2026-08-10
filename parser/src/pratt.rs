@@ -471,7 +471,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
     /// Parses a given place/value receiver/lvalue. These are non-parenthesized
     /// identifiers, array accesses, and records. This functions ensures parsing
     /// is non-greedy.
-    fn parse_place(&mut self, lex: &mut Lexer<'a>) -> Result<Place<'a>> {
+    pub fn parse_place(&mut self, lex: &mut Lexer<'a>) -> Result<Place<'a>> {
         let start = lex.peeked_span()?.start;
         let lhs = match lex.expect_peek()? {
             Token::Record => {

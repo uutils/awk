@@ -593,7 +593,20 @@ impl<'a> Parser<'a> {
                 &Token::ClosedParent,
                 ParsingError::UnclosedParenthesisInStatement,
             )?;
-            if lex.consume(&Token::Comma) {
+            // Handles ambiguities of `print (1, 2) in arr`. Lol.
+            // TODO: refactor properly, accept other places.
+            if lex.consume(&Token::In) {
+                let Place::Variable(var) = Pratt::new(self, false).parse_place(lex)? else {
+                    return Err(ParsingError::OperatorExpectsVariable(
+                        lex.span().since(start),
+                    ));
+                };
+                let expr = replace(&mut args, Vec::new_in(self.arena));
+                let span = lex.span().since(start);
+
+                args.push(Expr::node(ArrayOperator::In.expr(var, expr), self, span));
+                self.parse_command_args(lex, &mut args)?;
+            } else if lex.consume(&Token::Comma) {
                 let is_err = args.len() > 1;
                 // We parse anyway to advance the lexer.
                 let start_extra = lex.span().start;
