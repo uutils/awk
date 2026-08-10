@@ -739,7 +739,6 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    #[inline(always)]
     fn array_elem_get(
         &mut self,
         place: Place,
@@ -752,7 +751,6 @@ impl<'a> Interpreter<'a> {
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
-    #[inline(always)]
     fn array_elem_mdim(
         &mut self,
         place: Place,
@@ -765,7 +763,6 @@ impl<'a> Interpreter<'a> {
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
-    #[inline(always)]
     fn array_elem_set(
         &mut self,
         place: Place,
@@ -779,7 +776,6 @@ impl<'a> Interpreter<'a> {
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
-    #[inline(always)]
     fn has_array_elem(
         &mut self,
         place: Place,
@@ -793,7 +789,6 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Convenience wrapper to add errors from context metadata.
-    #[inline(always)]
     fn get_array<T>(
         &mut self,
         arg: Arg,
