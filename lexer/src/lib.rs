@@ -482,6 +482,11 @@ fn parse_content<'a, const REGEX: bool, const DELIMITER: char>(
     }
 }
 
+/// And you might ask, why do we do this, _especially_ on regexes, where our
+/// engine probably would support this? Conformance, unsurprisingly. This is
+/// tricky to get right; GNU is very specific about this behavior and their
+/// choices have changed over time. We also get full regex operator filtering
+/// as the unknown escape pass-through gives us that for free.
 fn parse_escape<const REGEX: bool>(
     slice: &[u8],
     out: &mut Vec<u8>,
@@ -496,6 +501,19 @@ fn parse_escape<const REGEX: bool>(
             .is_some_and(|&x| (x as char).is_ascii_hexdigit())
     };
     let is_slice_oct = |i| slice.get(i).map(|&x| x as char).is_some_and(is_oct);
+    let is_regex_operator = |c: char| {
+        matches!(
+            c,
+            '[' | ']' | '{' | '}' | '(' | ')' | '*' | '+' | '^' | '$' | '.' | '?'
+        )
+    };
+    let is_gnu_regex_op = |c: char| {
+        matches!(
+            c,
+            's' | 'S' | 'w' | 'W' | '<' | '>' | 'y' | 'B' | '`' | '\''
+        )
+    };
+
     let Some(to_escape) = slice.get(1).map(|x| *x as char) else {
         return Err(LexingError::UnexpectedEof);
     };
@@ -503,11 +521,9 @@ fn parse_escape<const REGEX: bool>(
     if to_escape == '\n' {
         return Ok(count);
     }
-
-    // On minimal, only drop backslash for '"' and '\n'
     let escaped = match to_escape {
         c @ ('\\' | '"') if !REGEX => c,
-        c @ ('[' | ']' | '{' | '}' | '(' | ')' | '*' | '+' | '^' | '$' | '.' | '?') if REGEX => {
+        c if REGEX && (is_regex_operator(c) || (!posix_strict && is_gnu_regex_op(c))) => {
             out.push(b'\\');
             c
         }
