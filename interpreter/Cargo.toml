@@ -13,7 +13,9 @@ bumpalo.workspace = true
 allocator-api2.workspace = true
 hashbrown.workspace = true
 ahash.workspace = true
-regex.workspace = true
+posix-regex = "0.1.4"
+regex-syntax = "0.8.11"
+regex-automata = "0.4.18"
 ariadne.workspace = true
 smallvec.workspace = true
 # I'm not particularly happy about this, but it's crucial for performance, and

@@ -18,6 +18,8 @@ use std::{
 use ahash::RandomState;
 use hashbrown::HashMap;
 
+use crate::{ExecMode, vm::regex::RegexMatcher};
+
 #[inline(always)]
 fn likely(b: bool) -> bool {
     if !b {
@@ -103,18 +105,14 @@ impl<'a> Value<'a> {
         self.to_num().trunc() as isize
     }
 
-    // FIXME: gawk supports regex extensions beyond the `regex` crate; compile patterns
-    // once and route matching through a dedicated layer (likely regex-automata).
-    pub(crate) fn matches_regex(&self, pattern: &[u8]) -> bool {
+    pub(crate) fn matches_regex(&self, pattern: &Self, mode: ExecMode) -> bool {
         let mut subject = Vec::with_capacity(self.string_size_hint());
         self.write_string(&mut subject);
-        let Ok(subject) = str::from_utf8(&subject) else {
-            return false;
+        let Self::Regex(pattern) = pattern else {
+            todo!("Conversion via lexer!")
         };
-        let Ok(pattern) = str::from_utf8(pattern) else {
-            return false;
-        };
-        regex::Regex::new(pattern).is_ok_and(|re| re.is_match(subject))
+        let x = RegexMatcher::new(pattern, mode).unwrap();
+        x.is_match(&subject)
     }
 
     pub fn as_array(&mut self) -> Option<Rc<RefCell<ArrayMap<'a>>>> {

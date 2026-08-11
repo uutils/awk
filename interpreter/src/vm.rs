@@ -11,6 +11,7 @@
 
 #![allow(clippy::inline_always)]
 
+mod regex;
 mod symbols;
 pub mod types;
 
@@ -35,7 +36,7 @@ use crate::{
 };
 pub use symbols::SymbolTable;
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecMode {
     Uu,
     Gnu,
@@ -49,7 +50,7 @@ pub struct Interpreter<'a> {
     registers: Registers<'a>,
     pub(crate) symbols: SymbolTable<'a>,
     consts: Consts<'a>,
-    _compat: ExecMode,
+    mode: ExecMode,
     frames: StdVec<CallFrame>,
     metadata: MetadataStore<AriadneSpan>,
 }
@@ -109,7 +110,7 @@ struct Place {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(compat: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
+    pub fn new(mode: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
         let n_regs = code.regs.hwm as usize + 1;
         Self {
             program_counter: 0,
@@ -117,7 +118,7 @@ impl<'a> Interpreter<'a> {
             registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs + 1]),
             symbols: code.symbols,
             consts: code.consts,
-            _compat: compat,
+            mode,
             frames: StdVec::new(),
             metadata,
         }
@@ -224,22 +225,20 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::Matches { dest, lhs, rhs, tyl, tyr } => {
-                    let val =
-                        self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| match rhs {
-                            Value::Regex(pat) => lhs.matches_regex(pat),
-                            _ => false,
-                        })?;
+                    let mode = self.mode;
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| {
+                        lhs.matches_regex(rhs, mode)
+                    })?;
 
                     self.write_reg(dest, val);
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
-                    let val =
-                        self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| match rhs {
-                            Value::Regex(pat) => lhs.matches_regex(pat),
-                            _ => false,
-                        })?;
+                    let mode = self.mode;
+                    let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| {
+                        !lhs.matches_regex(rhs, mode)
+                    })?;
 
-                    self.write_reg(dest, !val);
+                    self.write_reg(dest, val);
                 }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
                     let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| lhs + rhs)?;
