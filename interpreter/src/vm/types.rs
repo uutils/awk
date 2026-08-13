@@ -18,7 +18,7 @@ use std::{
 use ahash::RandomState;
 use hashbrown::HashMap;
 
-use crate::{ExecMode, vm::regex::RegexMatcher};
+use crate::{ExecMode, vm::regex};
 
 #[inline(always)]
 fn likely(b: bool) -> bool {
@@ -111,8 +111,9 @@ impl<'a> Value<'a> {
         let Self::Regex(pattern) = pattern else {
             todo!("Conversion via lexer!")
         };
-        let x = RegexMatcher::new(pattern, mode).unwrap();
-        x.is_match(&subject)
+        // TODO: icase wiring
+        let x = regex::automaton(pattern, mode, false).unwrap();
+        x.is_match(&subject).unwrap()
     }
 
     pub fn as_array(&mut self) -> Option<Rc<RefCell<ArrayMap<'a>>>> {
