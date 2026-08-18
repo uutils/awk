@@ -14,6 +14,7 @@ pub use ir::{
     Instruction,
     lower::{Bytecode, CodeGen},
 };
+use minrx::{BuildError, MatchError};
 use parser::{AriadneSpan, Diagnostic, DiagnosticStore, Span};
 pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 
@@ -33,12 +34,18 @@ pub enum InterpreterError {
     ScalarUseOfArrary(AriadneSpan),
     #[error("Attempted to use a scalar as an array value!")]
     ArrayUseOfScalar(AriadneSpan),
+    #[error("Regex build error: {1}")]
+    RegexBuild(AriadneSpan, BuildError),
+    #[error("Regex execution error: {1}")]
+    RegexExec(AriadneSpan, MatchError),
 }
 
 impl InterpreterError {
     pub fn emit_diagnostic(&self, store: &mut DiagnosticStore) {
         match self {
-            Self::ArrayUseOfScalar(span)
+            Self::RegexBuild(span, _)
+            | Self::RegexExec(span, _)
+            | Self::ArrayUseOfScalar(span)
             | Self::ScalarUseOfArrary(span)
             | Self::DivByZeroAttempted(span, _)
             | Self::UnknownIndFunction(span, _)
@@ -55,7 +62,9 @@ impl Diagnostic for InterpreterError {
     }
     fn span(&self) -> Option<Span> {
         match self {
-            &Self::ArrayUseOfScalar(AriadneSpan(_, span))
+            &Self::RegexBuild(AriadneSpan(_, span), _)
+            | &Self::RegexExec(AriadneSpan(_, span), _)
+            | &Self::ArrayUseOfScalar(AriadneSpan(_, span))
             | &Self::ScalarUseOfArrary(AriadneSpan(_, span))
             | &Self::DivByZeroAttempted(AriadneSpan(_, span), _)
             | &Self::UnknownIndFunction(AriadneSpan(_, span), _)
@@ -116,5 +125,17 @@ fn quacks_like_a_float(val: &str) -> Cow<'_, str> {
         val.into()
     } else {
         format!("{val:?}").into()
+    }
+}
+
+impl From<(AriadneSpan, BuildError)> for InterpreterError {
+    fn from((span, err): (AriadneSpan, BuildError)) -> Self {
+        Self::RegexBuild(span, err)
+    }
+}
+
+impl From<(AriadneSpan, MatchError)> for InterpreterError {
+    fn from((span, err): (AriadneSpan, MatchError)) -> Self {
+        Self::RegexExec(span, err)
     }
 }

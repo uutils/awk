@@ -9,9 +9,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use ahash::RandomState;
 use bumpalo::Bump;
-use hashbrown::HashMap;
 use indexmap_allocator_api::IndexMap;
-use parser::Identifier;
+use parser::{Identifier, Span};
 
 use crate::{
     ir::NonLocal,
@@ -29,7 +28,7 @@ pub struct SymbolTable<'a> {
     pub(super) user: RawSymbolTable<'a, Value<'a>>,
     pub(super) functions: RawSymbolTable<'a, Option<Function>>,
     // separate table for cheap invalidation. It's an arena _visibly shrugs_.
-    pub(super) records: HashMap<usize, Value<'a>, RandomState, &'a Bump>,
+    pub(super) fields: Option<Vec<Span>>,
 
     // Built-in variables as dedicated fields. `ENVIRON`, `PROCINFO`, `SYMTAB`, and
     // `FUNCTAB` are intentionally omitted — they will be separate instructions.
@@ -154,7 +153,7 @@ impl<'a> SymbolTable<'a> {
         Self {
             user: RawSymbolTable::new_in(arena),
             functions: RawSymbolTable::new_in(arena),
-            records: HashMap::with_hasher_in(RandomState::new(), arena),
+            fields: None,
             // Static / well-known defaults; I/O-driven values stay at their
             // pre-input zeros/empties until the reader wires them up.
             argc: Value::Int(0),
@@ -256,13 +255,6 @@ impl<'a> SymbolTable<'a> {
     #[inline(always)]
     pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> NonLocal {
         self.functions.register(name, None, bump)
-    }
-
-    #[inline(always)]
-    pub fn record(&self, value: Value<'a>) -> &Value<'a> {
-        self.records
-            .get(&(value.to_num() as usize))
-            .unwrap_or(&Value::Unassigned)
     }
 }
 

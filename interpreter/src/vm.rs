@@ -18,13 +18,16 @@ pub mod types;
 use std::{
     fmt::{self, Display},
     io::{self, Write},
+    iter::once,
     mem::MaybeUninit,
     ops::Range,
     vec::Vec as StdVec,
 };
 
 use bumpalo::{Bump, collections::Vec};
-use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection};
+use itertools::Itertools;
+use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection, Span};
+pub use symbols::SymbolTable;
 
 use crate::{
     InterpreterError,
@@ -34,7 +37,6 @@ use crate::{
     },
     vm::types::Value,
 };
-pub use symbols::SymbolTable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecMode {
@@ -49,10 +51,11 @@ pub struct Interpreter<'a> {
     code_end: IxWidth,
     registers: Registers<'a>,
     pub(crate) symbols: SymbolTable<'a>,
+    pub(crate) record: StdVec<u8>,
     consts: Consts<'a>,
     mode: ExecMode,
     frames: StdVec<CallFrame>,
-    metadata: MetadataStore<AriadneSpan>,
+    metadata: BytecodeMetadata,
 }
 
 pub struct CallFrame {
@@ -109,6 +112,9 @@ struct Place {
     ty: PlaceTy,
 }
 
+#[repr(transparent)]
+struct BytecodeMetadata(MetadataStore<AriadneSpan>);
+
 impl<'a> Interpreter<'a> {
     pub fn new(mode: ExecMode, code: CodeGen<'a>, metadata: MetadataStore<AriadneSpan>) -> Self {
         let n_regs = code.regs.hwm as usize + 1;
@@ -117,10 +123,11 @@ impl<'a> Interpreter<'a> {
             code_end: 0,
             registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs + 1]),
             symbols: code.symbols,
+            record: String::from("Foo bar baz").into_bytes(),
             consts: code.consts,
             mode,
             frames: StdVec::new(),
-            metadata,
+            metadata: BytecodeMetadata(metadata),
         }
     }
 }
@@ -149,7 +156,11 @@ impl<'a> Interpreter<'a> {
             && self.program_counter < self.code_end
         {
             match instr {
-                Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
+                Instruction::Record { dest, arg, ty } => {
+                    let val = self.get_val(arg, ty, metadata, Value::to_int)?;
+                    let val = self.field(val, metadata)?.clone();
+                    self.write_reg(dest, val);
+                }
                 Instruction::Negation { dest, arg, ty } => {
                     let val = self.get_val(arg, ty, metadata, Value::to_bool)?;
                     self.write_reg(dest, !val);
@@ -355,7 +366,9 @@ impl<'a> Interpreter<'a> {
                     }
                 }
                 Instruction::OutputCall { start, end, cmd, redir } => {
-                    return Ok(Signal::Suspend(self.print_req(start, end, cmd, redir)));
+                    return Ok(Signal::Suspend(
+                        self.print_req(start, end, cmd, redir, metadata)?,
+                    ));
                 }
                 Instruction::UserCall { dest, start, end, name } => {
                     self.user_call(dest, start, end, name, metadata)?;
@@ -564,14 +577,15 @@ impl<'a> Interpreter<'a> {
         end: Reg,
         fun: Command,
         redir: Option<Redirection>,
-    ) -> IoRequest {
+        md: &[MetaId],
+    ) -> Result<IoRequest, InterpreterError> {
         let Command::Print = fun else { todo!() };
         let None = redir else { todo!() };
         let mut buf = StdVec::with_capacity(64);
         let range = self.registers.get_range(start..end, self.reg_offset());
 
         if range.is_empty() {
-            let record = self.symbols.record(Value::Float(0.));
+            let record = self.field(0, md)?;
             let _ = write!(buf, "{record}");
         } else {
             let mut range = range.iter();
@@ -584,7 +598,7 @@ impl<'a> Interpreter<'a> {
         }
         let _ = write!(buf, "{ors}", ors = self.symbols.ors);
 
-        IoRequest::WriteStdout(buf)
+        Ok(IoRequest::WriteStdout(buf))
     }
 
     /// Join index register values with `SUBSEP` into an array key (gawk-compatible).
@@ -646,8 +660,46 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
+    pub fn field_regex_split(&mut self, md: &[MetaId]) -> Result<&[Span], InterpreterError> {
+        let len = self.record.len();
+        let buf = self.symbols.fields.get_or_insert_default();
+        buf.clear();
+
+        // Aren't iterators beautiful?
+        regex::automaton(self.symbols.fs.to_string().as_bytes(), self.mode, false)
+            .map_err(|e| self.metadata.err_with(md, self.program_counter, |s| (s, e)))?
+            .find_iter(&self.record)
+            .map(|m| m.map(Span::from))
+            .process_results(|matches| {
+                buf.extend(
+                    once(Span::from(0..0))
+                        .chain(matches)
+                        .chain(once(Span::from(len..len)))
+                        .tuple_windows()
+                        .map(|(prev, next)| Span::from(prev.end..next.start)),
+                );
+            })
+            .map_err(|e| self.metadata.err_with(md, self.program_counter, |s| (s, e)))?;
+
+        Ok(buf)
+    }
+
+    pub fn field(&mut self, n: isize, metadata: &[MetaId]) -> Result<Value<'a>, InterpreterError> {
+        if n == 0 {
+            return Ok(Value::String(self.record.clone().into()));
+        }
+        Ok(match self.symbols.fields {
+            Some(ref fields) => fields,
+            None => self.field_regex_split(metadata)?,
+        }
+        .get((n - 1) as usize)
+        .copied()
+        .and_then(|s| self.record.get(s).map(|f| Value::String(f.to_vec().into())))
+        .unwrap_or(Value::Unassigned))
+    }
+
     fn get_span(&self, metadata: &[MetaId]) -> AriadneSpan {
-        self.metadata[metadata[self.program_counter as usize]].clone()
+        self.metadata.0[metadata[self.program_counter as usize]].clone()
     }
 }
 
@@ -838,6 +890,17 @@ impl Place {
     #[inline(always)]
     fn write<'a>(self, intrp: &mut Interpreter<'a>, val: Value<'a>) {
         *self.resolve(intrp) = val;
+    }
+}
+
+impl BytecodeMetadata {
+    fn err_with<T: Into<InterpreterError>>(
+        &self,
+        src: &[MetaId],
+        i: IxWidth,
+        err: impl FnOnce(AriadneSpan) -> T,
+    ) -> InterpreterError {
+        err(self.0[src[i as usize]].clone()).into()
     }
 }
 

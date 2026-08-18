@@ -13,6 +13,8 @@
 //! Behavior follows the [gawk built-in function](https://www.gnu.org/software/gawk/manual/html_node/Built_002din.html)
 //! documentation. Non-trivial builtins are stubbed with `todo!` until implemented.
 
+use std::borrow::Cow;
+
 use parser::{AriadneSpan, BuiltinFunction};
 
 use crate::{
@@ -112,7 +114,7 @@ impl<'a> Interpreter<'a> {
             [] => {
                 // `length()` — length of `$0`. Unassigned/`$0` before input → 0.
                 Ok(Value::Float(
-                    value_length(self.symbols.record(Value::Int(0))) as f64,
+                    value_length(&Value::String(Cow::Borrowed(&self.record))) as f64,
                 ))
             }
             [v] => Ok(Value::Float(value_length(v) as f64)),
