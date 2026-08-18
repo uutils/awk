@@ -322,8 +322,36 @@ impl<'a> Interpreter<'a> {
                     place.write(self, val.clone());
                     self.write_reg(dest, val);
                 }
-                Instruction::StoreR { dest: _, src: _, arg: _, ty: _, tys: _ } => {
-                    todo!()
+                Instruction::StoreR { dest, src, arg, ty, tys } => {
+                    let place = self.get_val(src, tys, metadata, Value::to_int)?;
+                    let place = usize::try_from(place).unwrap(); // TODO: error handle
+                    let val = self.get_val(arg, ty, metadata, Value::clone)?;
+
+                    self.field_regex_split(metadata)?;
+                    let n_fields = self.symbols.fields.as_ref().unwrap().len();
+                    let ofs = self.symbols.ofs.clone();
+                    let mut buf = StdVec::new();
+                    {
+                        let mut fields_iter = self.fields_iter(metadata)?;
+                        for i in 0..n_fields.max(place) {
+                            let old_field = fields_iter.next();
+
+                            if i > 0 {
+                                let _ = write!(buf, "{ofs}");
+                            }
+
+                            if i == place - 1 {
+                                let _ = write!(buf, "{val}");
+                            } else if let Some(f) = old_field {
+                                buf.extend_from_slice(f);
+                            }
+                        }
+                    }
+
+                    self.record = buf;
+                    self.symbols.fields.take();
+
+                    self.write_reg(dest, val);
                 }
                 Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
                     let key = self.make_array_key(start, end);
@@ -696,6 +724,21 @@ impl<'a> Interpreter<'a> {
         .copied()
         .and_then(|s| self.record.get(s).map(|f| Value::String(f.to_vec().into())))
         .unwrap_or(Value::Unassigned))
+    }
+
+    pub fn fields_iter(
+        &mut self,
+        metadata: &[MetaId],
+    ) -> Result<impl Iterator<Item = &[u8]>, InterpreterError> {
+        Ok(if let Some(ref fields) = self.symbols.fields {
+            fields
+        } else {
+            self.field_regex_split(metadata)?;
+            self.symbols.fields.as_ref().unwrap()
+        }
+        .iter()
+        .copied()
+        .map(|s| &self.record[s]))
     }
 
     fn get_span(&self, metadata: &[MetaId]) -> AriadneSpan {
