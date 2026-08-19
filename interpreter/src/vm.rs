@@ -151,7 +151,7 @@ impl<'a> Interpreter<'a> {
             && self.program_counter < self.code_end
         {
             match instr {
-                Instruction::Record { dest, arg, ty } => {
+                Instruction::LoadF { dest, arg, ty } => {
                     let place = self.get_val(arg, ty, metadata, Value::to_int)?;
                     let place = usize::try_from(place).unwrap(); // TODO: error handle
                     let val = match self.record.get_val(place, &mut self.symbols, self.mode) {
@@ -321,14 +321,15 @@ impl<'a> Interpreter<'a> {
                     place.write(self, val.clone());
                     self.write_reg(dest, val);
                 }
-                Instruction::StoreR { dest, src, arg, ty, tys } => {
+                Instruction::StoreF { dest, src, arg, ty, tys } => {
                     let place = self.get_val(src, tys, metadata, Value::to_int)?;
                     let place = usize::try_from(place).unwrap(); // TODO: error handle
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
 
                     self.record
                         .write_field(val.clone(), place, &mut self.symbols, self.mode)
-                        .unwrap();
+                        .map_err(|e| InterpreterError::Regex(self.get_span(metadata), e))?;
+
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
@@ -825,7 +826,6 @@ impl Place {
             PlaceTy::Reg => intrp.read_reg_mut(unsafe { self.arg.reg }),
             PlaceTy::UsVal | PlaceTy::UaVal => intrp.symbols.user_mut(unsafe { self.arg.sym }),
             PlaceTy::IsVal | PlaceTy::IaVal => todo!("intrinsic var place"),
-            PlaceTy::Rec => todo!(),
         }
     }
 
@@ -835,7 +835,8 @@ impl Place {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg(unsafe { self.arg.reg }),
             PlaceTy::UsVal | PlaceTy::UaVal => intrp.symbols.user(unsafe { self.arg.sym }),
-            _ => todo!(),
+            PlaceTy::IsVal => todo!(),
+            PlaceTy::IaVal => todo!(),
         }
     }
 

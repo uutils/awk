@@ -117,7 +117,7 @@ impl<'a> CodeGen<'a> {
         } else {
             self.scoped_reg(|this, reg| {
                 let (arg, ty) = TypedArg::new_imm(0).into_arg();
-                this.emit(Instruction::Record { dest: reg, arg, ty });
+                this.emit(Instruction::LoadF { dest: reg, arg, ty });
 
                 this.emit(Instruction::OutputCall {
                     start: reg,
@@ -518,7 +518,8 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
                 TypedArg::new_reg(dest)
             }
-            _ => todo!(),
+            Atom::BigInt() => todo!(),
+            Atom::BigFloat() => todo!(),
         }
     }
 
@@ -592,7 +593,7 @@ impl<'a> CodeGen<'a> {
                         // Use optimized path for variables and records. Cannot
                         // be used for arrays because the stores aren't trivial.
                         ExprNode::UnaryPlaceOperation(op, place)
-                            if matches!(place, Place::Record(_) | Place::Variable(_)) =>
+                            if matches!(place, Place::Variable(_)) =>
                         {
                             let (arg, ty) = this.load_place(dest, place).into_place();
                             match op {
@@ -730,8 +731,11 @@ impl<'a> CodeGen<'a> {
 
     fn load_place(&mut self, dest: Reg, place: &Place<'_>) -> TypedPlace {
         match place {
-            Place::Record(_) => {
-                todo!()
+            Place::Record(expr) => {
+                self.lower_expr_into(expr, dest);
+                let (arg, ty) = TypedArg::new_reg(dest).into_arg();
+                self.emit(Instruction::LoadF { dest, arg, ty });
+                TypedPlace::new_reg(dest)
             }
             Place::Variable(Variable::User(ident)) => TypedPlace::new_us(self, ident),
             Place::Variable(var) => TypedPlace::new_is(var),
@@ -761,7 +765,7 @@ impl<'a> CodeGen<'a> {
             Place::Record(expr) => {
                 let rec = self.lower_expr(expr);
                 let (src, tys) = rec.to_arg().into_arg();
-                self.emit(Instruction::StoreR { dest, src, tys, arg, ty });
+                self.emit(Instruction::StoreF { dest, src, tys, arg, ty });
                 rec.free(self);
             }
             Place::Variable(Variable::User(ident)) => {
@@ -1040,7 +1044,7 @@ impl Instruction {
     pub(super) fn from_unary(op: UnaryOperator, dest: Reg, arg: TypedArg) -> Self {
         let (arg, ty) = arg.into_arg();
         match op {
-            UnaryOperator::Record => Self::Record { dest, arg, ty },
+            UnaryOperator::Record => Self::LoadF { dest, arg, ty },
             UnaryOperator::Negation => Self::Negation { dest, arg, ty },
             UnaryOperator::ToInt => Self::ToInt { dest, arg, ty },
             UnaryOperator::Negative => Self::Negative { dest, arg, ty },

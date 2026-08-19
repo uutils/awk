@@ -40,7 +40,7 @@ pub struct Label(pub IxWidth);
 #[derive(Clone, Copy)]
 pub enum Instruction {
     // Unary operations
-    Record { dest: Reg, arg: Arg, ty: ArgTy },
+    LoadF { dest: Reg, arg: Arg, ty: ArgTy },
     Negation { dest: Reg, arg: Arg, ty: ArgTy },
     ToInt { dest: Reg, arg: Arg, ty: ArgTy },
     Negative { dest: Reg, arg: Arg, ty: ArgTy },
@@ -73,7 +73,7 @@ pub enum Instruction {
 
     // Intrinsic operations
     StoreS { dest: Reg, ty_place: PlaceTy, var: NonLocal, arg: Arg, ty: ArgTy },
-    StoreR { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
+    StoreF { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: PlaceTy, tyr: ArgTy },
     LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     InA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
@@ -117,7 +117,6 @@ pub union Arg {
 pub enum ArgTy {
     Reg,
     Imm,
-    Rec,
     Cnt,
     UsVal,
     UaVal,
@@ -129,7 +128,6 @@ pub enum ArgTy {
 #[repr(u8)]
 pub enum PlaceTy {
     Reg = ArgTy::Reg as u8,
-    Rec = ArgTy::Rec as u8,
     UsVal = ArgTy::UsVal as u8,
     UaVal = ArgTy::UaVal as u8,
     IsVal = ArgTy::IsVal as u8,
@@ -216,7 +214,6 @@ impl From<PlaceTy> for ArgTy {
     fn from(value: PlaceTy) -> Self {
         match value {
             PlaceTy::Reg => Self::Reg,
-            PlaceTy::Rec => Self::Rec,
             PlaceTy::UsVal => Self::UsVal,
             PlaceTy::UaVal => Self::UaVal,
             PlaceTy::IsVal => Self::IsVal,
@@ -242,7 +239,6 @@ impl TryFrom<ArgTy> for PlaceTy {
     #[inline(always)]
     fn try_from(value: ArgTy) -> Result<Self, Self::Error> {
         match value {
-            ArgTy::Rec => Ok(Self::Rec),
             ArgTy::Reg => Ok(Self::Reg),
             ArgTy::UsVal => Ok(Self::UsVal),
             ArgTy::UaVal => Ok(Self::UaVal),
@@ -268,7 +264,7 @@ impl Display for Instruction {
             _ => write!(f, "{sep}{ty}({})", unsafe { arg.sym }),
         };
         match self {
-            Self::Record { dest, arg, ty }
+            Self::LoadF { dest, arg, ty }
             | Self::Negation { dest, arg, ty }
             | Self::ToInt { dest, arg, ty }
             | Self::Negative { dest, arg, ty }
@@ -314,7 +310,7 @@ impl Display for Instruction {
                 write!(f, "{dest} <- {op} {ty_place}({var})")?;
                 fmt_arg(f, arg, ty, ", ")
             }
-            Self::StoreR { dest, src, arg, ty, tys } => {
+            Self::StoreF { dest, src, arg, ty, tys } => {
                 write!(f, "{dest} <- {op} $(")?;
                 fmt_arg(f, src, tys, "")?;
                 fmt_arg(f, arg, ty, "), ")
@@ -381,7 +377,7 @@ impl Display for Instruction {
 impl Instruction {
     fn display_name(self) -> &'static str {
         match self {
-            Self::Record { .. } => "rec",
+            Self::LoadF { .. } => "fload",
             Self::Negation { .. } => "not",
             Self::ToInt { .. } => "int",
             Self::Negative { .. } => "neg",
@@ -405,7 +401,7 @@ impl Instruction {
             Self::Raise { .. } => "pow",
             Self::Modulo { .. } => "mod",
             Self::StoreS { .. } => "sstore",
-            Self::StoreR { .. } => "rstore",
+            Self::StoreF { .. } => "fstore",
             Self::StoreA { .. } => "astore",
             Self::LoadA { .. } => "aload",
             Self::LoadM { .. } => "mload",
@@ -453,7 +449,6 @@ impl Display for ArgTy {
         match self {
             Self::Reg => write!(f, "r"),
             Self::Imm => write!(f, "imm"),
-            Self::Rec => write!(f, "$"),
             Self::Cnt => write!(f, "mem"),
             Self::UsVal => write!(f, "us"),
             Self::UaVal => write!(f, "ua"),
