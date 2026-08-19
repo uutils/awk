@@ -811,9 +811,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "minrx"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43953429a8ba9b996a37c2fabd63526e7d945ae74f9142081f618da9541c821b"
+checksum = "daf6d52cc25a5023c952ef4e392db6177c73762090a1cafb6883c195cfcf8732"
 dependencies = [
  "minrx-sys",
 ]
