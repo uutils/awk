@@ -5,17 +5,20 @@
 
 //! TODO: `SYMTAB`, `FUNCTAB`, `PROCINFO` magic, auto-set variables.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, io::Write, iter::once, mem::take, rc::Rc};
 
 use ahash::RandomState;
 use bumpalo::Bump;
 use indexmap_allocator_api::IndexMap;
+use itertools::Itertools;
+use minrx::RegexError;
 use parser::{Identifier, Span};
 
 use crate::{
+    ExecMode,
     ir::NonLocal,
     vm::{
-        Function,
+        Function, regex,
         types::{ArrayMap, Value},
     },
 };
@@ -27,9 +30,6 @@ pub(super) struct RawSymbolTable<'a, T>(IndexMap<Identifier<'a>, T, RandomState,
 pub struct SymbolTable<'a> {
     pub(super) user: RawSymbolTable<'a, Value<'a>>,
     pub(super) functions: RawSymbolTable<'a, Option<Function>>,
-    // separate table for cheap invalidation. It's an arena _visibly shrugs_.
-    pub(super) fields: Option<Vec<Span>>,
-
     // Built-in variables as dedicated fields. `ENVIRON`, `PROCINFO`, `SYMTAB`, and
     // `FUNCTAB` are intentionally omitted — they will be separate instructions.
     /// Number of elements in `ARGV`. Set from the CLI at startup; the program may
@@ -103,6 +103,12 @@ pub struct SymbolTable<'a> {
     pub(super) textdomain: Value<'a>,
 }
 
+#[derive(Debug, Default)]
+pub struct Record {
+    raw: Vec<u8>,
+    fields: Option<Vec<Span>>,
+}
+
 impl<'a, T> RawSymbolTable<'a, T> {
     pub(super) fn new_in(arena: &'a Bump) -> Self {
         Self(IndexMap::new_in(arena))
@@ -153,7 +159,6 @@ impl<'a> SymbolTable<'a> {
         Self {
             user: RawSymbolTable::new_in(arena),
             functions: RawSymbolTable::new_in(arena),
-            fields: None,
             // Static / well-known defaults; I/O-driven values stay at their
             // pre-input zeros/empties until the reader wires them up.
             argc: Value::Int(0),
@@ -197,7 +202,7 @@ impl<'a> SymbolTable<'a> {
         for arg in args {
             map.insert(
                 n.to_string(),
-                Value::String(std::borrow::Cow::Owned(arg.as_ref().to_vec())),
+                Value::String(Cow::Owned(arg.as_ref().to_vec())),
             );
             n += 1;
         }
@@ -255,6 +260,134 @@ impl<'a> SymbolTable<'a> {
     #[inline(always)]
     pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> NonLocal {
         self.functions.register(name, None, bump)
+    }
+}
+
+impl Record {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    // TODO: wire in FPAT and non-regex split, etc.
+    fn split_fields_raw(
+        &mut self,
+        symbols: &mut SymbolTable<'_>,
+        mode: ExecMode,
+    ) -> Result<&mut Vec<Span>, RegexError> {
+        match self.fields {
+            Some(ref mut fields) => Ok(fields),
+            None => self.fs_regex_split(symbols, mode),
+        }
+    }
+
+    fn fs_regex_split(
+        &mut self,
+        symbols: &mut SymbolTable<'_>,
+        mode: ExecMode,
+    ) -> Result<&mut Vec<Span>, RegexError> {
+        let len = self.raw.len();
+        let buf = self.fields.get_or_insert_default();
+        buf.clear();
+        buf.push(Span::from(0..self.raw.len())); // $0
+
+        // Aren't iterators beautiful?
+        regex::automaton(symbols.fs.to_string().as_bytes(), mode, false)?
+            .find_iter(&self.raw)
+            .map(|m| m.map(Span::from))
+            .process_results(|matches| {
+                buf.extend(
+                    once(Span::from(0..0))
+                        .chain(matches)
+                        .chain(once(Span::from(len..len)))
+                        .tuple_windows()
+                        .map(|(prev, next)| Span::from(prev.end..next.start)),
+                );
+            })?;
+
+        symbols.nf = Value::Int(buf.len() as isize - 1);
+        Ok(buf)
+    }
+
+    fn get_raw(
+        &mut self,
+        n: usize,
+        symbols: &mut SymbolTable<'_>,
+        mode: ExecMode,
+    ) -> Result<Option<&[u8]>, RegexError> {
+        self.split_fields_raw(symbols, mode)?;
+        Ok((|| self.raw.get(*self.fields.as_ref()?.get(n)?))()) // try blocks at home
+    }
+
+    pub fn get_val<'a>(
+        &mut self,
+        n: usize,
+        symbols: &mut SymbolTable<'a>,
+        mode: ExecMode,
+    ) -> Result<Value<'a>, RegexError> {
+        self.get_raw(n, symbols, mode).map(|val| match val {
+            Some(val) => Value::String(val.to_vec().into()),
+            None => Value::Unassigned,
+        })
+    }
+
+    pub fn write_field(
+        &mut self,
+        val: Value<'_>,
+        n: usize,
+        symbols: &mut SymbolTable<'_>,
+        mode: ExecMode,
+    ) -> Result<(), RegexError> {
+        if n == 0 {
+            self.fields = None;
+            match val {
+                Value::String(Cow::Owned(s)) => {
+                    self.raw = s;
+                }
+                Value::String(Cow::Borrowed(s)) => {
+                    self.raw.clear();
+                    self.raw.extend_from_slice(s);
+                }
+                val => {
+                    self.raw.clear();
+                    let _ = write!(self.raw, "{val}");
+                }
+            }
+            return Ok(());
+        }
+
+        let mut fields = take(self.split_fields_raw(symbols, mode)?);
+        if n >= fields.len() {
+            fields.resize(n + 1, Span::from(self.raw.len()..self.raw.len()));
+        }
+        let mut buf = Vec::with_capacity(
+            self.raw.len() + val.string_size_hint() + symbols.ofs.string_size_hint(),
+        );
+
+        let mut first = true;
+        for (i, span) in fields.iter_mut().enumerate().skip(1) {
+            if !first {
+                let _ = write!(buf, "{ofs}", ofs = symbols.ofs);
+            }
+            first = false;
+
+            let start = buf.len();
+            if i == n {
+                let _ = write!(buf, "{val}");
+            } else {
+                buf.extend_from_slice(&self.raw()[*span]);
+            }
+            *span = Span::from(start..buf.len());
+        }
+        fields[0] = Span::from(0..buf.len());
+        symbols.nf = Value::Int(fields.len() as isize - 1);
+
+        self.raw = buf;
+        self.fields = Some(fields);
+        Ok(())
+    }
+
+    pub fn raw(&self) -> &[u8] {
+        &self.raw
     }
 }
 

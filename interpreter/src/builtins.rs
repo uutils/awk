@@ -114,7 +114,7 @@ impl<'a> Interpreter<'a> {
             [] => {
                 // `length()` — length of `$0`. Unassigned/`$0` before input → 0.
                 Ok(Value::Float(
-                    value_length(&Value::String(Cow::Borrowed(&self.record))) as f64,
+                    value_length(&Value::String(Cow::Borrowed(self.record.raw()))) as f64,
                 ))
             }
             [v] => Ok(Value::Float(value_length(v) as f64)),
