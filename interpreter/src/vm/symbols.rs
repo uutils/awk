@@ -269,18 +269,22 @@ impl Record {
         Self::default()
     }
 
-    // TODO: wire in FPAT and non-regex split, etc.
+    /// Splits the fields if unsplit and grants access to the inner buffer of
+    /// spans of the record.
     fn split_fields_raw(
         &mut self,
         symbols: &mut SymbolTable<'_>,
         mode: ExecMode,
     ) -> Result<&mut Vec<Span>, RegexError> {
+        // TODO: wire in FPAT and non-regex split, etc.
         match self.fields {
             Some(ref mut fields) => Ok(fields),
             None => self.fs_regex_split(symbols, mode),
         }
     }
 
+    /// Splits the record into fields via the regex engine with `FS` as the
+    /// value separator.
     fn fs_regex_split(
         &mut self,
         symbols: &mut SymbolTable<'_>,
@@ -309,16 +313,18 @@ impl Record {
         Ok(buf)
     }
 
+    /// Gets access to the byte span of the `n`th field. Splits if unsplit.
     fn get_raw(
         &mut self,
         n: usize,
         symbols: &mut SymbolTable<'_>,
         mode: ExecMode,
     ) -> Result<Option<&[u8]>, RegexError> {
-        self.split_fields_raw(symbols, mode)?;
-        Ok((|| self.raw.get(*self.fields.as_ref()?.get(n)?))()) // try blocks at home
+        let span = self.split_fields_raw(symbols, mode)?.get(n).copied();
+        Ok(span.and_then(|span| self.raw.get(span)))
     }
 
+    /// Materializes the value of the `n`th field. Splits the fields if unsplit.
     pub fn get_val<'a>(
         &mut self,
         n: usize,
@@ -331,6 +337,9 @@ impl Record {
         })
     }
 
+    /// Overwrites the `n`th field with `val`, and reconstructs the record with
+    /// `OFS` as the field separator. Also updates the inner field spans; this
+    /// is load-bearing since field-splitting isn't necessarily idempotent.
     pub fn write_field(
         &mut self,
         val: Value<'_>,
@@ -346,11 +355,14 @@ impl Record {
         }
     }
 
+    /// Rewrites the entire record and invalidates the field splits.
     fn write_record_raw(&mut self, val: Value<'_>) {
         self.fields = None;
         val.move_string_into(&mut self.raw);
     }
 
+    /// Writes to a field and reconstructs the record. Check the doc comment of
+    /// the public function for more details.
     fn write_field_raw(
         &mut self,
         val: Value<'_>,
@@ -359,15 +371,18 @@ impl Record {
         mode: ExecMode,
     ) -> Result<(), RegexError> {
         let mut fields = take(self.split_fields_raw(symbols, mode)?);
+        // If writing out-of-bounds, we grow the record by one OFS each and
+        // materialize empty fields. This is partly why re-splitting isn't
+        // idempotent, as a regex engine could eat up the consecutive FSs.
         if n >= fields.len() {
-            fields.resize(n + 1, Span::from(self.raw.len()..self.raw.len()));
+            let len = self.raw.len();
+            fields.resize(n + 1, Span::from(len..len));
         }
-        let mut buf = Vec::with_capacity(
-            self.raw.len() + val.string_size_hint() + symbols.ofs.string_size_hint(),
-        );
 
         let mut ofs = SmallVec::<[u8; 16]>::new();
         let _ = write!(ofs, "{}", symbols.ofs);
+        let mut buf = Vec::with_capacity(self.raw.len() + val.string_size_hint() + ofs.len());
+
         for (i, span) in fields.iter_mut().enumerate().skip(1) {
             if i > 1 {
                 buf.extend_from_slice(&ofs);
@@ -375,7 +390,7 @@ impl Record {
 
             let start = buf.len();
             if i == n {
-                let _ = write!(buf, "{val}");
+                val.write_string(&mut buf);
             } else {
                 buf.extend_from_slice(&self.raw()[*span]);
             }
@@ -389,6 +404,7 @@ impl Record {
         Ok(())
     }
 
+    /// Grants access to the record's byte slice.
     pub fn raw(&self) -> &[u8] {
         &self.raw
     }
