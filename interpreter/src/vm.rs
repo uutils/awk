@@ -17,7 +17,7 @@ pub mod types;
 
 use std::{
     fmt::{self, Display},
-    io::{self, Write},
+    io::{Result as IoResult, Write},
     mem::MaybeUninit,
     ops::Range,
     vec::Vec as StdVec,
@@ -35,6 +35,8 @@ use crate::{
     },
     vm::{symbols::Record, types::Value},
 };
+
+pub type Result<T, E = InterpreterError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecMode {
@@ -80,6 +82,7 @@ pub enum CtrlSig {
 #[derive(Debug)]
 pub enum IoRequest {
     WriteStdout(StdVec<u8>),
+    WriteStderr(StdVec<u8>),
 }
 
 #[derive(Debug)]
@@ -135,18 +138,14 @@ impl<'a> Consts<'a> {
 
 impl<'a> Interpreter<'a> {
     #[inline(always)]
-    pub fn run_code(&mut self, bc: &Bytecode, span: CodeRange) -> Result<Signal, InterpreterError> {
+    pub fn run_code(&mut self, bc: &Bytecode, span: CodeRange) -> Result<Signal> {
         self.program_counter = span.0.start;
         self.code_end = span.0.end;
 
         self.run_chunk(&bc.code, &bc.metadata)
     }
 
-    fn run_chunk(
-        &mut self,
-        bytecode: &[Instruction],
-        metadata: &[MetaId],
-    ) -> Result<Signal, InterpreterError> {
+    fn run_chunk(&mut self, bytecode: &[Instruction], metadata: &[MetaId]) -> Result<Signal> {
         while let Some(&instr) = bytecode.get(self.program_counter as usize)
             && self.program_counter < self.code_end
         {
@@ -439,7 +438,7 @@ impl<'a> Interpreter<'a> {
         ty: ArgTy,
         metadata: &[MetaId],
         f: impl FnOnce(&Value<'a>) -> T,
-    ) -> Result<T, InterpreterError> {
+    ) -> Result<T> {
         match arg.get_val(ty, self, &mut MaybeUninit::uninit()) {
             Some(x) => Ok(f(x)),
             None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
@@ -456,7 +455,7 @@ impl<'a> Interpreter<'a> {
         tyr: ArgTy,
         metadata: &[MetaId],
         f: impl FnOnce(&Value<'a>, &Value<'a>) -> T,
-    ) -> Result<T, InterpreterError> {
+    ) -> Result<T> {
         match Arg::get_val2(lhs, tyl, rhs, tyr, self, f) {
             Some(x) => Ok(x),
             None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
@@ -468,7 +467,7 @@ impl<'a> Interpreter<'a> {
         place: Place,
         key: String,
         metadata: &[MetaId],
-    ) -> Result<Value<'a>, InterpreterError> {
+    ) -> Result<Value<'a>> {
         place
             .array(self)
             .and_then(|arr| arr.get_array_elem(key))
@@ -480,7 +479,7 @@ impl<'a> Interpreter<'a> {
         place: Place,
         key: String,
         metadata: &[MetaId],
-    ) -> Result<Value<'a>, InterpreterError> {
+    ) -> Result<Value<'a>> {
         place
             .array(self)
             .and_then(|arr| arr.array_elem_mdim(key))
@@ -493,19 +492,14 @@ impl<'a> Interpreter<'a> {
         key: String,
         val: Value<'a>,
         metadata: &[MetaId],
-    ) -> Result<(), InterpreterError> {
+    ) -> Result<()> {
         place
             .array(self)
             .and_then(|arr| arr.set_array_elem(key, val))
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
-    fn has_array_elem(
-        &mut self,
-        place: Place,
-        key: String,
-        metadata: &[MetaId],
-    ) -> Result<bool, InterpreterError> {
+    fn has_array_elem(&mut self, place: Place, key: String, metadata: &[MetaId]) -> Result<bool> {
         place
             .array(self)
             .and_then(|arr| arr.has_array_elem(key))
@@ -519,7 +513,7 @@ impl<'a> Interpreter<'a> {
         ty: PlaceTy,
         metadata: &[MetaId],
         f: impl FnOnce(&Value<'a>) -> T,
-    ) -> Result<T, InterpreterError> {
+    ) -> Result<T> {
         match Place::new(arg, ty).array(self) {
             Some(val) => Ok(f(val)),
             None => Err(InterpreterError::ArrayUseOfScalar(self.get_span(metadata))),
@@ -570,8 +564,8 @@ impl<'a> Interpreter<'a> {
         &mut self,
         bytecode: &Bytecode,
         _req: IoRequest,
-        _res: io::Result<IoResponse>,
-    ) -> io::Result<Result<Signal, InterpreterError>> {
+        _res: IoResult<IoResponse>,
+    ) -> IoResult<Result<Signal>> {
         self.program_counter += 1;
         Ok(self.run_chunk(&bytecode.code, &bytecode.metadata))
     }
@@ -624,7 +618,7 @@ impl<'a> Interpreter<'a> {
         end: Reg,
         name: NonLocal,
         metadata: &[MetaId],
-    ) -> Result<(), InterpreterError> {
+    ) -> Result<()> {
         let reg_offset = start.0 as IxWidth + self.reg_offset();
         let Some(&Some(Function { arity, hwm_regs, ref code })) =
             self.symbols.functions.get_index(name)
