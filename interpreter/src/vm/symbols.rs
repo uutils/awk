@@ -339,23 +339,25 @@ impl Record {
         mode: ExecMode,
     ) -> Result<(), RegexError> {
         if n == 0 {
-            self.fields = None;
-            match val {
-                Value::String(Cow::Owned(s)) => {
-                    self.raw = s;
-                }
-                Value::String(Cow::Borrowed(s)) => {
-                    self.raw.clear();
-                    self.raw.extend_from_slice(s);
-                }
-                val => {
-                    self.raw.clear();
-                    let _ = write!(self.raw, "{val}");
-                }
-            }
-            return Ok(());
+            self.write_record_raw(val);
+            Ok(())
+        } else {
+            self.write_field_raw(val, n, symbols, mode)
         }
+    }
 
+    fn write_record_raw(&mut self, val: Value<'_>) {
+        self.fields = None;
+        val.move_string_into(&mut self.raw);
+    }
+
+    fn write_field_raw(
+        &mut self,
+        val: Value<'_>,
+        n: usize,
+        symbols: &mut SymbolTable<'_>,
+        mode: ExecMode,
+    ) -> Result<(), RegexError> {
         let mut fields = take(self.split_fields_raw(symbols, mode)?);
         if n >= fields.len() {
             fields.resize(n + 1, Span::from(self.raw.len()..self.raw.len()));
@@ -366,12 +368,10 @@ impl Record {
 
         let mut ofs = SmallVec::<[u8; 16]>::new();
         let _ = write!(ofs, "{}", symbols.ofs);
-        let mut first = true;
         for (i, span) in fields.iter_mut().enumerate().skip(1) {
-            if !first {
+            if i > 1 {
                 buf.extend_from_slice(&ofs);
             }
-            first = false;
 
             let start = buf.len();
             if i == n {

@@ -149,15 +149,33 @@ impl<'a> Value<'a> {
         })
     }
 
-    pub fn write_string(&self, f: &mut Vec<u8>) {
+    pub fn write_string(&self, out: &mut Vec<u8>) {
         match self {
-            Self::String(s) | Self::Regex(s) => f.extend_from_slice(s),
-            Self::Float(n) => write!(f, "{n}").unwrap(),
-            Self::Int(n) => write!(f, "{n}").unwrap(),
-            &Self::Bool(false) => f.push(b'0'),
-            &Self::Bool(true) => f.push(b'1'),
+            Self::String(s) | Self::Regex(s) => out.extend_from_slice(s),
+            Self::Float(n) => write!(out, "{n}").unwrap(),
+            Self::Int(n) => write!(out, "{n}").unwrap(),
+            &Self::Bool(false) => out.push(b'0'),
+            &Self::Bool(true) => out.push(b'1'),
             Self::Array(_) => panic!("Attempted to use array in scalar context!"),
             _ => {}
+        }
+    }
+
+    /// Efficiently replaces the contents of `out` with the string form of the
+    /// value. Always reuses either buffer.
+    pub fn move_string_into(self, out: &mut Vec<u8>) {
+        match self {
+            Value::String(Cow::Owned(s)) => {
+                *out = s;
+            }
+            Value::String(Cow::Borrowed(s)) => {
+                out.clear();
+                out.extend_from_slice(s);
+            }
+            _ => {
+                out.clear();
+                self.write_string(out);
+            }
         }
     }
 
