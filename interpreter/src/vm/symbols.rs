@@ -13,6 +13,7 @@ use indexmap_allocator_api::IndexMap;
 use itertools::Itertools;
 use minrx::RegexError;
 use parser::{Identifier, Span};
+use smallvec::SmallVec;
 
 use crate::{
     ExecMode,
@@ -363,10 +364,12 @@ impl Record {
             self.raw.len() + val.string_size_hint() + symbols.ofs.string_size_hint(),
         );
 
+        let mut ofs = SmallVec::<[u8; 16]>::new();
+        let _ = write!(ofs, "{}", symbols.ofs);
         let mut first = true;
         for (i, span) in fields.iter_mut().enumerate().skip(1) {
             if !first {
-                let _ = write!(buf, "{ofs}", ofs = symbols.ofs);
+                buf.extend_from_slice(&ofs);
             }
             first = false;
 
