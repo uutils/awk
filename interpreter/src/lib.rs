@@ -16,7 +16,7 @@ pub use ir::{
 };
 use minrx::RegexError;
 use parser::{AriadneSpan, Diagnostic, DiagnosticStore, Span};
-pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
+pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, Signal, io};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InterpreterError {

@@ -10,7 +10,10 @@ use std::{
     process::exit,
 };
 
-use interpreter::{Bytecode, CodeRange, CtrlSig, Interpreter, IoRequest, IoResponse, Signal};
+use interpreter::{
+    Bytecode, CodeRange, CtrlSig, Interpreter, Signal,
+    io::{FilePath, IoRequest, IoResponse},
+};
 use parser::DiagnosticStore;
 
 use crate::cli::{ArgQueueItem, KeyValue};
@@ -116,9 +119,10 @@ impl<'a> AwkRt<'a> {
 
     fn perform_io(&mut self, req: &IoRequest) -> Result<IoResponse> {
         match req {
-            IoRequest::WriteStdout(buf) => {
+            IoRequest::FileWrite { buf, at: FilePath::Stdout } => {
                 stdout().lock().write_all(buf).map(|_| IoResponse::Empty)
             }
+            _ => todo!(),
         }
     }
 }

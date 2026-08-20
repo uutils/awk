@@ -11,6 +11,7 @@
 
 #![allow(clippy::inline_always)]
 
+pub mod io;
 mod regex;
 mod symbols;
 pub mod types;
@@ -33,7 +34,11 @@ use crate::{
         Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
         lower::{Bytecode, CodeGen},
     },
-    vm::{symbols::Record, types::Value},
+    vm::{
+        io::{FilePath, IoRequest, IoResponse},
+        symbols::Record,
+        types::Value,
+    },
 };
 
 pub type Result<T, E = InterpreterError> = std::result::Result<T, E>;
@@ -77,17 +82,6 @@ pub enum CtrlSig {
     Next,
     NextFile,
     Exit(i32),
-}
-
-#[derive(Debug)]
-pub enum IoRequest {
-    WriteStdout(StdVec<u8>),
-    WriteStderr(StdVec<u8>),
-}
-
-#[derive(Debug)]
-pub enum IoResponse {
-    Empty,
 }
 
 #[derive(Debug)]
@@ -595,7 +589,7 @@ impl<'a> Interpreter<'a> {
         }
         let _ = write!(buf, "{ors}", ors = self.symbols.ors);
 
-        IoRequest::WriteStdout(buf)
+        IoRequest::FileWrite { buf, at: FilePath::Stdout }
     }
 
     /// Join index register values with `SUBSEP` into an array key (gawk-compatible).
