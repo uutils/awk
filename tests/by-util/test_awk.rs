@@ -373,7 +373,7 @@ fn builtin_numeric_and_string_functions() {
                 print tolower("AB")
                 print index("foobar", "bar")
                 print substr("abcdef", 2, 3)
-                print substr("a orange", 2)
+                print substr("orange", 2)
                 print and(7, 3)
                 print or(1, 2, 4)
                 print xor(7, 3)
@@ -388,28 +388,27 @@ fn builtin_numeric_and_string_functions() {
         )
         .succeeds()
         .stdout_only(
-            "\
-3
--3
-2
-3
-0
-AB
-ab
-4
-bcd
- orange
-3
-7
-4
-9007199254740991
-8
-2
-16
-8
-number
-string
-",
+            "3\n\
+            -3\n\
+            2\n\
+            3\n\
+            0\n\
+            AB\n\
+            ab\n\
+            4\n\
+            bcd\n\
+            range\n\
+            3\n\
+            7\n\
+            4\n\
+            9007199254740991\n\
+            8\n\
+            2\n\
+            16\n\
+            8\n\
+            number\n\
+            string\n\
+            ",
         );
 }
 
