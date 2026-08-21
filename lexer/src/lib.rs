@@ -9,11 +9,11 @@ mod tests;
 mod locale_encoding;
 
 use core::str;
-use std::range::Range;
 use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
     ptr::NonNull,
+    range::Range,
     slice::SliceIndex,
 };
 
