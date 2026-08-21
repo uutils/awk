@@ -808,11 +808,11 @@ fn test_parser_concurrent() {
 #[test]
 fn test_parser_namespace_directive() {
     let source = r#"
-        @namespace "myns";
+        @namespace "my_ns";
         function bar() { print }
     "#;
     test_parser!(source => {
-        functions: [("myns::bar", &[], "(body (Print))")],
+        functions: [("my_ns::bar", &[], "(body (Print))")],
     });
 }
 
@@ -900,18 +900,18 @@ fn test_pretty_print_namespace_directive() {
     let arena = Bump::new();
     let parser = arena.alloc(Parser::new(&arena, true));
     let source = r#"
-        @namespace "myns";
+        @namespace "my_ns";
         function bar(x) { print x }
     "#;
     let ast = parser.parse(FileCache(None), source.as_bytes()).unwrap();
     let mut printed = String::new();
     write!(printed, "{ast}").unwrap();
     assert!(
-        printed.contains("@namespace \"myns\""),
+        printed.contains("@namespace \"my_ns\""),
         "pretty-print should restore @namespace directive: {printed}"
     );
     assert!(
-        !printed.contains("myns::"),
+        !printed.contains("my_ns::"),
         "pretty-print should use unqualified names under @namespace: {printed}"
     );
 }
@@ -923,7 +923,7 @@ fn test_pretty_print_namespace_roundtrip() {
     let arena = Bump::new();
     let parser = arena.alloc(Parser::new(&arena, true));
     let source = r#"
-        @namespace "myns";
+        @namespace "my_ns";
         function bar() { x = 1 }
         { print y }
     "#;

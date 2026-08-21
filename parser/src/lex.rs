@@ -182,7 +182,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    pub fn is_yuxtaposed(&mut self) -> bool {
+    pub fn is_juxtaposed(&mut self) -> bool {
         self.peeked_span().is_ok_and(|x| x.start == self.span.end)
     }
 

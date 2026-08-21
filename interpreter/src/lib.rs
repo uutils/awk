@@ -94,9 +94,9 @@ impl Diagnostic for InterpreterError {
             }
             Self::UnknownIndFunction(_, name) => &format!(
                 "This code tried to call the unknown function `{name}` indirectly. Likely, this \
-                means one\nof two things: either the function was undefined, or you probably \
+                means one of\ntwo things: either the function was undefined, or you probably \
                 forgot to include its\nnamespace if it was not defied in the \"awk\" default one. \
-                It is a footgun that indirect\ncalls ignore the current namespace, always using \
+                It is a foot-gun that indirect\ncalls ignore the current namespace, always using \
                 the default one if not present."
             ),
             Self::DivByZeroAttempted(_, _) => {

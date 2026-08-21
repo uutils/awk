@@ -322,7 +322,7 @@ fn nested_continue_targets_innermost_loop() {
 }
 
 #[test]
-fn array_index_assignment_lowers_storea() {
+fn array_index_assignment_lowers_astore() {
     with_lower("BEGIN { a[1] = 2 }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
@@ -331,7 +331,7 @@ fn array_index_assignment_lowers_storea() {
 }
 
 #[test]
-fn array_index_read_lowers_loada() {
+fn array_index_read_lowers_aload() {
     with_lower("BEGIN { print a[1] }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(bc.contains("aload"), "expected LoadA:\n{bc}");
@@ -349,7 +349,7 @@ fn array_index_increment_lowers_load_and_store() {
 }
 
 #[test]
-fn array_multi_index_assignment_lowers_storea() {
+fn array_multi_index_assignment_lowers_astore() {
     with_lower("BEGIN { a[1, 2] = 3 }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(bc.contains("astore"), "expected StoreA:\n{bc}");

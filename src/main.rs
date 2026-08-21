@@ -97,7 +97,7 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
         table
             .load_style(UTF8_FULL_CONDENSED)
             .set_content_arrangement(ContentArrangement::Dynamic)
-            .set_header(["Bytecode", "Dissassembled", "Span", "File"])
+            .set_header(["Bytecode", "Disassembled", "Span", "File"])
             .add_rows(bytecode);
         writeln!(out, "{table}")?;
     }

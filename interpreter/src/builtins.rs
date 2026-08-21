@@ -277,16 +277,16 @@ mod tests {
     use super::*;
     use crate::{ExecMode, ir::lower::CodeGen, vm::types::Value};
 
-    fn with_interp(f: impl FnOnce(&mut Interpreter<'_>)) {
+    fn with_intrp(f: impl FnOnce(&mut Interpreter<'_>)) {
         let arena = Bump::new();
         let cg = CodeGen::new(&arena);
-        let mut interp = Interpreter::new(ExecMode::Uu, cg, MetadataStore::new());
-        f(&mut interp);
+        let mut intrp = Interpreter::new(ExecMode::Uu, cg, MetadataStore::new());
+        f(&mut intrp);
     }
 
     #[test]
     fn int_truncates_toward_zero() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             assert_eq!(
                 intrp
                     .call_builtin(BuiltinFunction::Int, &[Value::Float(3.7)])
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn length_of_string_and_empty_record() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             assert_eq!(
                 intrp
                     .call_builtin(BuiltinFunction::Length, &[Value::String(b"abc".into())])
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn index_and_substr() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             assert_eq!(
                 intrp
                     .call_builtin(
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn bitwise_and_or_xor_compl() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             assert_eq!(
                 intrp
                     .call_builtin(BuiltinFunction::And, &[Value::Int(7), Value::Int(3)])
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn arity_mismatch_is_reported() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             let err = intrp
                 .call_builtin(BuiltinFunction::And, &[Value::Int(1)])
                 .unwrap_err();
@@ -416,7 +416,7 @@ mod tests {
     #[ignore = "FIXME: gawk fatals on negative shift counts"]
     #[test]
     fn negative_shift_is_fatal() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             let err = intrp.call_builtin(BuiltinFunction::Lshift, &[Value::Int(1), Value::Int(-1)]);
             assert!(
                 err.is_err(),
@@ -428,7 +428,7 @@ mod tests {
     #[ignore = "FIXME: gawk fatals on negative bitwise operands"]
     #[test]
     fn negative_bitwise_operand_is_fatal() {
-        with_interp(|intrp| {
+        with_intrp(|intrp| {
             let err = intrp.call_builtin(BuiltinFunction::And, &[Value::Int(-1), Value::Int(1)]);
             assert!(
                 err.is_err(),

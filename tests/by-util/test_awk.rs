@@ -249,7 +249,7 @@ fn write_to_dev_full_does_not_panic() {
     );
 }
 
-// Chaining non-associative operators must report the diagnostic's help text.
+// Chaining non-associative operators must report this help text.
 #[test]
 fn chained_comparison_reports_help_text() {
     ucmd()
@@ -373,7 +373,7 @@ fn builtin_numeric_and_string_functions() {
                 print tolower("AB")
                 print index("foobar", "bar")
                 print substr("abcdef", 2, 3)
-                print substr("abcdef", 2)
+                print substr("a orange", 2)
                 print and(7, 3)
                 print or(1, 2, 4)
                 print xor(7, 3)
@@ -398,7 +398,7 @@ AB
 ab
 4
 bcd
-bcdef
+ orange
 3
 7
 4

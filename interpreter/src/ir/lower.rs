@@ -687,7 +687,7 @@ impl<'a> CodeGen<'a> {
                             this.regs.free_many(range);
                         }
                         &ExprNode::BuiltinCall(fun, ref args) => {
-                            // Bypass regular variable lookups on type-info funs.
+                            // Bypass regular variable look-ups on type-info funs.
                             let range = this.gen_call_convention(fun, args);
                             let (start, end) = range.as_range();
                             this.emit(Instruction::IntrinsicCall { dest, start, end, fun });

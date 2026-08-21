@@ -326,7 +326,7 @@ impl PartialOrd for Value<'_> {
             (Self::Untyped | Self::Unassigned, Self::Untyped | Self::Unassigned) => {
                 b"".partial_cmp(b"")
             }
-            // Copyful comparisons
+            // Copying comparisons
             (lhs, rhs) => {
                 let mut str_buf: Vec<u8> = Vec::new();
                 str_buf.reserve_exact(lhs.string_size_hint() + rhs.string_size_hint());

@@ -44,7 +44,7 @@ pub fn ensure_consistent_panic<T>(f: impl UnwindSafe + FnOnce() -> T) -> T {
     }
 }
 
-/// Exits with a custom exit code or libc's codes, as per POSIX.
+/// Exits with a custom exit code or uses POSIX default.
 #[allow(dead_code)]
 pub fn exit_with(res: Result<Option<impl Into<ExitCode>>, impl Display + Debug>) -> ! {
     let code = match res {

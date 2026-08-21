@@ -146,7 +146,7 @@ fn gen_leaf() -> impl Strategy<Value = GenExpr> {
     ]
 }
 
-fn gen_arith_binary_operator() -> impl Strategy<Value = BinaryOperator> {
+fn gen_arithmetic_binary_operator() -> impl Strategy<Value = BinaryOperator> {
     prop_oneof![
         Just(BinaryOperator::Multiply),
         Just(BinaryOperator::Add),
@@ -167,13 +167,13 @@ fn gen_cmp_binary_operator() -> impl Strategy<Value = BinaryOperator> {
     ]
 }
 
-fn gen_arith_expr() -> impl Strategy<Value = GenExpr> {
+fn gen_arithmetic_expr() -> impl Strategy<Value = GenExpr> {
     gen_leaf().prop_recursive(3, 32, 8, |inner| {
         prop_oneof![
             2 => inner
                 .clone()
                 .prop_map(|e| GenExpr::Unary(UnaryOperator::Negation, Box::new(e))),
-            2 => (gen_arith_binary_operator(), inner.clone(), inner.clone())
+            2 => (gen_arithmetic_binary_operator(), inner.clone(), inner.clone())
                 .prop_map(|(op, a, b)| GenExpr::Binary(op, Box::new(a), Box::new(b))),
             1 => (gen_place(), inner.clone())
                 .prop_map(|(place, rhs)| GenExpr::Assign(place, Box::new(rhs))),
@@ -185,11 +185,11 @@ fn gen_arith_expr() -> impl Strategy<Value = GenExpr> {
 
 fn gen_expr() -> impl Strategy<Value = GenExpr> {
     prop_oneof![
-        4 => gen_arith_expr(),
+        4 => gen_arithmetic_expr(),
         1 => (
             gen_cmp_binary_operator(),
-            gen_arith_expr(),
-            gen_arith_expr(),
+            gen_arithmetic_expr(),
+            gen_arithmetic_expr(),
         )
             .prop_map(|(op, a, b)| GenExpr::Binary(op, Box::new(a), Box::new(b))),
     ]

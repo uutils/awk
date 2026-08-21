@@ -234,8 +234,8 @@ impl RegAlloc {
         Reg(start)
     }
 
-    /// Runs the closure and restores the allocator's state to a previous point,
-    /// while still tracking high-water mark usage.
+    /// Runs the closure and restores the state of the allocator to a previous
+    /// point, while still tracking high-water mark usage.
     pub fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> T {
         let ret = f(code);
 

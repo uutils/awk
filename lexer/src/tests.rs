@@ -95,13 +95,13 @@ fn lexer_test_collapsible_delimiters() {
 #[test]
 fn lexer_test_multiline() {
     let arena = Bump::new();
-    let str = b"\"aaaa\\\nbbbb\", /ccc\\\nd/";
+    let str = b"\"apple\\\n orange\", /lemon\\\n fruit/";
     assert_eq!(
         &lex(str, &arena, false, false),
         &[
-            Token::String(b"aaaabbbb".into()),
+            Token::String(b"apple orange".into()),
             Token::Comma,
-            Token::Regex(b"cccd".into())
+            Token::Regex(b"lemon fruit".into())
         ]
     );
 }

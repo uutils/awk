@@ -379,7 +379,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 |args| ExprNode::IndirectCall(name, args),
                 lex.span().since(anchor),
             )
-        } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed() {
+        } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_juxtaposed() {
             let name = match self.parser.get_place(lex, next) {
                 Ok(var) => format!("{var:?}"),
                 Err((_, tok)) => format!("{tok:?}"),

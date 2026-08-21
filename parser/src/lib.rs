@@ -45,7 +45,7 @@ pub struct Parser<'a> {
     file: FileCache,
     namespace: &'a str,
     concurrent: bool,
-    // Disables file include materialization ands enables metadata recording.
+    // Disables file include materialization and enables metadata recording.
     dry: bool,
     /// Whether `break` is allowed (inside a loop or `switch`).
     break_allowed: bool,
@@ -169,7 +169,7 @@ impl<'a> Parser<'a> {
                         if lex.peek_with(|t| t.maps_to_special_pat().is_some()) || self.concurrent {
                             return Err(ParsingError::UnexpectedToken(
                                 lex.span(),
-                                "especified more than once.".into(),
+                                "specified more than once.".into(),
                             ));
                         }
                         self.concurrent = true;
@@ -304,7 +304,7 @@ impl<'a> Parser<'a> {
         } else {
             let next = lex.expect_next()?;
             let start = lex.span().start;
-            if lex.is_yuxtaposed() && lex.peek_is(&Token::PathSpec) {
+            if lex.is_juxtaposed() && lex.peek_is(&Token::PathSpec) {
                 return Err(ParsingError::ExpectedIdentifier(lex.span(), None));
             }
             match next {
@@ -861,7 +861,7 @@ impl<'a> Parser<'a> {
         token: Token<'a>,
     ) -> Result<Variable<'a>, (ParsingError, Token<'a>)> {
         match token {
-            Token::Identifier(a) if !(lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed()) => {
+            Token::Identifier(a) if !(lex.peek_is(&Token::OpenParent) && lex.is_juxtaposed()) => {
                 match a.qualify(lex, self.namespace) {
                     Ok(ident) => Ok(ident.into()),
                     Err(e) => Err((e, token)),
@@ -933,11 +933,11 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
     where
         Self: 'a,
     {
-        let no_space = lex.is_yuxtaposed();
+        let no_space = lex.is_juxtaposed();
         let span = lex.span();
 
         if !lex.consume(&Token::PathSpec) {
-            // No explicit namespace; use current namespace or global's.
+            // No explicit namespace; use current namespace or default's.
             if self.literal.bytes().all(|c| c.is_ascii_uppercase()) {
                 namespace = "awk";
             }
@@ -948,14 +948,14 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
             lex.consume_with(Token::is_ident_place);
             let ident_span = lex.span().since(span.start);
             Err(ParsingError::ExpectedIdentifier(ident_span, space_span))
-        } else if lex.peek_with(Token::is_ident_place) && lex.is_yuxtaposed() {
+        } else if lex.peek_with(Token::is_ident_place) && lex.is_juxtaposed() {
             lex.next();
             // SAFETY: the token is ensured to be UTF-8.
             let literal = unsafe { lex.src_as_str() };
             Ok(Identifier { namespace: self.literal, literal })
         } else {
             // Try to select space between the path specifier and next one.
-            let space_span = (lex.peek().is_none() || !lex.is_yuxtaposed())
+            let space_span = (lex.peek().is_none() || !lex.is_juxtaposed())
                 .then(|| Right(lex.span_peeked_up_to(lex.span().end)));
             let err_span = lex.span_peeked_since(span.start);
             Err(ParsingError::ExpectedIdentifier(err_span, space_span))
