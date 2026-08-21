@@ -7,6 +7,8 @@
 use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 use std::{num::NonZero, path::PathBuf};
 
+use atoi::atoi;
+
 #[derive(Debug)]
 pub enum FilePath {
     Stdin,
@@ -33,12 +35,12 @@ impl From<&[u8]> for FilePath {
             b"/dev/stdin" | b"/dev/fd/0" => Self::Stdin,
             b"/dev/stdout" | b"/dev/fd/1" => Self::Stdout,
             b"/dev/stderr" | b"/dev/fd/2" => Self::Stderr,
-            s if let Some(n) = s
-                .strip_prefix(b"/dev/fd/")
-                .and_then(|s| str::from_utf8(s).ok()?.parse::<u32>().ok()) =>
+            s if let Some(n) = s.strip_prefix(b"/dev/fd/").and_then(atoi::<i32>)
+                && n.is_positive() =>
             {
-                // SAFETY: The zero variant is handled in the first arm.
-                Self::Fd(unsafe { NonZero::new_unchecked(n as i32) })
+                // SAFETY: The zero variant is handled in the first arm *and* in
+                // the `is_positive` check.
+                Self::Fd(unsafe { NonZero::new_unchecked(n) })
             }
             s => cfg_select! {
                 unix => Self::Path(OsStr::from_bytes(s).into()),

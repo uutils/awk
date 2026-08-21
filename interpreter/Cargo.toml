@@ -15,6 +15,7 @@ hashbrown.workspace = true
 ahash.workspace = true
 ariadne.workspace = true
 smallvec.workspace = true
+atoi.workspace = true
 minrx = "0.3.0"
 itertools = "0.15.0"
 # I'm not particularly happy about this, but it's crucial for performance, and
