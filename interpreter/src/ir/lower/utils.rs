@@ -43,7 +43,7 @@ pub enum Operand {
 }
 
 impl LinearReg {
-    pub fn into_inner(self) -> Reg {
+    pub const fn into_inner(self) -> Reg {
         let inner = self.0;
         forget(self);
         inner
@@ -74,7 +74,7 @@ impl TypedArg {
         TypedPlace::new_is(var).into()
     }
 
-    pub fn new_imm(imm: i32) -> Self {
+    pub const fn new_imm(imm: i32) -> Self {
         Self(Arg { imm }, ArgTy::Imm)
     }
 
@@ -92,7 +92,7 @@ impl TypedArg {
         TypedPlace::new_reg(reg).into()
     }
 
-    pub fn as_reg(self) -> Option<Reg> {
+    pub const fn as_reg(self) -> Option<Reg> {
         if matches!(self.1, ArgTy::Reg) {
             // SAFETY: has been type-checked.
             Some(unsafe { self.0.reg })
@@ -262,7 +262,7 @@ impl From<Reg> for LinearReg {
 
 impl TypedArg {
     #[inline(always)]
-    pub fn into_arg(self) -> (Arg, ArgTy) {
+    pub const fn into_arg(self) -> (Arg, ArgTy) {
         (self.0, self.1)
     }
 }
@@ -274,7 +274,7 @@ impl TypedPlace {
     }
 
     #[inline(always)]
-    pub fn into_place(self) -> (Arg, PlaceTy) {
+    pub const fn into_place(self) -> (Arg, PlaceTy) {
         (self.0, self.1)
     }
 }

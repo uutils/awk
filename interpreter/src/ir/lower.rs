@@ -186,7 +186,7 @@ impl<'a> CodeGen<'a> {
             Statement::If { condition, then_body, else_body, metadata } => {
                 self.with_metadata(*metadata, |this| {
                     let state = this.regs.clone();
-                    let (if_label, _) =
+                    let (if_label, ()) =
                         this.emit_branch(condition, |this| this.lower_body(then_body));
 
                     if let Some(else_body) = else_body {
@@ -831,7 +831,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
-        let (if_label, _) = self.emit_branch(lhs, |this| {
+        let (if_label, ()) = self.emit_branch(lhs, |this| {
             this.scoped_reg(|this, rhs_reg| {
                 this.lower_expr_into(rhs, rhs_reg);
                 this.truthify(dest, rhs_reg);
@@ -845,7 +845,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
-        let (if_label, _) = self.emit_branch(lhs, |this| {
+        let (if_label, ()) = self.emit_branch(lhs, |this| {
             let (arg, ty) = TypedArg::new_imm(1).into_arg();
             this.emit(Instruction::CopyP { dest, arg, ty });
         });
@@ -1015,19 +1015,19 @@ impl<'a> Bytecode<'a> {
         &mut self.code[label.0 as usize]
     }
 
-    pub fn begin_code(&self) -> CodeRange {
+    pub const fn begin_code(&self) -> CodeRange {
         CodeRange(self.begin_label.0..self.begin_file_label.0)
     }
 
-    pub fn begin_file_code(&self) -> CodeRange {
+    pub const fn begin_file_code(&self) -> CodeRange {
         CodeRange(self.begin_file_label.0..self.end_file_label.0)
     }
 
-    pub fn end_file_code(&self) -> CodeRange {
+    pub const fn end_file_code(&self) -> CodeRange {
         CodeRange(self.end_file_label.0..self.end_label.0)
     }
 
-    pub fn end_code(&self) -> CodeRange {
+    pub const fn end_code(&self) -> CodeRange {
         CodeRange(self.end_label.0..self.rules_label.0)
     }
 
@@ -1035,13 +1035,13 @@ impl<'a> Bytecode<'a> {
         CodeRange(self.rules_label.0..self.len())
     }
 
-    pub fn funs_code(&self) -> CodeRange {
+    pub const fn funs_code(&self) -> CodeRange {
         CodeRange(self.funs_label.0..self.begin_label.0)
     }
 }
 
 impl Instruction {
-    pub(super) fn from_unary(op: UnaryOperator, dest: Reg, arg: TypedArg) -> Self {
+    pub(super) const fn from_unary(op: UnaryOperator, dest: Reg, arg: TypedArg) -> Self {
         let (arg, ty) = arg.into_arg();
         match op {
             UnaryOperator::Record => Self::LoadF { dest, arg, ty },
@@ -1076,7 +1076,7 @@ impl Instruction {
     }
 }
 
-fn lower_assign_ops(op: BinaryPlaceOperator) -> Option<BinaryOperator> {
+const fn lower_assign_ops(op: BinaryPlaceOperator) -> Option<BinaryOperator> {
     match op {
         BinaryPlaceOperator::Assignment => None,
         BinaryPlaceOperator::AddAssign => Some(BinaryOperator::Add),

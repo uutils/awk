@@ -75,7 +75,7 @@ impl DiagnosticStore {
         Ok(())
     }
 
-    pub fn is_unrecoverable(&self) -> bool {
+    pub const fn is_unrecoverable(&self) -> bool {
         self.unrecoverable
     }
 
@@ -163,7 +163,7 @@ pub enum ParsingError {
 }
 
 impl ParsingError {
-    pub fn span(&self) -> Option<Span> {
+    pub const fn span(&self) -> Option<Span> {
         match self {
             Self::LexingError(LexingError::Unknown | LexingError::UnexpectedEof) => None,
             &Self::LexingError(LexingError::Unexpected(span, _))
@@ -209,7 +209,7 @@ impl ParsingError {
             | &Self::CommandDoubleCall(span, _) => Some(span),
         }
     }
-    fn hint(&self) -> Option<&'static str> {
+    const fn hint(&self) -> Option<&'static str> {
         match self {
             Self::DuplicatedArgument(_, _, _) => Some("Consider giving the argument another name."),
             Self::ExpectedStatementEnd(_) => Some(

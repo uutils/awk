@@ -647,11 +647,11 @@ impl<'a> Identifier<'a> {
     }
 }
 
-fn accept_expression(lex: &mut Lexer<'_>) {
+const fn accept_expression(lex: &mut Lexer<'_>) {
     lex.extras.ctx = Context::AcceptExpression;
 }
 
-fn accept_operator(lex: &mut Lexer<'_>) {
+const fn accept_operator(lex: &mut Lexer<'_>) {
     lex.extras.ctx = Context::AcceptOperator;
 }
 
@@ -733,7 +733,7 @@ impl Ord for Slice<'_> {
 }
 
 impl Extra {
-    fn arena<'a>(&self) -> &'a Bump {
+    const fn arena<'a>(&self) -> &'a Bump {
         // SAFETY: lives for as long as self because it's the same lifetime as
         // the source being lexed; Logos just can't take lifetimes on extras.
         unsafe { self.arena.as_ref() }

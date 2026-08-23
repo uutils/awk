@@ -293,7 +293,7 @@ impl Record {
         let len = self.raw.len();
         let buf = self.fields.get_or_insert_default();
         buf.clear();
-        buf.push(Span::from(0..self.raw.len())); // $0
+        buf.push(Span::from(0..len)); // $0
 
         // Aren't iterators beautiful?
         regex::automaton(symbols.fs.to_string().as_bytes(), mode, false)?
@@ -351,7 +351,7 @@ impl Record {
             self.write_record_raw(val);
             Ok(())
         } else {
-            self.write_field_raw(val, n, symbols, mode)
+            self.write_field_raw(&val, n, symbols, mode)
         }
     }
 
@@ -365,7 +365,7 @@ impl Record {
     /// the public function for more details.
     fn write_field_raw(
         &mut self,
-        val: Value<'_>,
+        val: &Value<'_>,
         n: usize,
         symbols: &mut SymbolTable<'_>,
         mode: ExecMode,

@@ -21,7 +21,7 @@ use hashbrown::HashMap;
 use crate::{ExecMode, vm::regex};
 
 #[inline(always)]
-fn likely(b: bool) -> bool {
+const fn likely(b: bool) -> bool {
     if !b {
         cold_path();
     }
@@ -128,13 +128,13 @@ impl<'a> Value<'a> {
         Some(())
     }
 
-    pub fn get_array_elem(&mut self, key: String) -> Option<Self> {
+    pub fn get_array_elem(&mut self, key: &str) -> Option<Self> {
         self.as_array()
-            .map(|arr| arr.borrow().get(&key).cloned().unwrap_or(Self::Untyped))
+            .map(|arr| arr.borrow().get(key).cloned().unwrap_or(Self::Untyped))
     }
 
-    pub fn has_array_elem(&mut self, key: String) -> Option<bool> {
-        self.as_array().map(|arr| arr.borrow().get(&key).is_some())
+    pub fn has_array_elem(&mut self, key: &str) -> Option<bool> {
+        self.as_array().map(|arr| arr.borrow().get(key).is_some())
     }
 
     pub fn array_elem_mdim(&mut self, key: String) -> Option<Self> {

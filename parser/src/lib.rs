@@ -630,7 +630,7 @@ impl<'a> Parser<'a> {
             args
         } else {
             let mut args = Vec::new_in(self.arena);
-            self.parse_command_args(lex, &mut args).map(|_| args)?
+            self.parse_command_args(lex, &mut args).map(|()| args)?
         };
         let redirection = self.parse_command_redirection(lex)?;
         let metadata = self.gen_metadata(lex.span().since(start));

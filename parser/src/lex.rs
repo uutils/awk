@@ -152,7 +152,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         self.span
     }
 

@@ -32,7 +32,7 @@ pub(crate) enum BuiltinError {
 }
 
 impl BuiltinError {
-    pub(crate) fn into_interpreter_error(self, span: AriadneSpan) -> InterpreterError {
+    pub(crate) const fn into_interpreter_error(self, span: AriadneSpan) -> InterpreterError {
         match self {
             Self::Arity { expected, given } => {
                 InterpreterError::ArityMismatch(span, expected, given)
@@ -123,7 +123,7 @@ impl<'a> Interpreter<'a> {
     }
 }
 
-fn require_args<'a, 'b>(
+const fn require_args<'a, 'b>(
     args: &'b [Value<'a>],
     min: u8,
     max: u8,

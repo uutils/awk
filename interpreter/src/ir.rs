@@ -165,7 +165,7 @@ impl Instruction {
         }
     }
 
-    fn br(condition: Reg, then_label: Label) -> Self {
+    const fn br(condition: Reg, then_label: Label) -> Self {
         Self::Branch { then_label, else_label: Label(0), condition }
     }
 
@@ -375,7 +375,7 @@ impl Display for Instruction {
 }
 
 impl Instruction {
-    fn display_name(self) -> &'static str {
+    const fn display_name(self) -> &'static str {
         match self {
             Self::LoadF { .. } => "fload",
             Self::Negation { .. } => "not",

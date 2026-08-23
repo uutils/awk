@@ -100,7 +100,7 @@ pub struct Consts<'a>(pub(crate) Vec<'a, Value<'a>>);
 #[derive(Debug, Clone)]
 pub struct CodeRange(pub(crate) Range<IxWidth>);
 
-/// Newtype of (Arg, PlaceTy).
+/// Newtype of `(Arg, PlaceTy)`.
 #[derive(Clone, Copy)]
 struct Place {
     arg: Arg,
@@ -296,7 +296,7 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::LoadA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.array_elem_get(Place::new(arg, ty), key, metadata)?;
+                    let val = self.array_elem_get(Place::new(arg, ty), &key, metadata)?;
 
                     self.write_reg(dest, val);
                 }
@@ -344,13 +344,13 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::In { dest, lhs, rhs, tyr, tyl } => {
                     let key = self.get_val(rhs, tyr, metadata, Value::to_string)?;
-                    let val = self.has_array_elem(Place::new(lhs, tyl), key, metadata)?;
+                    let val = self.has_array_elem(Place::new(lhs, tyl), &key, metadata)?;
 
                     self.write_reg(dest, val);
                 }
                 Instruction::InA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.has_array_elem(Place::new(arg, ty), key, metadata)?;
+                    let val = self.has_array_elem(Place::new(arg, ty), &key, metadata)?;
 
                     self.write_reg(dest, val);
                 }
@@ -459,7 +459,7 @@ impl<'a> Interpreter<'a> {
     fn array_elem_get(
         &mut self,
         place: Place,
-        key: String,
+        key: &str,
         metadata: &[MetaId],
     ) -> Result<Value<'a>> {
         place
@@ -493,7 +493,7 @@ impl<'a> Interpreter<'a> {
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
-    fn has_array_elem(&mut self, place: Place, key: String, metadata: &[MetaId]) -> Result<bool> {
+    fn has_array_elem(&mut self, place: Place, key: &str, metadata: &[MetaId]) -> Result<bool> {
         place
             .array(self)
             .and_then(|arr| arr.has_array_elem(key))
@@ -665,7 +665,7 @@ impl<'a> Registers<'a> {
         }
     }
     #[inline(always)]
-    fn index_of(reg: Reg, offset: IxWidth) -> usize {
+    const fn index_of(reg: Reg, offset: IxWidth) -> usize {
         reg.0 as usize + offset as usize
     }
     #[inline(always)]
@@ -803,7 +803,7 @@ impl Arg {
 
 impl Place {
     #[inline(always)]
-    fn new(arg: Arg, ty: PlaceTy) -> Self {
+    const fn new(arg: Arg, ty: PlaceTy) -> Self {
         Self { arg, ty }
     }
 

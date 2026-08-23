@@ -176,7 +176,7 @@ pub enum Place<'a> {
     ChainedIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
 }
 
-/// GNU docs: https://www.gnu.org/software/gawk/manual/html_node/Redirection.html
+/// GNU docs: <https://www.gnu.org/software/gawk/manual/html_node/Redirection.html>
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum Redirection {
@@ -334,31 +334,31 @@ impl<'a> Expr<'a> {
 }
 
 impl UnaryOperator {
-    pub fn expr(self, a: Expr<'_>) -> ExprNode<'_> {
+    pub const fn expr(self, a: Expr<'_>) -> ExprNode<'_> {
         ExprNode::UnaryOperation(self, a)
     }
 }
 
 impl BinaryOperator {
-    pub fn expr<'a>(self, a: Expr<'a>, b: Expr<'a>) -> ExprNode<'a> {
+    pub const fn expr<'a>(self, a: Expr<'a>, b: Expr<'a>) -> ExprNode<'a> {
         ExprNode::BinaryOperation(self, a, b)
     }
 }
 
 impl UnaryPlaceOperator {
-    pub fn expr(self, a: Place<'_>) -> ExprNode<'_> {
+    pub const fn expr(self, a: Place<'_>) -> ExprNode<'_> {
         ExprNode::UnaryPlaceOperation(self, a)
     }
 }
 
 impl BinaryPlaceOperator {
-    pub fn expr<'a>(self, a: Place<'a>, b: Expr<'a>) -> ExprNode<'a> {
+    pub const fn expr<'a>(self, a: Place<'a>, b: Expr<'a>) -> ExprNode<'a> {
         ExprNode::BinaryPlaceOperation(self, a, b)
     }
 }
 
 impl ArrayOperator {
-    pub fn expr<'a>(self, a: Variable<'a>, b: Vec<'a, Expr<'a>>) -> ExprNode<'a> {
+    pub const fn expr<'a>(self, a: Variable<'a>, b: Vec<'a, Expr<'a>>) -> ExprNode<'a> {
         ExprNode::ArrayOperation(self, a, b)
     }
 }
@@ -443,7 +443,7 @@ impl<'a> BinaryOperator {
 }
 
 impl UnaryPlaceOperator {
-    pub fn parse_prefix(value: &Token<'_>, span: Span) -> Result<Self> {
+    pub const fn parse_prefix(value: &Token<'_>, span: Span) -> Result<Self> {
         match value {
             Token::Increment => Ok(Self::IncrementL),
             Token::Decrement => Ok(Self::DecrementL),
@@ -451,7 +451,7 @@ impl UnaryPlaceOperator {
         }
     }
 
-    pub fn parse_suffix(value: &Token<'_>, span: Span) -> Result<Self> {
+    pub const fn parse_suffix(value: &Token<'_>, span: Span) -> Result<Self> {
         match value {
             Token::Increment => Ok(Self::IncrementR),
             Token::Decrement => Ok(Self::DecrementR),
@@ -517,7 +517,7 @@ impl<'a> Place<'a> {
 }
 
 impl Redirection {
-    pub fn parse(value: &Token) -> Option<Self> {
+    pub const fn parse(value: &Token) -> Option<Self> {
         match value {
             Token::GreaterThan => Some(Self::WriteFile),
             Token::AppendPipe => Some(Self::AppendFile),
@@ -529,7 +529,7 @@ impl Redirection {
 }
 
 impl WriteKind {
-    pub fn parse(value: &Token) -> Option<Self> {
+    pub const fn parse(value: &Token) -> Option<Self> {
         match value {
             Token::Pipe => Some(Self::Pipe),
             Token::DoublePipe => Some(Self::Coprocess),
@@ -537,7 +537,7 @@ impl WriteKind {
         }
     }
 
-    pub fn expr_getline<'a>(self, var: Option<Place<'a>>, expr: Expr<'a>) -> Getline<'a> {
+    pub const fn expr_getline<'a>(self, var: Option<Place<'a>>, expr: Expr<'a>) -> Getline<'a> {
         match self {
             Self::Pipe => Getline::PipeOut(var, expr),
             Self::Coprocess => Getline::CoprocessOut(var, expr),

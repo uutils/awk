@@ -86,48 +86,54 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 unused_qualifications = "warn"
 
 [workspace.lints.clippy]
-# The counts were generated with this command:
-#   cargo clippy --all-targets --workspace --message-format=json --quiet \
-#     | jq -r '.message.code.code | select(. != null and startswith("clippy::"))' \
-#     | sort | uniq -c | sort -h -r
-#
+# Groups
 all = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-print_stdout = "warn"                        # restriction: forbid print/println macros
-print_stderr = "warn"                        # restriction: forbid eprint/eprintln macros
-use_self = "warn"                            # nursery lint
-cargo_common_metadata = "allow"              # 3240
-multiple_crate_versions = "allow"            # 2882
-missing_errors_doc = "allow"                 # 1572
-missing_panics_doc = "allow"                 # 946
-must_use_candidate = "allow"                 # 322
-match_same_arms = "allow"                    # 204
-cast_possible_truncation = "allow"           # 122
-too_many_lines = "allow"                     # 101
-cast_possible_wrap = "allow"                 # 78
-cast_sign_loss = "allow"                     # 70
-struct_excessive_bools = "allow"             # 68
-cast_precision_loss = "allow"                # 52
-cast_lossless = "allow"                      # 35
-ignored_unit_patterns = "allow"              # 21
-similar_names = "allow"                      # 20
-needless_pass_by_value = "allow"             # 16
-float_cmp = "allow"                          # 12
-items_after_statements = "allow"             # 11
-return_self_not_must_use = "allow"           # 8
-inline_always = "allow"                      # 6
-fn_params_excessive_bools = "allow"          # 6
-used_underscore_items = "allow"              # 2
-should_panic_without_expect = "allow"        # 2
+perf = { level = "warn", priority = -1 }
 
-doc_markdown = "allow"
-unused_self = "allow"
-enum_glob_use = "allow"
-unnested_or_patterns = "allow"
-implicit_hasher = "allow"
-doc_link_with_quotes = "allow"
+# Restrictions
+print_stderr = "warn"
+print_stdout = "warn"
+
+# Casts; TODO: replace with fancy std methods when available
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+
+# Others (mostly, curated nursery lints)
+assigning_clones = "warn"
+branches_sharing_code = "warn"
+fallible_impl_from = "warn"
+imprecise_flops = "warn"
+iter_on_empty_collections = "warn"
+iter_on_single_items = "warn"
+large_stack_frames = "warn"
+missing_const_for_fn = "warn"
+needless_collect = "warn"
+set_contains_or_insert = "warn"
+use_self = "warn"
+useless_let_if_seq = "warn"
+
+# Shut up
+cargo_common_metadata = "allow"
+fn_params_excessive_bools = "allow"
 format_push_string = "allow"
-flat_map_option = "allow"
-from_iter_instead_of_collect = "allow"
-large_types_passed_by_value = "allow"
+ignored_unit_patterns = "allow"
+inline_always = "allow"
+items_after_statements = "allow"
+match_same_arms = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+return_self_not_must_use = "allow"
+should_panic_without_expect = "allow"
+struct_excessive_bools = "allow"
+too_many_lines = "allow"
+undocumented_unsafe_blocks = "allow"
+unnested_or_patterns = "allow"
+unused_self = "allow"

@@ -27,7 +27,7 @@ fn install_abort_hook() {
 
 /// Ensures exit code 2 on panics, which is GNU's behavior. Also installs
 /// color-eyre's panic hook.
-/// https://www.gnu.org/software/gawk/manual/html_node/Exit-Status.html
+/// <https://www.gnu.org/software/gawk/manual/html_node/Exit-Status.html>
 #[inline(always)] // Hide from stack trace on panics.
 pub fn ensure_consistent_panic<T>(f: impl UnwindSafe + FnOnce() -> T) -> T {
     if cfg!(panic = "abort") {

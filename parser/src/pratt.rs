@@ -31,7 +31,7 @@ pub struct Pratt<'a, 'b> {
 }
 
 impl<'a, 'b> Pratt<'a, 'b> {
-    pub fn new(parser: &'b mut Parser<'a>, typed_regex: bool) -> Self {
+    pub const fn new(parser: &'b mut Parser<'a>, typed_regex: bool) -> Self {
         Self { parser, typed_regex }
     }
 
@@ -612,7 +612,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
     }
 
     /// Errors if `expr` is a typed regex.
-    fn typecheck(&self, lex: &mut Lexer<'a>, expr: &Expr<'a>) -> Result<()> {
+    const fn typecheck(&self, lex: &mut Lexer<'a>, expr: &Expr<'a>) -> Result<()> {
         if matches!(expr, Expr::Leaf(Atom::TypedRegex(_), _)) {
             Err(ParsingError::UnexpectedTypedRegex(lex.span()))
         } else {

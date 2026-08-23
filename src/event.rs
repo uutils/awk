@@ -28,7 +28,7 @@ pub struct AwkRt<'a> {
 }
 
 impl<'a> AwkRt<'a> {
-    pub fn new(
+    pub const fn new(
         intrp: Interpreter<'a>,
         bc: Bytecode<'a>,
         queue: &'a [ArgQueueItem],
@@ -120,7 +120,7 @@ impl<'a> AwkRt<'a> {
     fn perform_io(&mut self, req: &IoRequest) -> Result<IoResponse> {
         match req {
             IoRequest::FileWrite { buf, at: FilePath::Stdout } => {
-                stdout().lock().write_all(buf).map(|_| IoResponse::Empty)
+                stdout().lock().write_all(buf).map(|()| IoResponse::Empty)
             }
             _ => todo!(),
         }
