@@ -697,28 +697,8 @@ impl<'a> CodeGen<'a> {
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
-                        &ExprNode::ChainedIndex(var, ref indices) => {
-                            let (mut arg, mut ty) = match &var {
-                                Variable::User(ident) => {
-                                    TypedPlace::new_ua(this, ident).into_place()
-                                }
-                                var => TypedPlace::new_ia(var).into_place(),
-                            };
-                            for (i, index) in indices.iter().enumerate() {
-                                this.scoped_reg_range(
-                                    RtType::Scalar,
-                                    index,
-                                    |this, (start, end)| {
-                                        let instr = if i == indices.len() - 1 {
-                                            Instruction::LoadA { dest, arg, start, end, ty }
-                                        } else {
-                                            Instruction::LoadM { dest, arg, start, end, ty }
-                                        };
-                                        this.emit(instr);
-                                        (arg, ty) = TypedPlace::new_reg(dest).into_place();
-                                    },
-                                );
-                            }
+                        ExprNode::ChainedIndex(var, indices) => {
+                            this.load_chained_index(dest, var, indices);
                         }
                         &ExprNode::Getline(_) => todo!(),
                     }
@@ -738,7 +718,7 @@ impl<'a> CodeGen<'a> {
             Place::Variable(Variable::User(ident)) => TypedPlace::new_us(self, ident),
             Place::Variable(var) => TypedPlace::new_is(var),
             Place::Index(var, index) => self.load_index(dest, var, index),
-            Place::ChainedIndex(_, _) => todo!(),
+            Place::ChainedIndex(var, indices) => self.load_chained_index(dest, var, indices),
         }
     }
 
@@ -805,22 +785,48 @@ impl<'a> CodeGen<'a> {
                     Variable::User(ident) => TypedPlace::new_ua(self, ident).into_place(),
                     var => TypedPlace::new_ia(var).into_place(),
                 };
-                let last = indices.len() - 1;
+                self.scoped_reg(|this, array| {
+                    let last = indices.len() - 1;
 
-                for index in &indices[..last] {
-                    self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
-                        this.emit(Instruction::LoadM { dest, arg, start, end, ty });
-                        (arg, ty) = TypedPlace::new_reg(dest).into_place();
+                    for index in &indices[..last] {
+                        this.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
+                            this.emit(Instruction::LoadM { dest: array, arg, start, end, ty });
+                            (arg, ty) = TypedPlace::new_reg(array).into_place();
+                        });
+                    }
+
+                    this.scoped_reg_range(RtType::Scalar, &indices[last], |this, (start, end)| {
+                        let (lhs, tyl) = TypedPlace::new_reg(array).into_place();
+                        let (rhs, tyr) = src.into_arg();
+                        this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                     });
-                }
-
-                self.scoped_reg_range(RtType::Scalar, &indices[last], |this, (start, end)| {
-                    let (lhs, tyl) = TypedPlace::new_reg(dest).into_place();
-                    let (rhs, tyr) = src.into_arg();
-                    this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 });
             }
         }
+    }
+
+    fn load_chained_index(
+        &mut self,
+        dest: Reg,
+        var: &Variable<'_>,
+        indices: &[Vec<'_, Expr<'_>>],
+    ) -> TypedPlace {
+        let (mut arg, mut ty) = match &var {
+            Variable::User(ident) => TypedPlace::new_ua(self, ident).into_place(),
+            var => TypedPlace::new_ia(var).into_place(),
+        };
+        let last = indices.len() - 1;
+        for index in &indices[..last] {
+            self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
+                this.emit(Instruction::LoadM { dest, arg, start, end, ty });
+                (arg, ty) = TypedPlace::new_reg(dest).into_place();
+            });
+        }
+        self.scoped_reg_range(RtType::Scalar, &indices[last], |this, (start, end)| {
+            this.emit(Instruction::LoadA { dest, arg, start, end, ty });
+        });
+
+        TypedPlace::new_reg(dest)
     }
 
     fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
