@@ -472,3 +472,30 @@ fn mdim_array_passing() {
         .succeeds()
         .stdout_only("1\n1\n2\n");
 }
+
+#[test]
+fn inc_dec_fast_path() {
+    ucmd()
+        .arg("BEGIN { print x++, ++x, --x, x-- }")
+        .succeeds()
+        .stdout_only("0 2 1 1\n");
+}
+
+#[test]
+fn inc_dec_slow_path() {
+    ucmd()
+        .arg("BEGIN { print $1++, ++$1, --$1, $1-- }")
+        .succeeds()
+        .stdout_only("0 2 1 1\n");
+}
+
+#[test]
+fn place_opts_side_effects() {
+    ucmd()
+        .arg(
+            "function f(x) { print 1; return 1 } \
+              BEGIN { $f(x) = 1; $f(x)++; $f(x) += 1; a[f(x)] = 1; --a[f(x)]; a[f(x)] *= 1; }",
+        )
+        .succeeds()
+        .stdout_only("1\n1\n1\n1\n1\n1\n");
+}
