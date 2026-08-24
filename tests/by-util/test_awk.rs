@@ -353,7 +353,7 @@ fn user_functions_fib() {
     ucmd()
         .arg(
             "function fib(n) { if (n <= 1) return n; return fib(n - 1) + fib(n - 2) } \
-              BEGIN { for (i = 0; i < 10; i++) print fib(i) }",
+             BEGIN { for (i = 0; i < 10; i++) print fib(i) }",
         )
         .succeeds()
         .stdout_only("0\n1\n1\n2\n3\n5\n8\n13\n21\n34\n");
@@ -460,4 +460,15 @@ fn mdim_array_basic() {
         .arg(r#"BEGIN { print a[1,4][1,"foo"][2,2,1] = 1; print a[1,4][1,"foo"][2,2,1] }"#)
         .succeeds()
         .stdout_only("1\n1\n");
+}
+
+#[test]
+fn mdim_array_passing() {
+    ucmd()
+        .arg(
+            r#"function f(x, y) { print isarray(x); x[1,4][1,"foo"][2,2,1]++; }
+               BEGIN { print a[1,4][1,"foo"][2,2,1] = 1; f(a); print a[1,4][1,"foo"][2,2,1] }"#,
+        )
+        .succeeds()
+        .stdout_only("1\n1\n2\n");
 }
