@@ -299,21 +299,17 @@ impl<'a> CodeGen<'a> {
                     this.regs.free_many(range);
                 });
             }
-            &Statement::Simple(SimpleStatement::Delete(var, Some(ref indices), metadata)) => self
-                .with_metadata(metadata, |this| {
-                    this.scoped_reg(|this, tmp| {
-                        let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
-                        this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                            this.emit(Instruction::DeleteM { arg, ty, start, end });
-                        });
+            Statement::Simple(SimpleStatement::Delete(var, Some(indices), metadata)) => self
+                .with_metadata(*metadata, |this| {
+                    let (arg, ty) = this.load_array_var(var).into_place();
+                    this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                        this.emit(Instruction::DeleteM { arg, ty, start, end });
                     });
                 }),
-            &Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
-                self.with_metadata(metadata, |this| {
-                    this.scoped_reg(|this, tmp| {
-                        let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
-                        this.emit(Instruction::DeleteA { arg, ty });
-                    });
+            Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
+                self.with_metadata(*metadata, |this| {
+                    let (arg, ty) = this.load_array_var(var).into_place();
+                    this.emit(Instruction::DeleteA { arg, ty });
                 });
             }
             Statement::Switch { scrutinee, branches, default, metadata } => {
@@ -660,19 +656,17 @@ impl<'a> CodeGen<'a> {
                         ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
                             this.load_index(dest, var, index);
                         }
-                        &ExprNode::ArrayOperation(ArrayOperator::In, var, ref index)
+                        ExprNode::ArrayOperation(ArrayOperator::In, var, index)
                             if let [expr] = index.as_slice() =>
                         {
                             let index = this.lower_expr(expr);
                             let (rhs, tyr) = index.to_arg().into_arg();
-                            let (lhs, tyl) =
-                                this.load_place(dest, &Place::Variable(var)).into_place();
+                            let (lhs, tyl) = this.load_array_var(var).into_place();
                             this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
                             index.free(this);
                         }
-                        &ExprNode::ArrayOperation(ArrayOperator::In, var, ref indices) => {
-                            let (arg, ty) =
-                                this.load_place(dest, &Place::Variable(var)).into_place();
+                        ExprNode::ArrayOperation(ArrayOperator::In, var, indices) => {
+                            let (arg, ty) = this.load_array_var(var).into_place();
                             this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                                 this.emit(Instruction::InA { dest, arg, start, end, ty });
                             });
@@ -690,11 +684,10 @@ impl<'a> CodeGen<'a> {
                                 this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
                             });
                         }
-                        &ExprNode::IndirectCall(place, ref args) => {
+                        ExprNode::IndirectCall(var, args) => {
                             let range = this.gen_call_convention(RtType::Any, args);
                             let (start, end) = range.as_range();
-                            let (name, ty) =
-                                this.load_place(dest, &Place::Variable(place)).into_arg();
+                            let (name, ty) = this.load_scalar_var(var).into_arg();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
@@ -787,10 +780,16 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::LoadF { dest, arg, ty });
                 TypedPlace::new_reg(dest)
             }
-            Place::Variable(Variable::User(ident)) => TypedPlace::new_us(self, ident),
-            Place::Variable(var) => TypedPlace::new_is(var),
+            Place::Variable(var) => self.load_scalar_var(var),
             Place::Index(var, index) => self.load_index(dest, var, index),
             Place::ChainedIndex(var, indices) => self.load_chained_index(dest, var, indices),
+        }
+    }
+
+    fn load_scalar_var(&mut self, var: &Variable<'_>) -> TypedPlace {
+        match var {
+            Variable::User(ident) => TypedPlace::new_us(self, ident),
+            var => TypedPlace::new_is(var),
         }
     }
 
@@ -995,12 +994,20 @@ impl<'a> CodeGen<'a> {
                 let dest = Reg(call_start.0 + i as RegWidth);
                 // Bypass Copy instruction for variables here, so we do not get
                 // scalar context shenanigans in the VM.
-                if let &Expr::Leaf(Atom::Variable(var), _) = arg {
-                    let (arg, ty) = this.load_place(dest, &Place::Variable(var)).into_place();
+                if let Expr::Leaf(Atom::Variable(var), _) = arg {
                     let instr = match rt_ty {
-                        RtType::Scalar => Instruction::CopyS { dest, arg, ty: *ty },
-                        RtType::Array => Instruction::CopyA { dest, arg, ty },
-                        RtType::Any => Instruction::CopyP { dest, arg, ty: *ty },
+                        RtType::Scalar => {
+                            let (arg, ty) = this.load_scalar_var(var).into_arg();
+                            Instruction::CopyS { dest, arg, ty }
+                        }
+                        RtType::Array => {
+                            let (arg, ty) = this.load_array_var(var).into_place();
+                            Instruction::CopyA { dest, arg, ty }
+                        }
+                        RtType::Any => {
+                            let (arg, ty) = this.load_scalar_var(var).into_arg();
+                            Instruction::CopyP { dest, arg, ty }
+                        }
                     };
                     this.emit(instr);
                 } else {
