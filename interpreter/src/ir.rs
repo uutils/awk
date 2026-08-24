@@ -118,20 +118,16 @@ pub enum ArgTy {
     Reg,
     Imm,
     Cnt,
-    UsVal,
-    UaVal,
-    IsVal,
-    IaVal,
+    UserVal,
+    BtInVal,
 }
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum PlaceTy {
     Reg = ArgTy::Reg as u8,
-    UsVal = ArgTy::UsVal as u8,
-    UaVal = ArgTy::UaVal as u8,
-    IsVal = ArgTy::IsVal as u8,
-    IaVal = ArgTy::IaVal as u8,
+    UserVal = ArgTy::UserVal as u8,
+    BtInVal = ArgTy::BtInVal as u8,
 }
 
 const _: () = {
@@ -214,10 +210,8 @@ impl From<PlaceTy> for ArgTy {
     fn from(value: PlaceTy) -> Self {
         match value {
             PlaceTy::Reg => Self::Reg,
-            PlaceTy::UsVal => Self::UsVal,
-            PlaceTy::UaVal => Self::UaVal,
-            PlaceTy::IsVal => Self::IsVal,
-            PlaceTy::IaVal => Self::IaVal,
+            PlaceTy::UserVal => Self::UserVal,
+            PlaceTy::BtInVal => Self::BtInVal,
         }
     }
 }
@@ -240,10 +234,8 @@ impl TryFrom<ArgTy> for PlaceTy {
     fn try_from(value: ArgTy) -> Result<Self, Self::Error> {
         match value {
             ArgTy::Reg => Ok(Self::Reg),
-            ArgTy::UsVal => Ok(Self::UsVal),
-            ArgTy::UaVal => Ok(Self::UaVal),
-            ArgTy::IsVal => Ok(Self::IsVal),
-            ArgTy::IaVal => Ok(Self::IaVal),
+            ArgTy::UserVal => Ok(Self::UserVal),
+            ArgTy::BtInVal => Ok(Self::BtInVal),
             _ => Err(()),
         }
     }
@@ -450,10 +442,8 @@ impl Display for ArgTy {
             Self::Reg => write!(f, "r"),
             Self::Imm => write!(f, "imm"),
             Self::Cnt => write!(f, "mem"),
-            Self::UsVal => write!(f, "us"),
-            Self::UaVal => write!(f, "ua"),
-            Self::IsVal => write!(f, "is"),
-            Self::IaVal => write!(f, "ia"),
+            Self::UserVal => write!(f, "user"),
+            Self::BtInVal => write!(f, "btin"),
         }
     }
 }

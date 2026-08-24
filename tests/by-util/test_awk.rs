@@ -494,8 +494,59 @@ fn place_opts_side_effects() {
     ucmd()
         .arg(
             "function f(x) { print 1; return 1 } \
-              BEGIN { $f(x) = 1; $f(x)++; $f(x) += 1; a[f(x)] = 1; --a[f(x)]; a[f(x)] *= 1; }",
+             BEGIN { $f(x) = 1; $f(x)++; $f(x) += 1; a[f(x)] = 1; --a[f(x)]; a[f(x)] *= 1; }",
         )
         .succeeds()
         .stdout_only("1\n1\n1\n1\n1\n1\n");
+}
+
+#[test]
+fn function_parameter_simple_assignment_persists() {
+    ucmd()
+        .arg("function f(a) { a = 5; return a } BEGIN { print f(1) }")
+        .succeeds()
+        .stdout_is("5\n");
+}
+
+#[test]
+fn function_parameter_compound_assignment_persists() {
+    ucmd()
+        .arg("function f(a) { a += 5; return a } BEGIN { print f(10) }")
+        .succeeds()
+        .stdout_is("15\n");
+}
+
+#[test]
+fn chained_assignment_through_a_parameter_propagates_value() {
+    ucmd()
+        .arg("function f(   a, b) { b = (a = 5); return a + b } BEGIN { print f() }")
+        .succeeds()
+        .stdout_is("10\n");
+}
+
+#[test]
+fn function_parameter_array_assignment_persists() {
+    ucmd()
+        .arg("function f(a) { a[1][2] = 5; return a[1][2] } BEGIN { print f(x) }")
+        .succeeds()
+        .stdout_is("5\n");
+}
+
+#[test]
+fn function_parameter_compound_array_assignment_persists() {
+    ucmd()
+        .arg("function f(a) { a[1][2] += 5; return a[1][2] } BEGIN { print f(x) }")
+        .succeeds()
+        .stdout_is("5\n");
+}
+
+#[test]
+fn chained_array_assignment_through_a_parameter_propagates_value() {
+    ucmd()
+        .arg(
+            "function f(   a, b) { b[1][2] = (a[1][2] = 5); return a[1][2] + b[1][2] } \
+             BEGIN { print f() }",
+        )
+        .succeeds()
+        .stdout_is("10\n");
 }

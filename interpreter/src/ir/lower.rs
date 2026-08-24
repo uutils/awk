@@ -53,7 +53,6 @@ pub struct CodeGen<'a> {
 }
 
 impl<'a> CodeGen<'a> {
-    #[inline(always)]
     fn emit(&mut self, code: Instruction) -> Label {
         self.bc.code.push(code);
         self.bc.metadata.push(self.current_metadata);
@@ -301,14 +300,14 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Simple(SimpleStatement::Delete(var, Some(indices), metadata)) => self
                 .with_metadata(*metadata, |this| {
-                    let (arg, ty) = this.load_array_var(var).into_place();
+                    let (arg, ty) = this.load_var(var).into_place();
                     this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                         this.emit(Instruction::DeleteM { arg, ty, start, end });
                     });
                 }),
             Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
                 self.with_metadata(*metadata, |this| {
-                    let (arg, ty) = this.load_array_var(var).into_place();
+                    let (arg, ty) = this.load_var(var).into_place();
                     this.emit(Instruction::DeleteA { arg, ty });
                 });
             }
@@ -497,8 +496,8 @@ impl<'a> CodeGen<'a> {
 
     fn lower_atom_arg(&mut self, atom: &Atom, dest: Reg) -> TypedArg {
         match atom {
-            Atom::Variable(Variable::User(ident)) => TypedArg::new_us(self, ident),
-            Atom::Variable(var) => TypedArg::new_is(var),
+            Atom::Variable(Variable::User(ident)) => TypedArg::new_user(self, ident),
+            Atom::Variable(var) => TypedArg::new_btin(var),
             &Atom::Integer(n) => TypedArg::new_imm(n),
             &Atom::Number(n) => TypedArg::new_immf(self, n),
             atom @ (Atom::String(s) | Atom::TypedRegex(s)) => {
@@ -649,12 +648,12 @@ impl<'a> CodeGen<'a> {
                         {
                             let index = this.lower_expr(expr);
                             let (rhs, tyr) = index.to_arg().into_arg();
-                            let (lhs, tyl) = this.load_array_var(var).into_place();
+                            let (lhs, tyl) = this.load_var(var).into_place();
                             this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
                             index.free(this);
                         }
                         ExprNode::ArrayOperation(ArrayOperator::In, var, indices) => {
-                            let (arg, ty) = this.load_array_var(var).into_place();
+                            let (arg, ty) = this.load_var(var).into_place();
                             this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                                 this.emit(Instruction::InA { dest, arg, start, end, ty });
                             });
@@ -675,7 +674,7 @@ impl<'a> CodeGen<'a> {
                         ExprNode::IndirectCall(var, args) => {
                             let range = this.gen_call_convention(RtType::Any, args);
                             let (start, end) = range.as_range();
-                            let (name, ty) = this.load_scalar_var(var).into_arg();
+                            let (name, ty) = this.load_var(var).into_arg();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
@@ -704,7 +703,7 @@ impl<'a> CodeGen<'a> {
             }),
             Place::Variable(_) => f(self, ResolvedPlace::Variable),
             Place::Index(var, indices) => {
-                let (arg, ty) = self.load_array_var(var).into_place();
+                let (arg, ty) = self.load_var(var).into_place();
                 self.scoped_reg_range(RtType::Scalar, indices, |this, range| {
                     f(this, ResolvedPlace::Index { arg, ty, range })
                 })
@@ -768,29 +767,22 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::LoadF { dest, arg, ty });
                 TypedPlace::new_reg(dest)
             }
-            Place::Variable(var) => self.load_scalar_var(var),
+            Place::Variable(var) => self.load_var(var),
             Place::Index(var, index) => self.load_index(dest, var, index),
             Place::ChainedIndex(var, indices) => self.load_chained_index(dest, var, indices),
         }
     }
 
-    fn load_scalar_var(&mut self, var: &Variable<'_>) -> TypedPlace {
+    fn load_var(&mut self, var: &Variable<'_>) -> TypedPlace {
         match var {
-            Variable::User(ident) => TypedPlace::new_us(self, ident),
-            var => TypedPlace::new_is(var),
-        }
-    }
-
-    fn load_array_var(&mut self, var: &Variable<'_>) -> TypedPlace {
-        match var {
-            Variable::User(ident) => TypedPlace::new_ua(self, ident),
-            var => TypedPlace::new_ia(var),
+            Variable::User(ident) => TypedPlace::new_user(self, ident),
+            var => TypedPlace::new_btin(var),
         }
     }
 
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
         self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-            let (arg, ty) = this.load_array_var(var).into_place();
+            let (arg, ty) = this.load_var(var).into_place();
             this.emit(Instruction::LoadA { dest, arg, ty, start, end });
 
             // Element value was written to `dest`; subsequent ops must use the register.
@@ -808,28 +800,35 @@ impl<'a> CodeGen<'a> {
                 rec.free(self);
             }
             Place::Variable(Variable::User(ident)) => {
-                let t_arg = TypedPlace::new_us(self, ident);
+                let t_arg = TypedPlace::new_user(self, ident);
                 let (var, ty_place) = t_arg.into_place();
 
                 if t_arg.as_reg().is_some_and(|reg| reg == dest) {
                     return; // Value already on destination.
                 }
 
-                let store = match ty_place {
-                    PlaceTy::Reg => Instruction::CopyP { dest, arg, ty },
-                    PlaceTy::UsVal => {
-                        Instruction::StoreS { dest, ty_place, var: unsafe { var.sym }, arg, ty }
+                match ty_place {
+                    PlaceTy::Reg => {
+                        let var_reg = unsafe { var.reg };
+                        self.emit(Instruction::CopyP { dest: var_reg, arg, ty });
+                        if var_reg != dest {
+                            let (arg, ty) = TypedArg::new_reg(var_reg).into_arg();
+                            self.emit(Instruction::CopyP { dest, arg, ty });
+                        }
                     }
-                    _ => unreachable!(),
-                };
-                self.emit(store);
+                    PlaceTy::UserVal => {
+                        let var = unsafe { var.sym };
+                        self.emit(Instruction::StoreS { dest, ty_place, var, arg, ty });
+                    }
+                    PlaceTy::BtInVal => todo!(),
+                }
             }
             Place::Variable(var) => {
                 let var = var_index(var);
-                self.emit(Instruction::StoreS { dest, ty_place: PlaceTy::IsVal, var, arg, ty });
+                self.emit(Instruction::StoreS { dest, ty_place: PlaceTy::BtInVal, var, arg, ty });
             }
             Place::Index(var, indices) => {
-                let (lhs, tyl) = self.load_array_var(var).into_place();
+                let (lhs, tyl) = self.load_var(var).into_place();
                 let (rhs, tyr) = src.into_arg();
                 self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                     this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
@@ -865,7 +864,7 @@ impl<'a> CodeGen<'a> {
         indices: &[Vec<'_, Expr<'_>>],
         f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
     ) -> T {
-        let (mut arg, mut ty) = self.load_array_var(var).into_place();
+        let (mut arg, mut ty) = self.load_var(var).into_place();
         let last = indices.len() - 1;
 
         for index in &indices[..last] {
@@ -985,15 +984,15 @@ impl<'a> CodeGen<'a> {
                 if let Expr::Leaf(Atom::Variable(var), _) = arg {
                     let instr = match rt_ty {
                         RtType::Scalar => {
-                            let (arg, ty) = this.load_scalar_var(var).into_arg();
+                            let (arg, ty) = this.load_var(var).into_arg();
                             Instruction::CopyS { dest, arg, ty }
                         }
                         RtType::Array => {
-                            let (arg, ty) = this.load_array_var(var).into_place();
+                            let (arg, ty) = this.load_var(var).into_place();
                             Instruction::CopyA { dest, arg, ty }
                         }
                         RtType::Any => {
-                            let (arg, ty) = this.load_scalar_var(var).into_arg();
+                            let (arg, ty) = this.load_var(var).into_arg();
                             Instruction::CopyP { dest, arg, ty }
                         }
                     };

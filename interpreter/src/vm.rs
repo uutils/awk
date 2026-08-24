@@ -306,7 +306,7 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
-                    debug_assert!(matches!(ty_place, PlaceTy::UsVal | PlaceTy::IsVal));
+                    debug_assert!(matches!(ty_place, PlaceTy::UserVal | PlaceTy::BtInVal));
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
                     let place = Place::new(Arg { sym: var }, ty_place);
 
@@ -811,8 +811,8 @@ impl Place {
     fn resolve<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> &'v mut Value<'a> {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg_mut(unsafe { self.arg.reg }),
-            PlaceTy::UsVal | PlaceTy::UaVal => intrp.symbols.user_mut(unsafe { self.arg.sym }),
-            PlaceTy::IsVal | PlaceTy::IaVal => todo!("intrinsic var place"),
+            PlaceTy::UserVal => intrp.symbols.user_mut(unsafe { self.arg.sym }),
+            PlaceTy::BtInVal => todo!("intrinsic var place"),
         }
     }
 
@@ -821,9 +821,8 @@ impl Place {
     fn read<'v, 'a>(self, intrp: &'v Interpreter<'a>) -> &'v Value<'a> {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg(unsafe { self.arg.reg }),
-            PlaceTy::UsVal | PlaceTy::UaVal => intrp.symbols.user(unsafe { self.arg.sym }),
-            PlaceTy::IsVal => todo!(),
-            PlaceTy::IaVal => todo!(),
+            PlaceTy::UserVal => intrp.symbols.user(unsafe { self.arg.sym }),
+            PlaceTy::BtInVal => todo!(),
         }
     }
 

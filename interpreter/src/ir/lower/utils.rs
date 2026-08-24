@@ -73,12 +73,12 @@ impl Operand {
 }
 
 impl TypedArg {
-    pub fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        TypedPlace::new_us(code, ident).into()
+    pub fn new_user(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+        TypedPlace::new_user(code, ident).into()
     }
 
-    pub fn new_is(var: &Variable<'_>) -> Self {
-        TypedPlace::new_is(var).into()
+    pub fn new_btin(var: &Variable<'_>) -> Self {
+        TypedPlace::new_btin(var).into()
     }
 
     pub const fn new_imm(imm: i32) -> Self {
@@ -110,31 +110,18 @@ impl TypedArg {
 }
 
 impl TypedPlace {
-    pub fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+    pub fn new_user(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
         let sym = code.symbols.register_user_var(ident, code.arena);
         if let Some(reg) = code.get_local_arg(sym) {
             Self(Arg { reg }, PlaceTy::Reg)
         } else {
-            Self(Arg { sym }, PlaceTy::UsVal)
+            Self(Arg { sym }, PlaceTy::UserVal)
         }
     }
 
-    pub fn new_is(var: &Variable<'_>) -> Self {
-        Self(Arg { sym: var_index(var) }, PlaceTy::IsVal)
-    }
-
-    pub fn new_ia(var: &Variable<'_>) -> Self {
+    pub fn new_btin(var: &Variable<'_>) -> Self {
         let sym = var_index(var);
-        Self(Arg { sym }, PlaceTy::IaVal)
-    }
-
-    pub fn new_ua(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        let sym = code.symbols.register_user_var(ident, code.arena);
-        if let Some(reg) = code.get_local_arg(sym) {
-            Self(Arg { reg }, PlaceTy::Reg)
-        } else {
-            Self(Arg { sym }, PlaceTy::UaVal)
-        }
+        Self(Arg { sym }, PlaceTy::BtInVal)
     }
 
     pub fn new_reg(reg: impl Into<Reg>) -> Self {

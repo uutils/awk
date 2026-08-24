@@ -326,7 +326,7 @@ fn array_index_assignment_lowers_astore() {
     with_lower("BEGIN { a[1] = 2 }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
-        assert!(bc.contains("ua("), "expected user-array place:\n{bc}");
+        assert!(bc.contains("user("), "expected user-array place:\n{bc}");
     });
 }
 
@@ -335,7 +335,7 @@ fn array_index_read_lowers_aload() {
     with_lower("BEGIN { print a[1] }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(bc.contains("aload"), "expected LoadA:\n{bc}");
-        assert!(bc.contains("ua("), "expected user-array place:\n{bc}");
+        assert!(bc.contains("user("), "expected user-array place:\n{bc}");
     });
 }
 
