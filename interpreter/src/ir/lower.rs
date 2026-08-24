@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 use crate::{
     CodeRange,
     ir::{
-        Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
+        Arg, Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
         lower::utils::{
             CallConv, LinearRegRange, Operand, RegAlloc, RtType, TypedArg, TypedPlace, var_index,
         },
@@ -780,24 +780,10 @@ impl<'a> CodeGen<'a> {
                     this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                 });
             }
-            &Place::ChainedIndex(var, ref indices) => {
-                let (mut arg, mut ty) = match &var {
-                    Variable::User(ident) => TypedPlace::new_ua(self, ident).into_place(),
-                    var => TypedPlace::new_ia(var).into_place(),
-                };
+            Place::ChainedIndex(var, indices) => {
                 self.scoped_reg(|this, array| {
-                    let last = indices.len() - 1;
-
-                    for index in &indices[..last] {
-                        this.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
-                            this.emit(Instruction::LoadM { dest: array, arg, start, end, ty });
-                            (arg, ty) = TypedPlace::new_reg(array).into_place();
-                        });
-                    }
-
-                    this.scoped_reg_range(RtType::Scalar, &indices[last], |this, (start, end)| {
-                        let (lhs, tyl) = TypedPlace::new_reg(array).into_place();
-                        let (rhs, tyr) = src.into_arg();
+                    this.load_aoa_place(array, var, indices, |this, lhs, tyl, (start, end)| {
+                        let (rhs, tyr) = (arg, ty);
                         this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
                     });
                 });
@@ -811,22 +797,34 @@ impl<'a> CodeGen<'a> {
         var: &Variable<'_>,
         indices: &[Vec<'_, Expr<'_>>],
     ) -> TypedPlace {
+        self.load_aoa_place(dest, var, indices, |this, arg, ty, (start, end)| {
+            this.emit(Instruction::LoadA { dest, arg, start, end, ty });
+        });
+        TypedPlace::new_reg(dest)
+    }
+
+    fn load_aoa_place<T>(
+        &mut self,
+        dest: Reg,
+        var: &Variable<'_>,
+        indices: &[Vec<'_, Expr<'_>>],
+        f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
+    ) -> T {
         let (mut arg, mut ty) = match &var {
             Variable::User(ident) => TypedPlace::new_ua(self, ident).into_place(),
             var => TypedPlace::new_ia(var).into_place(),
         };
         let last = indices.len() - 1;
+
         for index in &indices[..last] {
             self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
                 this.emit(Instruction::LoadM { dest, arg, start, end, ty });
                 (arg, ty) = TypedPlace::new_reg(dest).into_place();
             });
         }
-        self.scoped_reg_range(RtType::Scalar, &indices[last], |this, (start, end)| {
-            this.emit(Instruction::LoadA { dest, arg, start, end, ty });
-        });
-
-        TypedPlace::new_reg(dest)
+        self.scoped_reg_range(RtType::Scalar, &indices[last], |this, range| {
+            f(this, arg, ty, range)
+        })
     }
 
     fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
