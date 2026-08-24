@@ -159,8 +159,9 @@ impl RegAlloc {
         LinearReg(self.bump_alloc(1))
     }
 
-    /// Allocates a contiguous register range. Mainly used by
-    /// `gen_call_convention`-style instructions.
+    /// Allocates a contiguous register range. Mainly used for instructions that
+    /// require passing a variable amount of values. Not to be used for user
+    /// function calls for the reasons listed in [`Self::alloc_many_top`].
     pub fn alloc_many(&mut self, need: RegWidth) -> LinearRegRange {
         // Consider using `min_by_key` instead of `position` if there was enough
         // fragmentation caused by this to slow down the allocator.
@@ -173,6 +174,20 @@ impl RegAlloc {
             }
             return LinearRegRange(LinearReg(start), LinearReg(Reg(start.0 + need)));
         }
+        let start = self.bump_alloc(need);
+        LinearRegRange(LinearReg(start), LinearReg(Reg(start.0 + need)))
+    }
+
+    /// User function calls, at the moment, can clobber registers past the end.
+    /// Mainly, because we don't pass their high-water mark to the allocator
+    /// during lowering (just to the VM to reserve more registers), and because
+    /// recursion exists. So, it's either this or worse shenanigans in the VM.
+    pub fn alloc_many_top(&mut self, need: RegWidth) -> LinearRegRange {
+        debug_assert!(
+            !matches!(self.ranges.last(), Some(&(start, len)) if start.0 + len == self.reg_pointer),
+            "a free range touched the high-water mark; free_n should have \
+             retracted it instead of leaving it in the free list",
+        );
         let start = self.bump_alloc(need);
         LinearRegRange(LinearReg(start), LinearReg(Reg(start.0 + need)))
     }

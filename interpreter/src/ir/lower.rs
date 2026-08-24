@@ -285,7 +285,7 @@ impl<'a> CodeGen<'a> {
             Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
                 self.with_metadata(*metadata, |this| {
                     let (range, redir) =
-                        this.gen_call_convention_patched(RtType::Scalar, args, |this| {
+                        this.alloc_reg_range_patched::<false, _>(RtType::Scalar, args, |this| {
                             redirection.as_ref().map(|(r, expr)| {
                                 this.scoped_reg(|this, redir_reg| {
                                     this.lower_expr_into(expr, redir_reg);
@@ -298,14 +298,12 @@ impl<'a> CodeGen<'a> {
                     this.regs.free_many(range);
                 });
             }
-            &Statement::Simple(SimpleStatement::Delete(var, Some(ref index), _)) => self
+            &Statement::Simple(SimpleStatement::Delete(var, Some(ref indices), _)) => self
                 .scoped_reg(|this, tmp| {
                     let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
-                    let range = this.gen_call_convention(RtType::Scalar, index);
-                    let (start, end) = range.as_range();
-
-                    this.emit(Instruction::DeleteM { arg, ty, start, end });
-                    this.regs.free_many(range);
+                    this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                        this.emit(Instruction::DeleteM { arg, ty, start, end });
+                    });
                 }),
             &Statement::Simple(SimpleStatement::Delete(var, None, _)) => {
                 self.scoped_reg(|this, tmp| {
@@ -674,10 +672,9 @@ impl<'a> CodeGen<'a> {
                         &ExprNode::ArrayOperation(ArrayOperator::In, var, ref indices) => {
                             let (arg, ty) =
                                 this.load_place(dest, &Place::Variable(var)).into_place();
-                            let range = this.gen_call_convention(RtType::Scalar, indices);
-                            let (start, end) = range.as_range();
-                            this.emit(Instruction::InA { dest, arg, start, end, ty });
-                            this.regs.free_many(range);
+                            this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                                this.emit(Instruction::InA { dest, arg, start, end, ty });
+                            });
                         }
                         ExprNode::FunctionCall(name, args) => {
                             let name = this.symbols.get_user_fun(name, self.arena);
@@ -688,10 +685,9 @@ impl<'a> CodeGen<'a> {
                         }
                         &ExprNode::BuiltinCall(fun, ref args) => {
                             // Bypass regular variable look-ups on type-info funs.
-                            let range = this.gen_call_convention(fun, args);
-                            let (start, end) = range.as_range();
-                            this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
-                            this.regs.free_many(range);
+                            this.scoped_reg_range(fun, args, |this, (start, end)| {
+                                this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
+                            });
                         }
                         &ExprNode::IndirectCall(place, ref args) => {
                             let range = this.gen_call_convention(RtType::Any, args);
@@ -708,18 +704,20 @@ impl<'a> CodeGen<'a> {
                                 }
                                 var => TypedPlace::new_ia(var).into_place(),
                             };
-
                             for (i, index) in indices.iter().enumerate() {
-                                let range = this.gen_call_convention(RtType::Scalar, index);
-                                let (start, end) = range.as_range();
-                                let instr = if i == indices.len() - 1 {
-                                    Instruction::LoadA { dest, arg, start, end, ty }
-                                } else {
-                                    Instruction::LoadM { dest, arg, start, end, ty }
-                                };
-                                this.emit(instr);
-                                (arg, ty) = TypedPlace::new_reg(dest).into_place();
-                                this.regs.free_many(range);
+                                this.scoped_reg_range(
+                                    RtType::Scalar,
+                                    index,
+                                    |this, (start, end)| {
+                                        let instr = if i == indices.len() - 1 {
+                                            Instruction::LoadA { dest, arg, start, end, ty }
+                                        } else {
+                                            Instruction::LoadM { dest, arg, start, end, ty }
+                                        };
+                                        this.emit(instr);
+                                        (arg, ty) = TypedPlace::new_reg(dest).into_place();
+                                    },
+                                );
                             }
                         }
                         &ExprNode::Getline(_) => todo!(),
@@ -744,19 +742,18 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn load_index(&mut self, dest: Reg, var: &Variable<'_>, index: &[Expr<'_>]) -> TypedPlace {
-        let range = self.gen_call_convention(RtType::Scalar, index);
-        let (start, end) = range.as_range();
-        if let Variable::User(ident) = var {
-            let (arg, ty) = TypedPlace::new_ua(self, ident).into_place();
-            self.emit(Instruction::LoadA { dest, arg, ty, start, end });
-        } else {
-            let (arg, ty) = TypedPlace::new_ia(var).into_place();
-            self.emit(Instruction::LoadA { dest, arg, ty, start, end });
-        }
-        self.regs.free_many(range);
-        // Element value was written to `dest`; subsequent ops must use the register.
-        TypedPlace::new_reg(dest)
+    fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
+        self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+            if let Variable::User(ident) = var {
+                let (arg, ty) = TypedPlace::new_ua(this, ident).into_place();
+                this.emit(Instruction::LoadA { dest, arg, ty, start, end });
+            } else {
+                let (arg, ty) = TypedPlace::new_ia(var).into_place();
+                this.emit(Instruction::LoadA { dest, arg, ty, start, end });
+            }
+            // Element value was written to `dest`; subsequent ops must use the register.
+            TypedPlace::new_reg(dest)
+        })
     }
 
     fn store_place(&mut self, place: &Place<'_>, dest: Reg, src: TypedArg) {
@@ -789,21 +786,19 @@ impl<'a> CodeGen<'a> {
                 let var = var_index(var);
                 self.emit(Instruction::StoreS { dest, ty_place: PlaceTy::IsVal, var, arg, ty });
             }
-            Place::Index(Variable::User(ident), index) => {
+            Place::Index(Variable::User(ident), indices) => {
                 let (lhs, tyl) = TypedPlace::new_ua(self, ident).into_place();
                 let (rhs, tyr) = src.into_arg();
-                let range = self.gen_call_convention(RtType::Scalar, index);
-                let (start, end) = range.as_range();
-                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
-                self.regs.free_many(range);
+                self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                    this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                });
             }
-            Place::Index(var, index) => {
+            Place::Index(var, indices) => {
                 let (lhs, tyl) = TypedPlace::new_ia(var).into_place();
                 let (rhs, tyr) = src.into_arg();
-                let range = self.gen_call_convention(RtType::Scalar, index);
-                let (start, end) = range.as_range();
-                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
-                self.regs.free_many(range);
+                self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                    this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                });
             }
             &Place::ChainedIndex(var, ref indices) => {
                 let (mut arg, mut ty) = match &var {
@@ -813,19 +808,17 @@ impl<'a> CodeGen<'a> {
                 let last = indices.len() - 1;
 
                 for index in &indices[..last] {
-                    let range = self.gen_call_convention(RtType::Scalar, index);
-                    let (start, end) = range.as_range();
-                    self.emit(Instruction::LoadM { dest, arg, start, end, ty });
-                    (arg, ty) = TypedPlace::new_reg(dest).into_place();
-                    self.regs.free_many(range);
+                    self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
+                        this.emit(Instruction::LoadM { dest, arg, start, end, ty });
+                        (arg, ty) = TypedPlace::new_reg(dest).into_place();
+                    });
                 }
 
-                let range = self.gen_call_convention(RtType::Scalar, &indices[last]);
-                let (start, end) = range.as_range();
-                let (lhs, tyl) = TypedPlace::new_reg(dest).into_place();
-                let (rhs, tyr) = src.into_arg();
-                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
-                self.regs.free_many(range);
+                self.scoped_reg_range(RtType::Scalar, &indices[last], |this, (start, end)| {
+                    let (lhs, tyl) = TypedPlace::new_reg(dest).into_place();
+                    let (rhs, tyr) = src.into_arg();
+                    this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                });
             }
         }
     }
@@ -893,11 +886,26 @@ impl<'a> CodeGen<'a> {
         res
     }
 
-    fn gen_call_convention(&mut self, typeck: impl CallConv, args: &[Expr<'_>]) -> LinearRegRange {
-        self.gen_call_convention_patched(typeck, args, |_| {}).0
+    fn scoped_reg_range<T>(
+        &mut self,
+        typeck: impl CallConv,
+        args: &[Expr<'_>],
+        f: impl FnOnce(&mut Self, (Reg, Reg)) -> T,
+    ) -> T {
+        let r = self
+            .alloc_reg_range_patched::<false, _>(typeck, args, |_| {})
+            .0;
+        let ret = f(self, r.as_range());
+        self.regs.free_many(r);
+        ret
     }
 
-    fn gen_call_convention_patched<T>(
+    fn gen_call_convention(&mut self, typeck: impl CallConv, args: &[Expr<'_>]) -> LinearRegRange {
+        self.alloc_reg_range_patched::<true, _>(typeck, args, |_| {})
+            .0
+    }
+
+    fn alloc_reg_range_patched<const TOP_OF_STACK: bool, T>(
         &mut self,
         typeck: impl CallConv,
         args: &[Expr<'_>],
@@ -906,7 +914,11 @@ impl<'a> CodeGen<'a> {
         // TODO: Nicer error reporting.
         let args_len = RegWidth::try_from(args.len()).expect("too many call args");
 
-        let range = self.regs.alloc_many(args_len);
+        let range = if TOP_OF_STACK {
+            self.regs.alloc_many_top(args_len)
+        } else {
+            self.regs.alloc_many(args_len)
+        };
         let (call_start, _) = range.as_range();
 
         let ret = self.regs.clone().scope(self, |this| {
