@@ -178,17 +178,16 @@ impl<'a> Interpreter<'a> {
                         Instruction::IncrementPost { .. } | Instruction::DecrementPost { .. }
                     );
 
-                    let place = Place::new(arg, ty);
-                    let Some(slot) = place.scalar(self) else {
+                    let Some(place) = Place::new(arg, ty).scalar(self) else {
                         return Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata)));
                     };
-                    let new_val = &*slot + (rhs);
+                    let new_val = rhs + place;
                     let observed = if is_post {
-                        slot.clone()
+                        &Value::Int(0) + place
                     } else {
                         new_val.clone()
                     };
-                    *slot = new_val;
+                    *place = new_val;
                     self.write_reg(dest, observed);
                 }
                 Instruction::CopyS { dest, arg, ty } => {
