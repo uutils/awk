@@ -726,15 +726,18 @@ impl<'a> CodeGen<'a> {
         }
     }
 
+    fn load_array_var(&mut self, var: &Variable<'_>) -> TypedPlace {
+        match var {
+            Variable::User(ident) => TypedPlace::new_ua(self, ident),
+            var => TypedPlace::new_ia(var),
+        }
+    }
+
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
         self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-            if let Variable::User(ident) = var {
-                let (arg, ty) = TypedPlace::new_ua(this, ident).into_place();
-                this.emit(Instruction::LoadA { dest, arg, ty, start, end });
-            } else {
-                let (arg, ty) = TypedPlace::new_ia(var).into_place();
-                this.emit(Instruction::LoadA { dest, arg, ty, start, end });
-            }
+            let (arg, ty) = this.load_array_var(var).into_place();
+            this.emit(Instruction::LoadA { dest, arg, ty, start, end });
+
             // Element value was written to `dest`; subsequent ops must use the register.
             TypedPlace::new_reg(dest)
         })
@@ -770,15 +773,8 @@ impl<'a> CodeGen<'a> {
                 let var = var_index(var);
                 self.emit(Instruction::StoreS { dest, ty_place: PlaceTy::IsVal, var, arg, ty });
             }
-            Place::Index(Variable::User(ident), indices) => {
-                let (lhs, tyl) = TypedPlace::new_ua(self, ident).into_place();
-                let (rhs, tyr) = src.into_arg();
-                self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                    this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
-                });
-            }
             Place::Index(var, indices) => {
-                let (lhs, tyl) = TypedPlace::new_ia(var).into_place();
+                let (lhs, tyl) = self.load_array_var(var).into_place();
                 let (rhs, tyr) = src.into_arg();
                 self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                     this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
@@ -814,10 +810,7 @@ impl<'a> CodeGen<'a> {
         indices: &[Vec<'_, Expr<'_>>],
         f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
     ) -> T {
-        let (mut arg, mut ty) = match &var {
-            Variable::User(ident) => TypedPlace::new_ua(self, ident).into_place(),
-            var => TypedPlace::new_ia(var).into_place(),
-        };
+        let (mut arg, mut ty) = self.load_array_var(var).into_place();
         let last = indices.len() - 1;
 
         for index in &indices[..last] {
