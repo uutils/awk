@@ -298,17 +298,21 @@ impl<'a> CodeGen<'a> {
                     this.regs.free_many(range);
                 });
             }
-            &Statement::Simple(SimpleStatement::Delete(var, Some(ref indices), _)) => self
-                .scoped_reg(|this, tmp| {
-                    let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
-                    this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                        this.emit(Instruction::DeleteM { arg, ty, start, end });
+            &Statement::Simple(SimpleStatement::Delete(var, Some(ref indices), metadata)) => self
+                .with_metadata(metadata, |this| {
+                    this.scoped_reg(|this, tmp| {
+                        let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
+                        this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                            this.emit(Instruction::DeleteM { arg, ty, start, end });
+                        });
                     });
                 }),
-            &Statement::Simple(SimpleStatement::Delete(var, None, _)) => {
-                self.scoped_reg(|this, tmp| {
-                    let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
-                    this.emit(Instruction::DeleteA { arg, ty });
+            &Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
+                self.with_metadata(metadata, |this| {
+                    this.scoped_reg(|this, tmp| {
+                        let (arg, ty) = this.load_place(tmp, &Place::Variable(var)).into_place();
+                        this.emit(Instruction::DeleteA { arg, ty });
+                    });
                 });
             }
             Statement::Switch { scrutinee, branches, default, metadata } => {
