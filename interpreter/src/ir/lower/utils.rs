@@ -36,6 +36,13 @@ pub struct TypedArg(Arg, ArgTy);
 #[derive(Clone, Copy)]
 pub struct TypedPlace(Arg, PlaceTy);
 
+#[derive(Clone, Copy)]
+pub enum ResolvedPlace {
+    Record(Reg),
+    Variable,
+    Index { arg: Arg, ty: PlaceTy, range: (Reg, Reg) },
+}
+
 #[must_use]
 pub enum Operand {
     Imm(TypedArg),  // carries data inline

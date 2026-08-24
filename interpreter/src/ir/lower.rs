@@ -20,7 +20,8 @@ use crate::{
     ir::{
         Arg, Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
         lower::utils::{
-            CallConv, LinearRegRange, Operand, RegAlloc, RtType, TypedArg, TypedPlace, var_index,
+            CallConv, LinearRegRange, Operand, RegAlloc, ResolvedPlace, RtType, TypedArg,
+            TypedPlace, var_index,
         },
     },
     vm::{Consts, Function, SymbolTable, types::Value},
@@ -583,12 +584,15 @@ impl<'a> CodeGen<'a> {
                                 return;
                             };
 
-                            this.scoped_reg(|this, lhs_reg| {
-                                let lhs = this.load_place(lhs_reg, place).into();
-                                let rhs = val.to_arg();
+                            this.with_resolved_place(place, |this, resolved| {
+                                this.scoped_reg(|this, lhs_reg| {
+                                    let lhs = this.load_resolved(resolved, place, lhs_reg).into();
+                                    let rhs = val.to_arg();
+                                    let arg = TypedArg::new_reg(dest);
 
-                                this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
-                                this.store_place(place, dest, TypedArg::new_reg(dest));
+                                    this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
+                                    this.store_resolved(resolved, place, dest, arg);
+                                });
                             });
                             val.free(this);
                         }
@@ -615,49 +619,42 @@ impl<'a> CodeGen<'a> {
                         }
                         // Unoptimized path for values in arrays.
                         ExprNode::UnaryPlaceOperation(op, place) => {
-                            // Note: val may alias with dest.
-                            let lhs = this.load_place(dest, place).into();
-                            let one = TypedArg::new_imm(1);
+                            this.with_resolved_place(place, |this, resolved| {
+                                let lhs = this.load_resolved(resolved, place, dest).into();
+                                let add = BinaryOperator::Add;
+                                let sub = BinaryOperator::Subtract;
+                                let one = TypedArg::new_imm(1);
+                                let zero = TypedArg::new_imm(0);
 
-                            match op {
-                                UnaryPlaceOperator::IncrementL => {
-                                    this.emit(Instruction::from_binary(
-                                        BinaryOperator::Add,
-                                        dest,
-                                        lhs,
-                                        one,
-                                    ));
-                                    this.store_place(place, dest, TypedArg::new_reg(dest));
+                                match op {
+                                    UnaryPlaceOperator::IncrementL => {
+                                        let arg = TypedArg::new_reg(dest);
+                                        this.emit(Instruction::from_binary(add, dest, lhs, one));
+                                        this.store_resolved(resolved, place, dest, arg);
+                                    }
+                                    UnaryPlaceOperator::DecrementL => {
+                                        let arg = TypedArg::new_reg(dest);
+                                        this.emit(Instruction::from_binary(sub, dest, lhs, one));
+                                        this.store_resolved(resolved, place, dest, arg);
+                                    }
+                                    UnaryPlaceOperator::IncrementR => {
+                                        this.emit(Instruction::from_binary(add, dest, lhs, zero));
+                                        this.scoped_reg(|this, tmp| {
+                                            let arg = TypedArg::new_reg(tmp);
+                                            this.emit(Instruction::from_binary(add, tmp, lhs, one));
+                                            this.store_resolved(resolved, place, tmp, arg);
+                                        });
+                                    }
+                                    UnaryPlaceOperator::DecrementR => {
+                                        this.emit(Instruction::from_binary(add, dest, lhs, zero));
+                                        this.scoped_reg(|this, tmp| {
+                                            let arg = TypedArg::new_reg(tmp);
+                                            this.emit(Instruction::from_binary(sub, tmp, lhs, one));
+                                            this.store_resolved(resolved, place, tmp, arg);
+                                        });
+                                    }
                                 }
-                                UnaryPlaceOperator::DecrementL => {
-                                    this.emit(Instruction::from_binary(
-                                        BinaryOperator::Subtract,
-                                        dest,
-                                        lhs,
-                                        one,
-                                    ));
-                                    this.store_place(place, dest, TypedArg::new_reg(dest));
-                                }
-                                UnaryPlaceOperator::IncrementR | UnaryPlaceOperator::DecrementR => {
-                                    this.emit(Instruction::from_binary(
-                                        BinaryOperator::Add,
-                                        dest,
-                                        lhs,
-                                        TypedArg::new_imm(0),
-                                    ));
-                                    this.scoped_reg(|this, tmp| {
-                                        let op = match op {
-                                            UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
-                                            UnaryPlaceOperator::DecrementR => {
-                                                BinaryOperator::Subtract
-                                            }
-                                            _ => unreachable!(),
-                                        };
-                                        this.emit(Instruction::from_binary(op, tmp, lhs, one));
-                                        this.store_place(place, tmp, TypedArg::new_reg(tmp));
-                                    });
-                                }
-                            }
+                            });
                         }
                         ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
                         ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
@@ -707,6 +704,77 @@ impl<'a> CodeGen<'a> {
                         &ExprNode::Getline(_) => todo!(),
                     }
                 });
+            }
+        }
+    }
+
+    /// Resolves a place and allows performing multiple operations on it.
+    /// Mostly, useful for places whose resolving has side-effects, like
+    /// `array[f(x)] += 1`, which would otherwise evaluate `f(x)` twice.
+    fn with_resolved_place<T>(
+        &mut self,
+        place: &Place<'_>,
+        f: impl FnOnce(&mut Self, ResolvedPlace) -> T,
+    ) -> T {
+        match place {
+            Place::Record(expr) => self.scoped_reg(|this, reg| {
+                this.lower_expr_into(expr, reg);
+                f(this, ResolvedPlace::Record(reg))
+            }),
+            Place::Variable(_) => f(self, ResolvedPlace::Variable),
+            Place::Index(var, indices) => {
+                let (arg, ty) = self.load_array_var(var).into_place();
+                self.scoped_reg_range(RtType::Scalar, indices, |this, range| {
+                    f(this, ResolvedPlace::Index { arg, ty, range })
+                })
+            }
+            Place::ChainedIndex(var, indices) => self.scoped_reg(|this, array_reg| {
+                this.load_aoa_place(array_reg, var, indices, |this, arg, ty, range| {
+                    f(this, ResolvedPlace::Index { arg, ty, range })
+                })
+            }),
+        }
+    }
+
+    /// Loads the current value of an already-resolved place into `dest`.
+    fn load_resolved(
+        &mut self,
+        resolved: ResolvedPlace,
+        place: &Place<'_>,
+        dest: Reg,
+    ) -> TypedPlace {
+        match resolved {
+            ResolvedPlace::Record(reg) => {
+                let (arg, ty) = TypedArg::new_reg(reg).into_arg();
+                self.emit(Instruction::LoadF { dest, arg, ty });
+                TypedPlace::new_reg(dest)
+            }
+            ResolvedPlace::Variable => self.load_place(dest, place),
+            ResolvedPlace::Index { arg, ty, range: (start, end) } => {
+                self.emit(Instruction::LoadA { dest, arg, ty, start, end });
+                TypedPlace::new_reg(dest)
+            }
+        }
+    }
+
+    /// Stores `src` into an already-resolved place.
+    fn store_resolved(
+        &mut self,
+        resolved: ResolvedPlace,
+        place: &Place<'_>,
+        dest: Reg,
+        src: TypedArg,
+    ) {
+        match resolved {
+            ResolvedPlace::Record(reg) => {
+                let (arg, ty) = src.into_arg();
+                let (src, tys) = TypedArg::new_reg(reg).into_arg();
+                self.emit(Instruction::StoreF { dest, src, tys, arg, ty });
+            }
+            ResolvedPlace::Variable => self.store_place(place, dest, src),
+            ResolvedPlace::Index { arg: lhs, ty: tyl, range: (start, end) } => {
+                let (rhs, tyr) = src.into_arg();
+                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
             }
         }
     }
@@ -997,7 +1065,7 @@ impl<'a> CodeGen<'a> {
     }
 
     /// Allocates a register and frees it at the end of the scope.
-    pub fn scoped_reg<T>(&mut self, f: impl FnOnce(&mut CodeGen, Reg) -> T) -> T {
+    pub fn scoped_reg<T>(&mut self, f: impl FnOnce(&mut Self, Reg) -> T) -> T {
         let reg = self.regs.alloc();
         let ret = f(self, *reg);
         self.regs.free(reg);
