@@ -617,35 +617,23 @@ impl<'a> CodeGen<'a> {
                         ExprNode::UnaryPlaceOperation(op, place) => {
                             this.with_resolved_place(place, |this, resolved| {
                                 let lhs = this.load_resolved(resolved, place, dest).into();
+                                let (zero, one) = (TypedArg::new_imm(0), TypedArg::new_imm(1));
                                 let add = BinaryOperator::Add;
-                                let sub = BinaryOperator::Subtract;
-                                let one = TypedArg::new_imm(1);
-                                let zero = TypedArg::new_imm(0);
+                                let bn = unary_place_to_binop(*op);
 
                                 match op {
-                                    UnaryPlaceOperator::IncrementL => {
+                                    UnaryPlaceOperator::IncrementL
+                                    | UnaryPlaceOperator::DecrementL => {
                                         let arg = TypedArg::new_reg(dest);
-                                        this.emit(Instruction::from_binary(add, dest, lhs, one));
+                                        this.emit(Instruction::from_binary(bn, dest, lhs, one));
                                         this.store_resolved(resolved, place, dest, arg);
                                     }
-                                    UnaryPlaceOperator::DecrementL => {
-                                        let arg = TypedArg::new_reg(dest);
-                                        this.emit(Instruction::from_binary(sub, dest, lhs, one));
-                                        this.store_resolved(resolved, place, dest, arg);
-                                    }
-                                    UnaryPlaceOperator::IncrementR => {
+                                    UnaryPlaceOperator::IncrementR
+                                    | UnaryPlaceOperator::DecrementR => {
                                         this.emit(Instruction::from_binary(add, dest, lhs, zero));
                                         this.scoped_reg(|this, tmp| {
                                             let arg = TypedArg::new_reg(tmp);
-                                            this.emit(Instruction::from_binary(add, tmp, lhs, one));
-                                            this.store_resolved(resolved, place, tmp, arg);
-                                        });
-                                    }
-                                    UnaryPlaceOperator::DecrementR => {
-                                        this.emit(Instruction::from_binary(add, dest, lhs, zero));
-                                        this.scoped_reg(|this, tmp| {
-                                            let arg = TypedArg::new_reg(tmp);
-                                            this.emit(Instruction::from_binary(sub, tmp, lhs, one));
+                                            this.emit(Instruction::from_binary(bn, tmp, lhs, one));
                                             this.store_resolved(resolved, place, tmp, arg);
                                         });
                                     }
@@ -1173,5 +1161,12 @@ const fn lower_assign_ops(op: BinaryPlaceOperator) -> Option<BinaryOperator> {
         BinaryPlaceOperator::DivAssign => Some(BinaryOperator::Divide),
         BinaryPlaceOperator::PowAssign => Some(BinaryOperator::Raise),
         BinaryPlaceOperator::ModAssign => Some(BinaryOperator::Modulo),
+    }
+}
+
+const fn unary_place_to_binop(op: UnaryPlaceOperator) -> BinaryOperator {
+    match op {
+        UnaryPlaceOperator::IncrementL | UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
+        UnaryPlaceOperator::DecrementL | UnaryPlaceOperator::DecrementR => BinaryOperator::Subtract,
     }
 }
