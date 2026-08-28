@@ -408,6 +408,11 @@ impl Record {
     pub fn raw(&self) -> &[u8] {
         &self.raw
     }
+
+    pub fn clear(&mut self) {
+        self.raw.clear();
+        self.fields = None;
+    }
 }
 
 #[cfg(test)]

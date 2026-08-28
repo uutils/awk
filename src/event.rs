@@ -5,7 +5,8 @@
 
 use std::{
     convert::Infallible,
-    io::{Result, Write, stdout},
+    fs::File,
+    io::{self, BufRead, BufReader, Read, Result, Write, empty, stdin, stdout},
     path::Path,
     process::exit,
 };
@@ -72,8 +73,13 @@ impl<'a> AwkRt<'a> {
         }
     }
 
-    pub fn begin_file_event_loop(&mut self, _path: Option<&Path>) -> Result<bool> {
-        // TODO: read path and set ERRNO
+    #[must_use = "Handle file skipping"]
+    pub fn begin_file_event_loop(
+        &mut self,
+        path: Option<&Path>,
+        res: Option<&io::Error>,
+    ) -> Result<bool> {
+        self.intrp.begin_file_prelude(path, res);
         match self.drive(self.bc.begin_file_code())? {
             CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
@@ -92,23 +98,31 @@ impl<'a> AwkRt<'a> {
 
     pub fn rule_event_loop(&mut self) -> Result<()> {
         let range = self.bc.rules_code();
+        let mut reader = BufReader::new(Box::new(empty()) as Box<dyn Read>);
 
         while let Some(item) = self.queue.split_off_first() {
-            match item {
-                ArgQueueItem::File(f) => {
-                    self.begin_file_event_loop(Some(f))?;
-                }
-                ArgQueueItem::Stdio => {
-                    self.begin_file_event_loop(None)?;
-                }
+            let (path, res) = match item {
+                ArgQueueItem::File(path) => (
+                    Some(path.as_path()),
+                    File::open(path).map(|f| Box::new(f) as Box<dyn Read>),
+                ),
+                ArgQueueItem::Stdio => (None, Ok(Box::new(stdin().lock()) as Box<dyn Read>)),
                 ArgQueueItem::Assignment(KeyValue { .. }) => {
                     // TODO assign variable
                     continue;
                 }
+            };
+            let skip_file = self.begin_file_event_loop(path, res.as_ref().err())?;
+
+            if skip_file {
+                continue;
             }
 
+            reader.consume(reader.buffer().len());
+            *reader.get_mut() = res?; // Propagate open errors.
+
             match self.drive(range.clone())? {
-                CtrlSig::End | CtrlSig::NextFile => {} // continues
+                CtrlSig::End | CtrlSig::NextFile => {} // clean-up & continue.
                 CtrlSig::Next => todo!(),
                 CtrlSig::Exit(code) => return self.end_event_loop(code).map(|_| ()),
             }

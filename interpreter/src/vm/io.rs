@@ -5,9 +5,15 @@
 
 #[cfg(unix)]
 use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-use std::{num::NonZero, path::PathBuf};
+use std::{
+    io,
+    num::NonZero,
+    path::{Path, PathBuf},
+};
 
 use atoi::atoi;
+
+use crate::{Interpreter, vm::types::Value};
 
 #[derive(Debug)]
 pub enum FilePath {
@@ -47,5 +53,17 @@ impl From<&[u8]> for FilePath {
                 _ => Self::Path(String::from_utf8_lossy(s).into_owned().into()),
             },
         }
+    }
+}
+
+impl Interpreter<'_> {
+    pub fn begin_file_prelude(&mut self, f: Option<&Path>, res: Option<&io::Error>) {
+        let name = f.map_or(b"-".as_slice(), |p| p.as_os_str().as_encoded_bytes());
+        let errno = res.map_or(0, |e| e.raw_os_error().unwrap_or(-1) as _);
+
+        self.symbols.filename = Value::String(name.to_vec().into());
+        self.symbols.errno = Value::Int(errno);
+        self.symbols.fnr = Value::Int(0);
+        self.record.clear();
     }
 }
