@@ -302,7 +302,7 @@ impl<'a> CodeGen<'a> {
                 .with_metadata(*metadata, |this| {
                     let (arg, ty) = this.load_var(var).into_place();
                     this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                        this.emit(Instruction::DeleteM { arg, ty, start, end });
+                        this.emit(Instruction::DeleteP { arg, ty, start, end });
                     });
                 }),
             Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
@@ -731,7 +731,7 @@ impl<'a> CodeGen<'a> {
             }
             ResolvedPlace::Variable => self.load_place(dest, place),
             ResolvedPlace::Index { arg, ty, range: (start, end) } => {
-                self.emit(Instruction::LoadA { dest, arg, ty, start, end });
+                self.emit(Instruction::LoadS { dest, arg, ty, start, end });
                 TypedPlace::new_reg(dest)
             }
         }
@@ -783,7 +783,7 @@ impl<'a> CodeGen<'a> {
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
         self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
             let (arg, ty) = this.load_var(var).into_place();
-            this.emit(Instruction::LoadA { dest, arg, ty, start, end });
+            this.emit(Instruction::LoadS { dest, arg, ty, start, end });
 
             // Element value was written to `dest`; subsequent ops must use the register.
             TypedPlace::new_reg(dest)
@@ -852,7 +852,7 @@ impl<'a> CodeGen<'a> {
         indices: &[Vec<'_, Expr<'_>>],
     ) -> TypedPlace {
         self.load_aoa_place(dest, var, indices, |this, arg, ty, (start, end)| {
-            this.emit(Instruction::LoadA { dest, arg, start, end, ty });
+            this.emit(Instruction::LoadS { dest, arg, start, end, ty });
         });
         TypedPlace::new_reg(dest)
     }
@@ -869,7 +869,7 @@ impl<'a> CodeGen<'a> {
 
         for index in &indices[..last] {
             self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
-                this.emit(Instruction::LoadM { dest, arg, start, end, ty });
+                this.emit(Instruction::LoadA { dest, arg, start, end, ty });
                 (arg, ty) = TypedPlace::new_reg(dest).into_place();
             });
         }

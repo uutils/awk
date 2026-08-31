@@ -137,7 +137,7 @@ impl<'a> Value<'a> {
         self.as_array().map(|arr| arr.borrow().get(key).is_some())
     }
 
-    pub fn array_elem_mdim(&mut self, key: String) -> Option<Self> {
+    pub fn array_elem_aoa(&mut self, key: String) -> Option<Self> {
         self.as_array().map(|arr| {
             arr.borrow_mut()
                 .entry(key)

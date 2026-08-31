@@ -293,15 +293,15 @@ impl<'a> Interpreter<'a> {
 
                     self.write_reg(dest, val);
                 }
-                Instruction::LoadA { dest, arg, start, end, ty } => {
+                Instruction::LoadS { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
                     let val = self.array_elem_get(Place::new(arg, ty), &key, metadata)?;
 
                     self.write_reg(dest, val);
                 }
-                Instruction::LoadM { dest, arg, start, end, ty } => {
+                Instruction::LoadA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.array_elem_mdim(Place::new(arg, ty), key, metadata)?;
+                    let val = self.array_elem_aoa(Place::new(arg, ty), key, metadata)?;
 
                     self.write_reg(dest, val);
                 }
@@ -336,7 +336,7 @@ impl<'a> Interpreter<'a> {
                     // Remember typedness
                     *place.resolve(self) = Value::empty_array();
                 }
-                Instruction::DeleteM { arg, ty, start, end } => {
+                Instruction::DeleteP { arg, ty, start, end } => {
                     let key = self.make_array_key(start, end);
                     // Forget typedness
                     self.array_elem_set(Place::new(arg, ty), key, Value::Untyped, metadata)?;
@@ -467,7 +467,7 @@ impl<'a> Interpreter<'a> {
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 
-    fn array_elem_mdim(
+    fn array_elem_aoa(
         &mut self,
         place: Place,
         key: String,
@@ -475,7 +475,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<Value<'a>> {
         place
             .array(self)
-            .and_then(|arr| arr.array_elem_mdim(key))
+            .and_then(|arr| arr.array_elem_aoa(key))
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 

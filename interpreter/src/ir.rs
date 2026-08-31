@@ -75,10 +75,10 @@ pub enum Instruction {
     StoreS { dest: Reg, ty_place: PlaceTy, var: NonLocal, arg: Arg, ty: ArgTy },
     StoreF { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: PlaceTy, tyr: ArgTy },
-    LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    LoadS { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     InA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
-    LoadM { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
-    DeleteM { arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    DeleteP { arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
@@ -313,14 +313,14 @@ impl Display for Instruction {
                 write!(f, ", {start}..{end}")?;
                 fmt_arg(f, rhs, tyr, ", ")
             }
-            Self::LoadA { dest, arg, start, end, ty }
-            | Self::LoadM { dest, arg, start, end, ty }
+            Self::LoadS { dest, arg, start, end, ty }
+            | Self::LoadA { dest, arg, start, end, ty }
             | Self::InA { dest, arg, start, end, ty } => {
                 write!(f, "{dest} <- {op}")?;
                 fmt_arg(f, arg, ty, " ")?;
                 write!(f, ", {start}..{end}")
             }
-            Self::DeleteM { arg, start, end, ty } => {
+            Self::DeleteP { arg, start, end, ty } => {
                 write!(f, "{op}")?;
                 fmt_arg(f, arg, ty, " ")?;
                 write!(f, ", {start}..{end}")
@@ -395,15 +395,15 @@ impl Instruction {
             Self::StoreS { .. } => "sstore",
             Self::StoreF { .. } => "fstore",
             Self::StoreA { .. } => "astore",
+            Self::LoadS { .. } => "sload",
             Self::LoadA { .. } => "aload",
-            Self::LoadM { .. } => "mload",
             Self::In { .. } => "in",
             Self::InA { .. } => "ain",
             Self::CopyS { .. } => "scpy",
             Self::CopyA { .. } => "acpy",
             Self::CopyP { .. } => "pcpy",
             Self::DeleteA { .. } => "adel",
-            Self::DeleteM { .. } => "mdel",
+            Self::DeleteP { .. } => "pdel",
             Self::IntrinsicCall { .. } => "icall",
             Self::UserCall { .. } => "ucall",
             Self::IndirectCall { .. } => "vcall",
