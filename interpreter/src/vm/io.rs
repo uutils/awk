@@ -105,15 +105,25 @@ impl Interpreter<'_> {
 
         // It is correct behavior that we terminate the record on EOF too,
         // even if the text file is malformed (no trailing newline).
-        if let [byte] = *bytes {
-            // fast path: single search
-            reader.read_until(byte, rec).map(|n| n > 0)
-        } else {
-            // slow path: loop searching multiple bytes or EOF.
-            let last = bytes[bytes.len() - 1];
-
-            while reader.read_until(last, rec)? > 0 && !rec.ends_with(bytes) {}
-            Ok(!rec.is_empty())
+        match *bytes {
+            [byte] => {
+                // fast path: single search
+                let read = reader.read_until(byte, rec)?;
+                rec.pop_if(|&mut last| last == byte);
+                Ok(read > 0)
+            }
+            [.., last] => {
+                // slow path: loop searching multiple bytes or EOF.
+                while reader.read_until(last, rec)? > 0 {
+                    if rec.ends_with(bytes) {
+                        rec.truncate(rec.len() - bytes.len());
+                        return Ok(true);
+                    }
+                }
+                Ok(!rec.is_empty())
+            }
+            // This would be a bug in the std. It is often optimized away.
+            _ => unreachable!(),
         }
     }
 
