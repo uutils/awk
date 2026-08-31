@@ -270,6 +270,7 @@ fn value_bytes(v: &Value<'_>) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use bumpalo::Bump;
     use parser::MetadataStore;
