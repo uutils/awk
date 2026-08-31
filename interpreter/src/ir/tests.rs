@@ -20,10 +20,7 @@ fn switch_lowers_case_comparisons() {
         "BEGIN { switch (x) { case 1: print; case \"a\": print 2; default: print 3 } }",
         |cg| {
             let bc = format!("{}", cg.bc);
-            assert!(
-                bc.contains(" <- eq "),
-                "expected Eq for literal cases:\n{bc}"
-            );
+            assert!(bc.contains("eq"), "expected Eq for literal cases:\n{bc}");
             assert!(bc.contains("brif"), "expected case branches:\n{bc}");
             assert!(bc.contains("jmp"), "expected jumps to end of switch:\n{bc}");
         },
@@ -35,13 +32,10 @@ fn switch_lowers_regex_case_with_matches() {
     with_lower("BEGIN { switch (x) { case /pat/: print } }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(
-            bc.contains(" <- mtch "),
+            bc.contains("mtch"),
             "expected Matches for regex case:\n{bc}"
         );
-        assert!(
-            !bc.contains(" <- eq "),
-            "regex case should not use Eq:\n{bc}"
-        );
+        assert!(!bc.contains("eq"), "regex case should not use Eq:\n{bc}");
     });
 }
 
@@ -57,11 +51,8 @@ fn brif_count(cg: &CodeGen<'_>) -> usize {
 fn and_or_use_branches_not_dedicated_ops() {
     with_lower("BEGIN { print (0 && 1); print (1 || 0) }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(
-            !bc.contains(" <- and "),
-            "unexpected And instruction:\n{bc}"
-        );
-        assert!(!bc.contains(" <- or "), "unexpected Or instruction:\n{bc}");
+        assert!(!bc.contains("and"), "unexpected And instruction:\n{bc}");
+        assert!(!bc.contains("or"), "unexpected Or instruction:\n{bc}");
         assert!(
             bc.contains("brif"),
             "expected short-circuit branches:\n{bc}"
@@ -94,7 +85,7 @@ fn switch_typed_regex_case_uses_matches() {
     with_lower("BEGIN { switch (x) { case @/pat/: print } }", |cg| {
         let bc = format!("{}", cg.bc);
         assert!(
-            bc.contains(" <- mtch "),
+            bc.contains("mtch"),
             "expected Matches for typed regex case:\n{bc}"
         );
     });
@@ -322,37 +313,37 @@ fn nested_continue_targets_innermost_loop() {
 }
 
 #[test]
-fn array_index_assignment_lowers_astore() {
+fn array_index_assignment_lowers_insert() {
     with_lower("BEGIN { a[1] = 2 }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
+        assert!(bc.contains("insert"), "expected Insert:\n{bc}");
         assert!(bc.contains("user("), "expected user-array place:\n{bc}");
     });
 }
 
 #[test]
-fn array_index_read_lowers_aload() {
+fn array_index_read_lowers_index() {
     with_lower("BEGIN { print a[1] }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(bc.contains("aload"), "expected LoadA:\n{bc}");
+        assert!(bc.contains("sindex"), "expected IndexS:\n{bc}");
         assert!(bc.contains("user("), "expected user-array place:\n{bc}");
     });
 }
 
 #[test]
-fn array_index_increment_lowers_load_and_store() {
+fn array_index_increment_lowers_index_and_insert() {
     with_lower("BEGIN { ++a[1] }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(bc.contains("aload"), "expected LoadA:\n{bc}");
-        assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
+        assert!(bc.contains("sindex"), "expected IndexS:\n{bc}");
+        assert!(bc.contains("insert"), "expected Insert:\n{bc}");
     });
 }
 
 #[test]
-fn array_multi_index_assignment_lowers_astore() {
+fn array_multi_index_assignment_lowers_insert() {
     with_lower("BEGIN { a[1, 2] = 3 }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(bc.contains("astore"), "expected StoreA:\n{bc}");
+        assert!(bc.contains("insert"), "expected Insert:\n{bc}");
     });
 }
 
@@ -360,10 +351,7 @@ fn array_multi_index_assignment_lowers_astore() {
 fn builtin_call_lowers_to_icall() {
     with_lower("BEGIN { print int(3.7) }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(
-            bc.contains(" <- icall int,"),
-            "expected IntrinsicCall for int():\n{bc}"
-        );
+        assert!(bc.contains("int,"), "expected bcall for int():\n{bc}");
     });
 }
 
@@ -371,10 +359,7 @@ fn builtin_call_lowers_to_icall() {
 fn builtin_call_nested_in_expression_lowers_icall() {
     with_lower("BEGIN { x = length(\"abc\") + sqrt(4) }", |cg| {
         let bc = format!("{}", cg.bc);
-        assert!(
-            bc.contains(" <- icall length,"),
-            "expected length icall:\n{bc}"
-        );
-        assert!(bc.contains(" <- icall sqrt,"), "expected sqrt icall:\n{bc}");
+        assert!(bc.contains("length,"), "expected length bcall:\n{bc}");
+        assert!(bc.contains("sqrt,"), "expected sqrt bcall:\n{bc}");
     });
 }

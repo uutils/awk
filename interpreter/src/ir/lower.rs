@@ -731,7 +731,7 @@ impl<'a> CodeGen<'a> {
             }
             ResolvedPlace::Variable => self.load_place(dest, place),
             ResolvedPlace::Index { arg, ty, range: (start, end) } => {
-                self.emit(Instruction::LoadS { dest, arg, ty, start, end });
+                self.emit(Instruction::IndexS { dest, arg, ty, start, end });
                 TypedPlace::new_reg(dest)
             }
         }
@@ -754,7 +754,7 @@ impl<'a> CodeGen<'a> {
             ResolvedPlace::Variable => self.store_place(place, dest, src),
             ResolvedPlace::Index { arg: lhs, ty: tyl, range: (start, end) } => {
                 let (rhs, tyr) = src.into_arg();
-                self.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                self.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
             }
         }
     }
@@ -783,7 +783,7 @@ impl<'a> CodeGen<'a> {
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
         self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
             let (arg, ty) = this.load_var(var).into_place();
-            this.emit(Instruction::LoadS { dest, arg, ty, start, end });
+            this.emit(Instruction::IndexS { dest, arg, ty, start, end });
 
             // Element value was written to `dest`; subsequent ops must use the register.
             TypedPlace::new_reg(dest)
@@ -831,14 +831,14 @@ impl<'a> CodeGen<'a> {
                 let (lhs, tyl) = self.load_var(var).into_place();
                 let (rhs, tyr) = src.into_arg();
                 self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                    this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                    this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
                 });
             }
             Place::ChainedIndex(var, indices) => {
                 self.scoped_reg(|this, array| {
                     this.load_aoa_place(array, var, indices, |this, lhs, tyl, (start, end)| {
                         let (rhs, tyr) = (arg, ty);
-                        this.emit(Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr });
+                        this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
                     });
                 });
             }
@@ -852,7 +852,7 @@ impl<'a> CodeGen<'a> {
         indices: &[Vec<'_, Expr<'_>>],
     ) -> TypedPlace {
         self.load_aoa_place(dest, var, indices, |this, arg, ty, (start, end)| {
-            this.emit(Instruction::LoadS { dest, arg, start, end, ty });
+            this.emit(Instruction::IndexS { dest, arg, start, end, ty });
         });
         TypedPlace::new_reg(dest)
     }
@@ -869,7 +869,7 @@ impl<'a> CodeGen<'a> {
 
         for index in &indices[..last] {
             self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
-                this.emit(Instruction::LoadA { dest, arg, start, end, ty });
+                this.emit(Instruction::IndexA { dest, arg, start, end, ty });
                 (arg, ty) = TypedPlace::new_reg(dest).into_place();
             });
         }

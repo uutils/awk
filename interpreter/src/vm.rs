@@ -293,13 +293,13 @@ impl<'a> Interpreter<'a> {
 
                     self.write_reg(dest, val);
                 }
-                Instruction::LoadS { dest, arg, start, end, ty } => {
+                Instruction::IndexS { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
                     let val = self.array_elem_get(Place::new(arg, ty), &key, metadata)?;
 
                     self.write_reg(dest, val);
                 }
-                Instruction::LoadA { dest, arg, start, end, ty } => {
+                Instruction::IndexA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
                     let val = self.array_elem_aoa(Place::new(arg, ty), key, metadata)?;
 
@@ -324,7 +324,7 @@ impl<'a> Interpreter<'a> {
 
                     self.write_reg(dest, val);
                 }
-                Instruction::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
+                Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr } => {
                     let key = self.make_array_key(start, end);
                     let val = self.get_val(rhs, tyr, metadata, Value::clone)?;
 

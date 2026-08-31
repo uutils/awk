@@ -74,10 +74,10 @@ pub enum Instruction {
     // Intrinsic operations
     StoreS { dest: Reg, ty_place: PlaceTy, var: NonLocal, arg: Arg, ty: ArgTy },
     StoreF { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
-    StoreA { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: PlaceTy, tyr: ArgTy },
-    LoadS { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    Insert { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: PlaceTy, tyr: ArgTy },
+    IndexS { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     InA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
-    LoadA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    IndexA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     DeleteP { arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
@@ -262,12 +262,12 @@ impl Display for Instruction {
             | Self::Negative { dest, arg, ty }
             | Self::CopyS { dest, arg, ty }
             | Self::CopyP { dest, arg, ty } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, arg, ty, " ")
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, arg, ty, ", ")
             }
             Self::CopyA { dest, arg, ty } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, arg, ty, " ")
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, arg, ty, ", ")
             }
             Self::DeleteA { arg, ty } => {
                 write!(f, "{op}")?;
@@ -288,49 +288,49 @@ impl Display for Instruction {
             | Self::Raise { dest, lhs, rhs, tyl, tyr }
             | Self::Concat { dest, lhs, rhs, tyl, tyr }
             | Self::Modulo { dest, lhs, rhs, tyl, tyr } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, lhs, tyl, " ")?;
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, lhs, tyl, ", ")?;
                 fmt_arg(f, rhs, tyr, ", ")
             }
             Self::In { dest, lhs, rhs, tyr, tyl } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, lhs, tyl, " ")?;
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, lhs, tyl, ", ")?;
                 fmt_arg(f, rhs, tyr, ", ")
             }
             Self::StoreS { dest, ty_place, var, arg, ty } => {
                 let ty_place = ArgTy::from(*ty_place);
-                write!(f, "{dest} <- {op} {ty_place}({var})")?;
+                write!(f, "{op} {dest}, {ty_place}({var})")?;
                 fmt_arg(f, arg, ty, ", ")
             }
             Self::StoreF { dest, src, arg, ty, tys } => {
-                write!(f, "{dest} <- {op} $(")?;
+                write!(f, "{op} {dest}, $(")?;
                 fmt_arg(f, src, tys, "")?;
                 fmt_arg(f, arg, ty, "), ")
             }
-            Self::StoreA { dest, lhs, rhs, start, end, tyl, tyr } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, lhs, tyl, " ")?;
+            Self::Insert { dest, lhs, rhs, start, end, tyl, tyr } => {
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, lhs, tyl, ", ")?;
                 write!(f, ", {start}..{end}")?;
                 fmt_arg(f, rhs, tyr, ", ")
             }
-            Self::LoadS { dest, arg, start, end, ty }
-            | Self::LoadA { dest, arg, start, end, ty }
+            Self::IndexS { dest, arg, start, end, ty }
+            | Self::IndexA { dest, arg, start, end, ty }
             | Self::InA { dest, arg, start, end, ty } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, arg, ty, " ")?;
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, arg, ty, ", ")?;
                 write!(f, ", {start}..{end}")
             }
             Self::DeleteP { arg, start, end, ty } => {
                 write!(f, "{op}")?;
-                fmt_arg(f, arg, ty, " ")?;
+                fmt_arg(f, arg, ty, ", ")?;
                 write!(f, ", {start}..{end}")
             }
             Self::IncrementPost { dest, arg, ty }
             | Self::IncrementPre { dest, arg, ty }
             | Self::DecrementPost { dest, arg, ty }
             | Self::DecrementPre { dest, arg, ty } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, arg, ty, " ")
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, arg, ty, ", ")
             }
             Self::Branch { condition, then_label, else_label } => {
                 write!(f, "{op} {condition}, {then_label}, {else_label}")
@@ -343,11 +343,11 @@ impl Display for Instruction {
                 fmt_arg(f, arg, ty, " ")
             }
             Self::IntrinsicCall { dest, start, end, fun } => {
-                write!(f, "{dest} <- {op} {fun}, {start}..{end}")
+                write!(f, "{op} {dest} {fun}, {start}..{end}")
             }
             Self::IndirectCall { dest, start, end, name, ty } => {
-                write!(f, "{dest} <- {op}")?;
-                fmt_arg(f, name, ty, " ")?;
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, name, ty, ", ")?;
                 write!(f, ", {start}..{end}")
             }
             Self::OutputCall { start, end, cmd, redir: Some(redir) } => {
@@ -357,7 +357,7 @@ impl Display for Instruction {
                 write!(f, "{cmd} {start}..{end}")
             }
             Self::UserCall { dest, start, end, name } => {
-                write!(f, "{dest} <- {op} {name}, {start}..{end}")
+                write!(f, "{op} {dest} {name}, {start}..{end}")
             }
             Self::Next | Self::NextFile | Self::ReturnUnassigned => {
                 write!(f, "{op}")
@@ -382,8 +382,8 @@ impl Instruction {
             Self::NEq { .. } => "neq",
             Self::Gt { .. } => "gt",
             Self::Lt { .. } => "lt",
-            Self::LtE { .. } => "le",
-            Self::GtE { .. } => "ge",
+            Self::LtE { .. } => "lte",
+            Self::GtE { .. } => "gte",
             Self::Matches { .. } => "mtch",
             Self::MatchesNot { .. } => "nmtch",
             Self::Add { .. } => "add",
@@ -394,9 +394,9 @@ impl Instruction {
             Self::Modulo { .. } => "mod",
             Self::StoreS { .. } => "sstore",
             Self::StoreF { .. } => "fstore",
-            Self::StoreA { .. } => "astore",
-            Self::LoadS { .. } => "sload",
-            Self::LoadA { .. } => "aload",
+            Self::Insert { .. } => "insert",
+            Self::IndexS { .. } => "sindex",
+            Self::IndexA { .. } => "aindex",
             Self::In { .. } => "in",
             Self::InA { .. } => "ain",
             Self::CopyS { .. } => "scpy",
@@ -404,12 +404,13 @@ impl Instruction {
             Self::CopyP { .. } => "pcpy",
             Self::DeleteA { .. } => "adel",
             Self::DeleteP { .. } => "pdel",
-            Self::IntrinsicCall { .. } => "icall",
+            Self::IntrinsicCall { .. } => "bcall",
             Self::UserCall { .. } => "ucall",
-            Self::IndirectCall { .. } => "vcall",
+            Self::IndirectCall { .. } => "icall",
             Self::OutputCall { .. } => "out",
             Self::Jump { .. } => "jmp",
-            Self::Return { .. } | Self::ReturnUnassigned => "ret",
+            Self::Return { .. } => "retval",
+            Self::ReturnUnassigned => "ret",
             Self::Branch { .. } => "brif",
             Self::Exit { .. } => "exit",
             Self::Next => "next",
