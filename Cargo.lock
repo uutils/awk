@@ -1473,6 +1473,7 @@ dependencies = [
  "lexer",
  "memchr",
  "parser",
+ "rustix",
  "thiserror",
  "uutests",
 ]
