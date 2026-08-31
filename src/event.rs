@@ -132,8 +132,8 @@ impl<'a> AwkRt<'a> {
             // File event loop: read record, wrap rule event loop, endfile.
             while self.intrp.read_record(&mut reader)? {
                 match self.drive(range.clone())? {
-                    CtrlSig::End | CtrlSig::NextFile => {} // clean-up & continue.
-                    CtrlSig::Next => todo!(),
+                    CtrlSig::End | CtrlSig::Next => {} // read next record & run rules
+                    CtrlSig::NextFile => break,        // clean-up & read next file
                     CtrlSig::Exit(code) => return self.end_event_loop(code).map(|_| ()),
                 }
             }
