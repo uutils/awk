@@ -413,6 +413,11 @@ impl Record {
         self.raw.clear();
         self.fields = None;
     }
+
+    pub fn write_new(&mut self) -> &mut Vec<u8> {
+        self.clear();
+        &mut self.raw
+    }
 }
 
 #[cfg(test)]

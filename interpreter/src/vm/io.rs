@@ -6,13 +6,14 @@
 #[cfg(unix)]
 use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 use std::{
-    io,
+    io::{self, BufRead, Result},
     num::NonZero,
     path::{Path, PathBuf},
 };
 
 use atoi::atoi;
 
+use super::ExecMode;
 use crate::{Interpreter, vm::types::Value};
 
 #[derive(Debug)]
@@ -65,5 +66,58 @@ impl Interpreter<'_> {
         self.symbols.errno = Value::Int(errno);
         self.symbols.fnr = Value::Int(0);
         self.record.clear();
+    }
+
+    // TODO: consider caching the result of all this validation, so we can
+    // directly dispatch to the correct functions and avoid extra writes to RT.
+    // TODO: on Windows, we must strip `\r` depending on BINMODE.
+    pub fn read_record(&mut self, reader: impl BufRead) -> Result<bool> {
+        // Update vars
+        // TODO: optimize and make more ergonomic
+        self.symbols.nr = &self.symbols.fnr + &Value::Int(1);
+        self.symbols.fnr = &self.symbols.fnr + &Value::Int(1);
+
+        // TODO: cache string repr across all values, raw byte sequences.
+        let rs = self.symbols.rs.to_string();
+        match self.mode {
+            // Regex matching (GNU extension)
+            ExecMode::Uu | ExecMode::Gnu if rs.chars().count() > 1 => {
+                self.read_record_regex(rs.as_bytes(), reader)
+            }
+            // Single char matching
+            _ if let Some(c) = rs.chars().next() => {
+                self.symbols.rt = Value::String(rs.into_bytes().into());
+                self.read_record_until_char(c, reader)
+            }
+            // Empty RS
+            _ => self.read_record_blank_lines(reader),
+        }
+    }
+
+    pub fn read_record_regex(&mut self, _rs: &[u8], mut _reader: impl BufRead) -> Result<bool> {
+        todo!()
+    }
+
+    pub fn read_record_until_char(&mut self, c: char, mut reader: impl BufRead) -> Result<bool> {
+        let mut bytes = [0; 4];
+        let bytes = c.encode_utf8(&mut bytes).as_bytes();
+        let rec = self.record.write_new();
+
+        // It is correct behavior that we terminate the record on EOF too,
+        // even if the text file is malformed (no trailing newline).
+        if let [byte] = *bytes {
+            // fast path: single search
+            reader.read_until(byte, rec).map(|n| n > 0)
+        } else {
+            // slow path: loop searching multiple bytes or EOF.
+            let last = bytes[bytes.len() - 1];
+
+            while reader.read_until(last, rec)? > 0 && !rec.ends_with(bytes) {}
+            Ok(!rec.is_empty())
+        }
+    }
+
+    pub fn read_record_blank_lines(&mut self, mut _reader: impl BufRead) -> Result<bool> {
+        todo!()
     }
 }

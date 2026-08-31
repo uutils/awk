@@ -88,6 +88,14 @@ impl<'a> AwkRt<'a> {
         }
     }
 
+    pub fn end_file_event_loop(&mut self) -> Result<()> {
+        match self.drive(self.bc.end_file_code())? {
+            CtrlSig::End => Ok(()),
+            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
+            CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
+        }
+    }
+
     pub fn end_event_loop(&mut self, code: i32) -> Result<Infallible> {
         match self.drive(self.bc.end_code())? {
             CtrlSig::Exit(code) => exit(code),
@@ -121,12 +129,15 @@ impl<'a> AwkRt<'a> {
             reader.consume(reader.buffer().len());
             *reader.get_mut() = res?; // Propagate open errors.
 
-            match self.drive(range.clone())? {
-                CtrlSig::End | CtrlSig::NextFile => {} // clean-up & continue.
-                CtrlSig::Next => todo!(),
-                CtrlSig::Exit(code) => return self.end_event_loop(code).map(|_| ()),
+            // File event loop: read record, wrap rule event loop, endfile.
+            while self.intrp.read_record(&mut reader)? {
+                match self.drive(range.clone())? {
+                    CtrlSig::End | CtrlSig::NextFile => {} // clean-up & continue.
+                    CtrlSig::Next => todo!(),
+                    CtrlSig::Exit(code) => return self.end_event_loop(code).map(|_| ()),
+                }
             }
-            // TODO: read next record; if EOF execute endfile and continue 'file.
+            self.end_file_event_loop()?;
         }
         Ok(())
     }
