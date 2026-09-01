@@ -797,19 +797,52 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
         generate: impl FnOnce(Vec<'a, Expr<'a>>) -> ExprNode<'a>,
-        span: Span,
     ) -> Result<Expr<'a>> {
-        let start = lex.span().start;
+        let ident_span = lex.span();
+        let is_juxtaposed = !SPACE_SENSITIVE || lex.is_juxtaposed();
+
         lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
-        if SPACE_SENSITIVE && lex.span().start != span.end {
-            return Err(ParsingError::FunctionCallSeparatedIdent(span));
-        }
         let expr = generate(self.parse_function_args(lex)?);
+        debug_assert!(!matches!(expr, ExprNode::FunctionCall(_, _)),);
+
         lex.expect(
             &Token::ClosedParent,
             ParsingError::FunctionCallMissingParenthesis,
         )?;
-        Ok(Expr::node(expr, self, lex.span().since(start)))
+
+        let c_span = lex.span().since(ident_span.start);
+        if is_juxtaposed {
+            Ok(Expr::node(expr, self, c_span))
+        } else {
+            Err(ParsingError::FunctionCallSeparatedIdent(c_span))
+        }
+    }
+
+    fn parse_user_call(&mut self, fun: Identifier<'a>, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
+        let ident_span = lex.span();
+        let is_juxtaposed = lex.is_juxtaposed();
+
+        lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
+        let mut args = self.parse_function_args(lex)?;
+        lex.expect(
+            &Token::ClosedParent,
+            ParsingError::FunctionCallMissingParenthesis,
+        )?;
+
+        let c_span = lex.span().since(ident_span.start);
+        match (is_juxtaposed, args.len()) {
+            (true, _) => Ok(Expr::node(ExprNode::FunctionCall(fun, args), self, c_span)),
+            (false, 1) if let Some(arg) = args.pop() => Ok(Expr::node(
+                ExprNode::BinaryOperation(
+                    BinaryOperator::Concat,
+                    Expr::leaf(Atom::Variable(Variable::User(fun)), self, ident_span),
+                    arg,
+                ),
+                self,
+                c_span,
+            )),
+            (false, _) => Err(ParsingError::FunctionCallSeparatedIdent(c_span)),
+        }
     }
 
     fn parse_atom(

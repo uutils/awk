@@ -351,34 +351,23 @@ impl<'a, 'b> Pratt<'a, 'b> {
         if let Token::Identifier(name) = next {
             let name = name.qualify(lex, self.parser.namespace)?;
             if lex.peek_is(&Token::OpenParent) {
-                self.parser.parse_function_call::<true>(
-                    lex,
-                    |args| ExprNode::FunctionCall(name, args),
-                    lex.span(),
-                )
+                self.parser.parse_user_call(name, lex)
             } else {
-                let leaf_span = lex.span().since(anchor);
                 Ok(Expr::leaf(
                     Atom::Variable(Variable::User(name)),
                     self.parser,
-                    leaf_span,
+                    lex.span().since(anchor),
                 ))
             }
         } else if let Some(builtin) = next.maps_to_builtin() {
-            self.parser.parse_function_call::<false>(
-                lex,
-                |args| ExprNode::BuiltinCall(builtin, args),
-                lex.span(),
-            )
+            self.parser
+                .parse_function_call::<false>(lex, |args| ExprNode::BuiltinCall(builtin, args))
         } else if let Token::IndirectCall(name) = next {
             // BUG(gawk): it accepts special variables iff qualified,
             // even if it is with the `awk` namespace.
             let name = Variable::User(name.qualify(lex, self.parser.namespace)?);
-            self.parser.parse_function_call::<true>(
-                lex,
-                |args| ExprNode::IndirectCall(name, args),
-                lex.span().since(anchor),
-            )
+            self.parser
+                .parse_function_call::<true>(lex, |args| ExprNode::IndirectCall(name, args))
         } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_juxtaposed() {
             let name = match self.parser.get_place(lex, next) {
                 Ok(var) => format!("{var:?}"),
