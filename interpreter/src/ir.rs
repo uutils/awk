@@ -176,6 +176,9 @@ pub enum BuiltInVar {
     Rstart = var_n(Variable::Rstart),
     Rlength = var_n(Variable::Rlength),
     Environ = var_n(Variable::Environ),
+    Symtab = var_n(Variable::Symtab),
+    Functab = var_n(Variable::Functab),
+    Procinfo = var_n(Variable::Procinfo),
 }
 
 impl Instruction {
@@ -281,6 +284,9 @@ impl<'a, 'r> TryFrom<&'r Variable<'a>> for BuiltInVar {
             Variable::Rstart => Ok(Self::Rstart),
             Variable::Rlength => Ok(Self::Rlength),
             Variable::Environ => Ok(Self::Environ),
+            Variable::Symtab => Ok(Self::Symtab),
+            Variable::Functab => Ok(Self::Functab),
+            Variable::Procinfo => Ok(Self::Procinfo),
         }
     }
 }

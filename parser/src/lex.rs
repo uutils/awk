@@ -271,6 +271,9 @@ impl TokenExt for Token<'_> {
                 | Token::RstartVariable
                 | Token::RlengthVariable
                 | Token::EnvironVariable
+                | Token::ProcinfoVariable
+                | Token::SymtabVariable
+                | Token::FunctabVariable
         )
     }
     fn is_place(&self) -> bool {

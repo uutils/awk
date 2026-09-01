@@ -285,7 +285,7 @@ impl<'a> SymbolTable<'a> {
             BuiltInVar::Ofmt => &self.ofmt,
             BuiltInVar::Rstart => &self.rstart,
             BuiltInVar::Rlength => &self.rlength,
-            BuiltInVar::Environ => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -306,7 +306,7 @@ impl<'a> SymbolTable<'a> {
             BuiltInVar::Ofmt => &mut self.ofmt,
             BuiltInVar::Rstart => &mut self.rstart,
             BuiltInVar::Rlength => &mut self.rlength,
-            BuiltInVar::Environ => todo!(),
+            _ => todo!(),
         }
     }
 }

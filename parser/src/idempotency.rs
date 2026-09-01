@@ -609,6 +609,12 @@ impl<'a> NamespaceState<'a> {
     }
 }
 
+impl Display for Identifier<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        <Self as Debug>::fmt(self, f)
+    }
+}
+
 impl Default for NamespaceState<'_> {
     fn default() -> Self {
         Self { tl_ix: 0, namespace: "awk" }

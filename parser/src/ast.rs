@@ -69,7 +69,8 @@ pub struct Identifier<'a> {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Display)]
+#[display(rename_all = "UPPERCASE")]
 pub enum Variable<'a> {
     User(Identifier<'a>) = 0,
     Nr,
@@ -88,6 +89,9 @@ pub enum Variable<'a> {
     Rstart,
     Rlength,
     Environ,
+    Symtab,
+    Functab,
+    Procinfo,
 }
 
 pub enum Expr<'a> {

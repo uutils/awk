@@ -215,6 +215,12 @@ pub enum Token<'a> {
     RlengthVariable,
     #[token("ENVIRON", accept_expression)]
     EnvironVariable,
+    #[token("PROCINFO", accept_expression)]
+    ProcinfoVariable,
+    #[token("SYMTAB", accept_expression)]
+    SymtabVariable,
+    #[token("FUNCTAB", accept_expression)]
+    FunctabVariable,
     #[regex("(?&identifier)", Identifier::parse::<0>)]
     Identifier(Identifier<'a>),
     #[regex("@(?&identifier)", parse_indirect_call)]

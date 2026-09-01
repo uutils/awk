@@ -882,6 +882,9 @@ impl<'a> Parser<'a> {
             Token::RstartVariable => Ok(Variable::Rstart),
             Token::RlengthVariable => Ok(Variable::Rlength),
             Token::EnvironVariable => Ok(Variable::Environ),
+            Token::ProcinfoVariable => Ok(Variable::Procinfo),
+            Token::SymtabVariable => Ok(Variable::Symtab),
+            Token::FunctabVariable => Ok(Variable::Functab),
             token => Err((
                 ParsingError::UnexpectedToken(lex.span(), "is not valid data".to_string()),
                 token,

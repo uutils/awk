@@ -340,25 +340,7 @@ impl Debug for Place<'_> {
 
 impl Debug for Variable<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match self {
-            Self::User(ident) => <Identifier as Debug>::fmt(ident, f),
-            Self::Nr => write!(f, "NR"),
-            Self::Nf => write!(f, "NF"),
-            Self::Fs => write!(f, "FS"),
-            Self::Rs => write!(f, "RS"),
-            Self::Ofs => write!(f, "OFS"),
-            Self::Ors => write!(f, "ORS"),
-            Self::Filename => write!(f, "FILENAME"),
-            Self::Argc => write!(f, "ARGC"),
-            Self::Argv => write!(f, "ARGV"),
-            Self::Subsep => write!(f, "SUBSEP"),
-            Self::Fnr => write!(f, "FNR"),
-            Self::Argind => write!(f, "ARGIND"),
-            Self::Ofmt => write!(f, "OFMT"),
-            Self::Rstart => write!(f, "RSTART"),
-            Self::Rlength => write!(f, "RLENGTH"),
-            Self::Environ => write!(f, "ENVIRON"),
-        }
+        <Self as std::fmt::Display>::fmt(self, f)
     }
 }
 
