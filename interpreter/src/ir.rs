@@ -110,6 +110,12 @@ pub enum Instruction {
 /// performance bottlenecks hardly lie here; AWK code is generally very small.
 const _: () = const { assert!(size_of::<Instruction>() <= size_of::<u128>()) };
 
+/// And you might ask, why are we doing a tagged union instead of an enum?
+/// It's actually quite trivial, but a bit unfortunate. The problem is that the
+/// packing in [`Instruction`] is otherwise not ideal; because the compiler has
+/// to ensure we can _always_ take a reference to one of the fields, it can't
+/// split the discriminants to pack it tightly, and we end up with big payloads
+/// full of padding. Might be solved in the future with move-only fields.
 #[derive(Clone, Copy)]
 pub union Arg {
     pub reg: Reg,
@@ -119,6 +125,7 @@ pub union Arg {
     pub sys: BuiltInVar,
 }
 
+/// The discriminant of an [`Arg`] union. The fields are ordered the same.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ArgTy {
@@ -129,6 +136,7 @@ pub enum ArgTy {
     BtInVal,
 }
 
+/// A subset of [`Arg`] values.
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum PlaceTy {
@@ -142,6 +150,7 @@ const _: () = {
     assert!(align_of::<PlaceTy>() == align_of::<ArgTy>());
 };
 
+/// A bit dirty, but helps LLVM in not generating a ton of garbage.
 const fn var_n(variable: Variable) -> u32 {
     // SAFETY: `Variable` is repr(u32).
     unsafe { std::ptr::read((&raw const variable).cast()) }
