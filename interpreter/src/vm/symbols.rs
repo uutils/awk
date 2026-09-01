@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 
 use crate::{
     ExecMode,
-    ir::UserNonLocal,
+    ir::{BuiltInVar, UserNonLocal},
     vm::{
         Function, regex,
         types::{ArrayMap, Value},
@@ -266,6 +266,48 @@ impl<'a> SymbolTable<'a> {
     #[inline(always)]
     pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> UserNonLocal {
         self.functions.register(name, None, bump)
+    }
+
+    pub fn get_btin(&self, var: BuiltInVar) -> &Value<'a> {
+        match var {
+            BuiltInVar::Nr => &self.nr,
+            BuiltInVar::Nf => &self.nf,
+            BuiltInVar::Fs => &self.fs,
+            BuiltInVar::Rs => &self.rs,
+            BuiltInVar::Ofs => &self.ofs,
+            BuiltInVar::Ors => &self.ors,
+            BuiltInVar::Filename => &self.filename,
+            BuiltInVar::Argc => &self.argc,
+            BuiltInVar::Argv => &self.argv,
+            BuiltInVar::Subsep => &self.subsep,
+            BuiltInVar::Fnr => &self.fnr,
+            BuiltInVar::Argind => &self.argind,
+            BuiltInVar::Ofmt => &self.ofmt,
+            BuiltInVar::Rstart => &self.rstart,
+            BuiltInVar::Rlength => &self.rlength,
+            BuiltInVar::Environ => todo!(),
+        }
+    }
+
+    pub fn get_btin_mut(&mut self, var: BuiltInVar) -> &mut Value<'a> {
+        match var {
+            BuiltInVar::Nr => &mut self.nr,
+            BuiltInVar::Nf => &mut self.nf,
+            BuiltInVar::Fs => &mut self.fs,
+            BuiltInVar::Rs => &mut self.rs,
+            BuiltInVar::Ofs => &mut self.ofs,
+            BuiltInVar::Ors => &mut self.ors,
+            BuiltInVar::Filename => &mut self.filename,
+            BuiltInVar::Argc => &mut self.argc,
+            BuiltInVar::Argv => &mut self.argv,
+            BuiltInVar::Subsep => &mut self.subsep,
+            BuiltInVar::Fnr => &mut self.fnr,
+            BuiltInVar::Argind => &mut self.argind,
+            BuiltInVar::Ofmt => &mut self.ofmt,
+            BuiltInVar::Rstart => &mut self.rstart,
+            BuiltInVar::Rlength => &mut self.rlength,
+            BuiltInVar::Environ => todo!(),
+        }
     }
 }
 

@@ -812,7 +812,7 @@ impl Place {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg_mut(unsafe { self.arg.reg }),
             PlaceTy::UserVal => intrp.symbols.user_mut(unsafe { self.arg.usr }),
-            PlaceTy::BtInVal => todo!("intrinsic var place"),
+            PlaceTy::BtInVal => intrp.symbols.get_btin_mut(unsafe { self.arg.sys }),
         }
     }
 
@@ -822,7 +822,7 @@ impl Place {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg(unsafe { self.arg.reg }),
             PlaceTy::UserVal => intrp.symbols.user(unsafe { self.arg.usr }),
-            PlaceTy::BtInVal => todo!(),
+            PlaceTy::BtInVal => intrp.symbols.get_btin(unsafe { self.arg.sys }),
         }
     }
 
