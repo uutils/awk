@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use crate::{
     CodeGen,
-    ir::{Arg, ArgTy, IxWidth, NonLocal, PlaceTy, Reg, RegWidth},
+    ir::{Arg, ArgTy, BuiltInVar, PlaceTy, Reg, RegWidth},
     vm::types::Value,
 };
 
@@ -73,12 +73,8 @@ impl Operand {
 }
 
 impl TypedArg {
-    pub fn new_user(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        TypedPlace::new_user(code, ident).into()
-    }
-
-    pub fn new_btin(var: &Variable<'_>) -> Self {
-        TypedPlace::new_btin(var).into()
+    pub fn new_var(code: &mut CodeGen<'_>, var: &Variable<'_>) -> Self {
+        TypedPlace::new_var(code, var).into()
     }
 
     pub const fn new_imm(imm: i32) -> Self {
@@ -86,13 +82,13 @@ impl TypedArg {
     }
 
     pub fn new_immf(code: &mut CodeGen<'_>, n: f64) -> Self {
-        let sym = code.register_const(Value::Float(n));
-        Self(Arg { sym }, ArgTy::Cnt)
+        let cnt = code.register_const(Value::Float(n));
+        Self(Arg { cnt }, ArgTy::Cnt)
     }
 
     pub fn new_cnt<'a>(code: &mut CodeGen<'a>, val: Value<'a>) -> Self {
-        let sym = code.register_const(val);
-        Self(Arg { sym }, ArgTy::Cnt)
+        let cnt = code.register_const(val);
+        Self(Arg { cnt }, ArgTy::Cnt)
     }
 
     pub fn new_reg(reg: impl Into<Reg>) -> Self {
@@ -110,18 +106,24 @@ impl TypedArg {
 }
 
 impl TypedPlace {
-    pub fn new_user(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
-        let sym = code.symbols.register_user_var(ident, code.arena);
-        if let Some(reg) = code.get_local_arg(sym) {
-            Self(Arg { reg }, PlaceTy::Reg)
-        } else {
-            Self(Arg { sym }, PlaceTy::UserVal)
+    pub fn new_var(code: &mut CodeGen<'_>, var: &Variable<'_>) -> Self {
+        match BuiltInVar::try_from(var) {
+            Ok(var) => Self::new_btin(var),
+            Err(ident) => Self::new_user(code, ident),
         }
     }
 
-    pub fn new_btin(var: &Variable<'_>) -> Self {
-        let sym = var_index(var);
-        Self(Arg { sym }, PlaceTy::BtInVal)
+    pub fn new_user(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+        let usr = code.symbols.register_user_var(ident, code.arena);
+        if let Some(reg) = code.get_local_arg(usr) {
+            Self(Arg { reg }, PlaceTy::Reg)
+        } else {
+            Self(Arg { usr }, PlaceTy::UserVal)
+        }
+    }
+
+    pub const fn new_btin(var: BuiltInVar) -> Self {
+        Self(Arg { sys: var }, PlaceTy::BtInVal)
     }
 
     pub fn new_reg(reg: impl Into<Reg>) -> Self {
@@ -302,17 +304,6 @@ impl Deref for LinearReg {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
-}
-
-pub fn var_index(var: &Variable<'_>) -> NonLocal {
-    const { assert!(size_of::<(IxWidth, Identifier<'_>)>() == size_of::<Variable>()) }
-    const { assert!(align_of::<(IxWidth, Identifier<'_>)>() == align_of::<Variable>()) }
-
-    // SAFETY: The discriminant is repr(IxWidth).
-    let index = unsafe { *(&raw const *var).cast::<IxWidth>() };
-    debug_assert_ne!(index, 0); // User variable.
-
-    NonLocal(index)
 }
 
 /// Poor man's linear types. The const fallback is a bit better, but has the

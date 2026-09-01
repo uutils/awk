@@ -19,20 +19,25 @@ use std::{
     ops::Deref,
 };
 
-use parser::{BuiltinFunction, Command, Redirection};
+use derive_more::Display;
+use parser::{BuiltinFunction, Command, Identifier, Redirection, Variable};
 
 pub type RegWidth = u8;
 pub type IxWidth = u32;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct NonLocal(pub IxWidth);
+pub struct UserNonLocal(pub IxWidth);
+
+#[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ConstNonLocal(pub IxWidth);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Reg(pub RegWidth);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Display, Debug)]
 #[repr(transparent)]
 pub struct Label(pub IxWidth);
 
@@ -72,7 +77,7 @@ pub enum Instruction {
     In { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: PlaceTy },
 
     // Intrinsic operations
-    StoreS { dest: Reg, ty_place: PlaceTy, var: NonLocal, arg: Arg, ty: ArgTy },
+    StoreS { dest: Reg, ty_place: PlaceTy, var: Arg, arg: Arg, ty: ArgTy },
     StoreF { dest: Reg, src: Arg, arg: Arg, ty: ArgTy, tys: ArgTy },
     Insert { dest: Reg, lhs: Arg, rhs: Arg, start: Reg, end: Reg, tyl: PlaceTy, tyr: ArgTy },
     IndexS { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
@@ -81,7 +86,7 @@ pub enum Instruction {
     DeleteP { arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
-    UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
+    UserCall { dest: Reg, start: Reg, end: Reg, name: UserNonLocal },
     IndirectCall { dest: Reg, start: Reg, end: Reg, name: Arg, ty: ArgTy },
     Jump { to: Label },
     Branch { then_label: Label, else_label: Label, condition: Reg },
@@ -109,7 +114,9 @@ const _: () = const { assert!(size_of::<Instruction>() <= size_of::<u128>()) };
 pub union Arg {
     pub reg: Reg,
     pub imm: i32,
-    pub sym: NonLocal,
+    pub cnt: ConstNonLocal,
+    pub usr: UserNonLocal,
+    pub sys: BuiltInVar,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +141,33 @@ const _: () = {
     assert!(size_of::<PlaceTy>() == size_of::<ArgTy>());
     assert!(align_of::<PlaceTy>() == align_of::<ArgTy>());
 };
+
+const fn var_n(variable: Variable) -> u32 {
+    // SAFETY: `Variable` is repr(u32).
+    unsafe { std::ptr::read((&raw const variable).cast()) }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
+#[display(rename_all = "UPPERCASE")]
+pub enum BuiltInVar {
+    Nr = var_n(Variable::Nr),
+    Nf = var_n(Variable::Nf),
+    Fs = var_n(Variable::Fs),
+    Rs = var_n(Variable::Rs),
+    Ofs = var_n(Variable::Ofs),
+    Ors = var_n(Variable::Ors),
+    Filename = var_n(Variable::Filename),
+    Argc = var_n(Variable::Argc),
+    Argv = var_n(Variable::Argv),
+    Subsep = var_n(Variable::Subsep),
+    Fnr = var_n(Variable::Fnr),
+    Argind = var_n(Variable::Argind),
+    Ofmt = var_n(Variable::Ofmt),
+    Rstart = var_n(Variable::Rstart),
+    Rlength = var_n(Variable::Rlength),
+    Environ = var_n(Variable::Environ),
+}
 
 impl Instruction {
     fn set_label(&mut self, label: Label) {
@@ -216,6 +250,32 @@ impl From<PlaceTy> for ArgTy {
     }
 }
 
+impl<'a, 'r> TryFrom<&'r Variable<'a>> for BuiltInVar {
+    type Error = &'r Identifier<'a>;
+
+    fn try_from(value: &'r Variable<'a>) -> Result<Self, Self::Error> {
+        match value {
+            Variable::User(ident) => Err(ident),
+            Variable::Nr => Ok(Self::Nr),
+            Variable::Nf => Ok(Self::Nf),
+            Variable::Fs => Ok(Self::Fs),
+            Variable::Rs => Ok(Self::Rs),
+            Variable::Ofs => Ok(Self::Ofs),
+            Variable::Ors => Ok(Self::Ors),
+            Variable::Filename => Ok(Self::Filename),
+            Variable::Argc => Ok(Self::Argc),
+            Variable::Argv => Ok(Self::Argv),
+            Variable::Subsep => Ok(Self::Subsep),
+            Variable::Fnr => Ok(Self::Fnr),
+            Variable::Argind => Ok(Self::Argind),
+            Variable::Ofmt => Ok(Self::Ofmt),
+            Variable::Rstart => Ok(Self::Rstart),
+            Variable::Rlength => Ok(Self::Rlength),
+            Variable::Environ => Ok(Self::Environ),
+        }
+    }
+}
+
 /// Deref polymorphism is not _that_ bad.
 impl Deref for PlaceTy {
     type Target = ArgTy;
@@ -253,7 +313,9 @@ impl Display for Instruction {
         let fmt_arg = |f: &mut Formatter, arg: &Arg, ty: &ArgTy, sep| match ty {
             ArgTy::Reg => write!(f, "{sep}{}", unsafe { arg.reg }),
             ArgTy::Imm => write!(f, "{sep}{ty}({})", unsafe { arg.imm }),
-            _ => write!(f, "{sep}{ty}({})", unsafe { arg.sym }),
+            ArgTy::Cnt => write!(f, "{sep}{ty}({})", unsafe { arg.cnt }),
+            ArgTy::UserVal => write!(f, "{sep}{ty}({})", unsafe { arg.usr }),
+            ArgTy::BtInVal => write!(f, "{sep}{ty}({})", unsafe { arg.sys }),
         };
         match self {
             Self::LoadF { dest, arg, ty }
@@ -299,8 +361,9 @@ impl Display for Instruction {
             }
             Self::StoreS { dest, ty_place, var, arg, ty } => {
                 let ty_place = ArgTy::from(*ty_place);
-                write!(f, "{op} {dest}, {ty_place}({var})")?;
-                fmt_arg(f, arg, ty, ", ")
+                write!(f, "{op} {dest}, {ty_place}(")?;
+                fmt_arg(f, var, ty, "")?;
+                fmt_arg(f, arg, ty, "), ")
             }
             Self::StoreF { dest, src, arg, ty, tys } => {
                 write!(f, "{op} {dest}, $(")?;
@@ -419,21 +482,9 @@ impl Instruction {
     }
 }
 
-impl Display for Label {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        <_ as Display>::fmt(&self.0, f)
-    }
-}
-
 impl Display for Reg {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "r{}", self.0)
-    }
-}
-
-impl Display for NonLocal {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        <_ as Display>::fmt(&self.0, f)
     }
 }
 
@@ -442,7 +493,7 @@ impl Display for ArgTy {
         match self {
             Self::Reg => write!(f, "r"),
             Self::Imm => write!(f, "imm"),
-            Self::Cnt => write!(f, "mem"),
+            Self::Cnt => write!(f, "cnt"),
             Self::UserVal => write!(f, "user"),
             Self::BtInVal => write!(f, "btin"),
         }

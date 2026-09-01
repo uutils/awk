@@ -31,7 +31,7 @@ pub use symbols::SymbolTable;
 use crate::{
     InterpreterError,
     ir::{
-        Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
+        Arg, ArgTy, Instruction, IxWidth, Label, PlaceTy, Reg, RegWidth, UserNonLocal,
         lower::{Bytecode, CodeGen},
     },
     vm::{
@@ -308,7 +308,7 @@ impl<'a> Interpreter<'a> {
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
                     debug_assert!(matches!(ty_place, PlaceTy::UserVal | PlaceTy::BtInVal));
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
-                    let place = Place::new(Arg { sym: var }, ty_place);
+                    let place = Place::new(var, ty_place);
 
                     place.write(self, val.clone());
                     self.write_reg(dest, val);
@@ -609,7 +609,7 @@ impl<'a> Interpreter<'a> {
         dest: Reg,
         start: Reg,
         end: Reg,
-        name: NonLocal,
+        name: UserNonLocal,
         metadata: &[MetaId],
     ) -> Result<()> {
         let reg_offset = start.0 as IxWidth + self.reg_offset();
@@ -751,7 +751,7 @@ impl Arg {
     ) -> &'v Value<'a> {
         match ty {
             ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
-            ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::Cnt => &intrp.consts.0[unsafe { self.cnt.0 } as usize],
             ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
             _ => unreachable!(),
         }
@@ -793,7 +793,7 @@ impl Arg {
     ) -> &'v Value<'a> {
         match ty {
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
-            ArgTy::Cnt => &intrp.consts.0[unsafe { self.sym.0 } as usize],
+            ArgTy::Cnt => &intrp.consts.0[unsafe { self.cnt.0 } as usize],
             ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
             _ => unreachable!(),
         }
@@ -811,7 +811,7 @@ impl Place {
     fn resolve<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> &'v mut Value<'a> {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg_mut(unsafe { self.arg.reg }),
-            PlaceTy::UserVal => intrp.symbols.user_mut(unsafe { self.arg.sym }),
+            PlaceTy::UserVal => intrp.symbols.user_mut(unsafe { self.arg.usr }),
             PlaceTy::BtInVal => todo!("intrinsic var place"),
         }
     }
@@ -821,7 +821,7 @@ impl Place {
     fn read<'v, 'a>(self, intrp: &'v Interpreter<'a>) -> &'v Value<'a> {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg(unsafe { self.arg.reg }),
-            PlaceTy::UserVal => intrp.symbols.user(unsafe { self.arg.sym }),
+            PlaceTy::UserVal => intrp.symbols.user(unsafe { self.arg.usr }),
             PlaceTy::BtInVal => todo!(),
         }
     }

@@ -602,6 +602,7 @@ dependencies = [
  "ariadne",
  "atoi",
  "bumpalo",
+ "derive_more",
  "either",
  "hashbrown 0.17.1",
  "indexmap-allocator-api",

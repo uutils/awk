@@ -18,6 +18,7 @@ smallvec.workspace = true
 atoi.workspace = true
 minrx = "0.3.0"
 itertools = "0.15.0"
+derive_more.workspace = true
 # I'm not particularly happy about this, but it's crucial for performance, and
 # I have audited the two commits. It's pinned to that hash to avoid possible
 # supply-chain attacks. Hopefully upstream maintainers will change their mind.

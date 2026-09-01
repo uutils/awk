@@ -18,10 +18,10 @@ use smallvec::SmallVec;
 use crate::{
     CodeRange,
     ir::{
-        Arg, Instruction, IxWidth, Label, NonLocal, PlaceTy, Reg, RegWidth,
+        Arg, ConstNonLocal, Instruction, IxWidth, Label, PlaceTy, Reg, RegWidth, UserNonLocal,
         lower::utils::{
             CallConv, LinearRegRange, Operand, RegAlloc, ResolvedPlace, RtType, TypedArg,
-            TypedPlace, var_index,
+            TypedPlace,
         },
     },
     vm::{Consts, Function, SymbolTable, types::Value},
@@ -49,7 +49,7 @@ pub struct CodeGen<'a> {
     current_metadata: MetaId,
     break_exits: Option<SmallVec<[Label; 4]>>,
     continue_label: Option<Label>,
-    local_args: SmallVec<[NonLocal; 4]>,
+    local_args: SmallVec<[UserNonLocal; 4]>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -300,14 +300,14 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Simple(SimpleStatement::Delete(var, Some(indices), metadata)) => self
                 .with_metadata(*metadata, |this| {
-                    let (arg, ty) = this.load_var(var).into_place();
+                    let (arg, ty) = TypedPlace::new_var(this, var).into_place();
                     this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                         this.emit(Instruction::DeleteP { arg, ty, start, end });
                     });
                 }),
             Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
                 self.with_metadata(*metadata, |this| {
-                    let (arg, ty) = this.load_var(var).into_place();
+                    let (arg, ty) = TypedPlace::new_var(this, var).into_place();
                     this.emit(Instruction::DeleteA { arg, ty });
                 });
             }
@@ -496,8 +496,7 @@ impl<'a> CodeGen<'a> {
 
     fn lower_atom_arg(&mut self, atom: &Atom, dest: Reg) -> TypedArg {
         match atom {
-            Atom::Variable(Variable::User(ident)) => TypedArg::new_user(self, ident),
-            Atom::Variable(var) => TypedArg::new_btin(var),
+            Atom::Variable(var) => TypedArg::new_var(self, var),
             &Atom::Integer(n) => TypedArg::new_imm(n),
             &Atom::Number(n) => TypedArg::new_immf(self, n),
             atom @ (Atom::String(s) | Atom::TypedRegex(s)) => {
@@ -648,12 +647,12 @@ impl<'a> CodeGen<'a> {
                         {
                             let index = this.lower_expr(expr);
                             let (rhs, tyr) = index.to_arg().into_arg();
-                            let (lhs, tyl) = this.load_var(var).into_place();
+                            let (lhs, tyl) = TypedPlace::new_var(this, var).into_place();
                             this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
                             index.free(this);
                         }
                         ExprNode::ArrayOperation(ArrayOperator::In, var, indices) => {
-                            let (arg, ty) = this.load_var(var).into_place();
+                            let (arg, ty) = TypedPlace::new_var(this, var).into_place();
                             this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                                 this.emit(Instruction::InA { dest, arg, start, end, ty });
                             });
@@ -674,7 +673,7 @@ impl<'a> CodeGen<'a> {
                         ExprNode::IndirectCall(var, args) => {
                             let range = this.gen_call_convention(RtType::Any, args);
                             let (start, end) = range.as_range();
-                            let (name, ty) = this.load_var(var).into_arg();
+                            let (name, ty) = TypedPlace::new_var(this, var).into_arg();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
@@ -703,7 +702,7 @@ impl<'a> CodeGen<'a> {
             }),
             Place::Variable(_) => f(self, ResolvedPlace::Variable),
             Place::Index(var, indices) => {
-                let (arg, ty) = self.load_var(var).into_place();
+                let (arg, ty) = TypedPlace::new_var(self, var).into_place();
                 self.scoped_reg_range(RtType::Scalar, indices, |this, range| {
                     f(this, ResolvedPlace::Index { arg, ty, range })
                 })
@@ -767,22 +766,15 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::LoadF { dest, arg, ty });
                 TypedPlace::new_reg(dest)
             }
-            Place::Variable(var) => self.load_var(var),
+            Place::Variable(var) => TypedPlace::new_var(self, var),
             Place::Index(var, index) => self.load_index(dest, var, index),
             Place::ChainedIndex(var, indices) => self.load_chained_index(dest, var, indices),
         }
     }
 
-    fn load_var(&mut self, var: &Variable<'_>) -> TypedPlace {
-        match var {
-            Variable::User(ident) => TypedPlace::new_user(self, ident),
-            var => TypedPlace::new_btin(var),
-        }
-    }
-
     fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
         self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-            let (arg, ty) = this.load_var(var).into_place();
+            let (arg, ty) = TypedPlace::new_var(this, var).into_place();
             this.emit(Instruction::IndexS { dest, arg, ty, start, end });
 
             // Element value was written to `dest`; subsequent ops must use the register.
@@ -817,18 +809,17 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                     PlaceTy::UserVal => {
-                        let var = unsafe { var.sym };
                         self.emit(Instruction::StoreS { dest, ty_place, var, arg, ty });
                     }
                     PlaceTy::BtInVal => todo!(),
                 }
             }
             Place::Variable(var) => {
-                let var = var_index(var);
-                self.emit(Instruction::StoreS { dest, ty_place: PlaceTy::BtInVal, var, arg, ty });
+                let (var, ty_place) = TypedPlace::new_var(self, var).into_place();
+                self.emit(Instruction::StoreS { dest, ty_place, var, arg, ty });
             }
             Place::Index(var, indices) => {
-                let (lhs, tyl) = self.load_var(var).into_place();
+                let (lhs, tyl) = TypedPlace::new_var(self, var).into_place();
                 let (rhs, tyr) = src.into_arg();
                 self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
                     this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
@@ -864,7 +855,7 @@ impl<'a> CodeGen<'a> {
         indices: &[Vec<'_, Expr<'_>>],
         f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
     ) -> T {
-        let (mut arg, mut ty) = self.load_var(var).into_place();
+        let (mut arg, mut ty) = TypedPlace::new_var(self, var).into_place();
         let last = indices.len() - 1;
 
         for index in &indices[..last] {
@@ -984,15 +975,15 @@ impl<'a> CodeGen<'a> {
                 if let Expr::Leaf(Atom::Variable(var), _) = arg {
                     let instr = match rt_ty {
                         RtType::Scalar => {
-                            let (arg, ty) = this.load_var(var).into_arg();
+                            let (arg, ty) = TypedPlace::new_var(this, var).into_arg();
                             Instruction::CopyS { dest, arg, ty }
                         }
                         RtType::Array => {
-                            let (arg, ty) = this.load_var(var).into_place();
+                            let (arg, ty) = TypedPlace::new_var(this, var).into_place();
                             Instruction::CopyA { dest, arg, ty }
                         }
                         RtType::Any => {
-                            let (arg, ty) = this.load_var(var).into_arg();
+                            let (arg, ty) = TypedPlace::new_var(this, var).into_arg();
                             Instruction::CopyP { dest, arg, ty }
                         }
                     };
@@ -1007,8 +998,8 @@ impl<'a> CodeGen<'a> {
         (range, ret)
     }
 
-    fn register_const(&mut self, value: Value<'a>) -> NonLocal {
-        let nl = NonLocal(self.consts.0.len() as IxWidth);
+    fn register_const(&mut self, value: Value<'a>) -> ConstNonLocal {
+        let nl = ConstNonLocal(self.consts.0.len() as IxWidth);
         self.consts.0.push(value);
         nl
     }
@@ -1051,7 +1042,7 @@ impl<'a> CodeGen<'a> {
         ret
     }
 
-    fn get_local_arg(&self, sym: NonLocal) -> Option<Reg> {
+    fn get_local_arg(&self, sym: UserNonLocal) -> Option<Reg> {
         self.local_args
             .iter()
             .enumerate()

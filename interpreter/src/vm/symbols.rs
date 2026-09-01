@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 
 use crate::{
     ExecMode,
-    ir::NonLocal,
+    ir::UserNonLocal,
     vm::{
         Function, regex,
         types::{ArrayMap, Value},
@@ -115,25 +115,30 @@ impl<'a, T> RawSymbolTable<'a, T> {
         Self(IndexMap::new_in(arena))
     }
 
-    pub(super) fn register(&mut self, ident: &Identifier, value: T, bump: &'a Bump) -> NonLocal {
+    pub(super) fn register(
+        &mut self,
+        ident: &Identifier,
+        value: T,
+        bump: &'a Bump,
+    ) -> UserNonLocal {
         if let Some(index) = self.0.get_index_of(ident) {
-            NonLocal(index.try_into().unwrap())
+            UserNonLocal(index.try_into().unwrap())
         } else {
             let ident = Identifier {
                 namespace: bump.alloc_str(ident.namespace),
                 literal: bump.alloc_str(ident.literal),
             };
-            NonLocal(self.0.insert_full(ident, value).0.try_into().unwrap())
+            UserNonLocal(self.0.insert_full(ident, value).0.try_into().unwrap())
         }
     }
 
     #[inline(always)]
-    pub(super) fn get_index(&self, var: NonLocal) -> Option<&T> {
+    pub(super) fn get_index(&self, var: UserNonLocal) -> Option<&T> {
         self.0.get_index(var.0 as usize).map(|x| x.1)
     }
 
     #[inline(always)]
-    pub(super) fn get_index_mut(&mut self, var: NonLocal) -> Option<&mut T> {
+    pub(super) fn get_index_mut(&mut self, var: UserNonLocal) -> Option<&mut T> {
         self.0.get_index_mut(var.0 as usize).map(|x| x.1)
     }
 
@@ -143,10 +148,10 @@ impl<'a, T> RawSymbolTable<'a, T> {
     }
 
     #[inline(always)]
-    pub(super) fn lookup(&mut self, ident: &Identifier) -> Option<(NonLocal, &mut T)> {
+    pub(super) fn lookup(&mut self, ident: &Identifier) -> Option<(UserNonLocal, &mut T)> {
         self.0
             .get_index_of(ident)
-            .map(|ix| (NonLocal(ix.try_into().unwrap()), &mut self.0[ix]))
+            .map(|ix| (UserNonLocal(ix.try_into().unwrap()), &mut self.0[ix]))
     }
 
     #[inline(always)]
@@ -212,17 +217,17 @@ impl<'a> SymbolTable<'a> {
     }
 
     #[inline(always)]
-    pub(super) fn user_mut(&mut self, var: NonLocal) -> &mut Value<'a> {
+    pub(super) fn user_mut(&mut self, var: UserNonLocal) -> &mut Value<'a> {
         self.user.get_index_mut(var).unwrap()
     }
 
     #[inline(always)]
-    pub(super) fn user(&self, var: NonLocal) -> &Value<'a> {
+    pub(super) fn user(&self, var: UserNonLocal) -> &Value<'a> {
         self.user.get_index(var).unwrap()
     }
 
     #[inline(always)]
-    pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> NonLocal {
+    pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> UserNonLocal {
         self.user.register(var, Value::Untyped, bump)
     }
 
@@ -249,7 +254,7 @@ impl<'a> SymbolTable<'a> {
         name: &Identifier,
         fun: Function,
         bump: &'a Bump,
-    ) -> NonLocal {
+    ) -> UserNonLocal {
         if let Some((nl, f)) = self.functions.lookup(name) {
             *f = Some(fun);
             nl
@@ -259,7 +264,7 @@ impl<'a> SymbolTable<'a> {
     }
 
     #[inline(always)]
-    pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> NonLocal {
+    pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> UserNonLocal {
         self.functions.register(name, None, bump)
     }
 }
