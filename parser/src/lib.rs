@@ -276,10 +276,6 @@ impl<'a> Parser<'a> {
                     lex.next();
                     Some(self.parse_command(lex, name))
                 }
-                token if let Some(builtin) = token.maps_to_builtin() => {
-                    lex.next();
-                    Some(self.parse_builtin_call(lex, builtin))
-                }
                 Token::Delete => {
                     lex.next();
                     Some(self.parse_delete(lex))
@@ -637,18 +633,6 @@ impl<'a> Parser<'a> {
         Ok(SimpleStatement::Command { name, args, redirection, metadata })
     }
 
-    fn parse_builtin_call(
-        &mut self,
-        lex: &mut Lexer<'a>,
-        builtin: BuiltinFunction,
-    ) -> Result<SimpleStatement<'a>> {
-        let start = lex.span().start;
-        let expr =
-            self.parse_function_call(lex, |args| ExprNode::BuiltinCall(builtin, args), lex.span())?;
-        let metadata = self.gen_metadata(lex.span().since(start));
-        Ok(SimpleStatement::Expression(expr, metadata))
-    }
-
     /// Parses arguments to command or function calls; consumes to the end of
     /// the argument list or short-circuits with `delimiter` if empty.
     fn parse_function_args(&mut self, lex: &mut Lexer<'a>) -> Result<Vec<'a, Expr<'a>>> {
@@ -809,7 +793,7 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn parse_function_call(
+    fn parse_function_call<const SPACE_SENSITIVE: bool>(
         &mut self,
         lex: &mut Lexer<'a>,
         generate: impl FnOnce(Vec<'a, Expr<'a>>) -> ExprNode<'a>,
@@ -817,7 +801,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr<'a>> {
         let start = lex.span().start;
         lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
-        if lex.span().start != span.end {
+        if SPACE_SENSITIVE && lex.span().start != span.end {
             return Err(ParsingError::FunctionCallSeparatedIdent(span));
         }
         let expr = generate(self.parse_function_args(lex)?);

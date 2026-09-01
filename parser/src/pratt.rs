@@ -351,7 +351,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         if let Token::Identifier(name) = next {
             let name = name.qualify(lex, self.parser.namespace)?;
             if lex.peek_is(&Token::OpenParent) {
-                self.parser.parse_function_call(
+                self.parser.parse_function_call::<true>(
                     lex,
                     |args| ExprNode::FunctionCall(name, args),
                     lex.span(),
@@ -365,7 +365,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 ))
             }
         } else if let Some(builtin) = next.maps_to_builtin() {
-            self.parser.parse_function_call(
+            self.parser.parse_function_call::<false>(
                 lex,
                 |args| ExprNode::BuiltinCall(builtin, args),
                 lex.span(),
@@ -374,7 +374,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
             // BUG(gawk): it accepts special variables iff qualified,
             // even if it is with the `awk` namespace.
             let name = Variable::User(name.qualify(lex, self.parser.namespace)?);
-            self.parser.parse_function_call(
+            self.parser.parse_function_call::<true>(
                 lex,
                 |args| ExprNode::IndirectCall(name, args),
                 lex.span().since(anchor),
