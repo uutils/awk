@@ -745,6 +745,7 @@ fn test_parser_function_calls() {
         { foo::baz(a, b + 1) }
         { length("foo") }
         { length ("foo") }
+        { foo (1) }
     "#;
     test_parser!(source => {
         rules: [
@@ -752,10 +753,11 @@ fn test_parser_function_calls() {
             (None, Some("(body (@awk::bar 3))")),
             (None, Some("(body (foo::baz awk::a (Add awk::b 1)))")),
             (None, Some("(body (Length \"foo\"))")),
-            (None, Some("(body (Length \"foo\"))"))
+            (None, Some("(body (Length \"foo\"))")),
+            (None, Some("(body (Concat awk::foo 1))"))
         ],
     });
-    test_parser!(is_err!("foo (1)", "foo (1, 2)"));
+    test_parser!(is_err!("foo ()", "foo (1, 2)"));
 }
 
 #[test]
