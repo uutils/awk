@@ -739,18 +739,23 @@ fn test_parser_regex_matching() {
 
 #[test]
 fn test_parser_function_calls() {
-    let source = r"
+    let source = r#"
         { foo(1, 2) }
         { @bar(3) }
         { foo::baz(a, b + 1) }
-    ";
+        { length("foo") }
+        { length ("foo") }
+    "#;
     test_parser!(source => {
         rules: [
             (None, Some("(body (awk::foo 1 2))")),
             (None, Some("(body (@awk::bar 3))")),
             (None, Some("(body (foo::baz awk::a (Add awk::b 1)))")),
+            (None, Some("(body (Length \"foo\"))")),
+            (None, Some("(body (Length \"foo\"))"))
         ],
     });
+    test_parser!(is_err!("foo (1)", "foo (1, 2)"));
 }
 
 #[test]
