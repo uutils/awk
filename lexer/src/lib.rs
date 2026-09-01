@@ -183,43 +183,43 @@ pub enum Token<'a> {
     Lshift,
     #[token("rshift", |lex| parse_non_posix_keyword(lex, Token::Rshift))]
     Rshift,
-    #[token("NR", accept_expression)]
+    #[regex("(awk::)?NR", accept_expression)]
     NrVariable,
-    #[token("NF", accept_expression)]
+    #[regex("(awk::)?NF", accept_expression)]
     NfVariable,
-    #[token("FS", accept_expression)]
+    #[regex("(awk::)?FS", accept_expression)]
     FsVariable,
-    #[token("RS", accept_expression)]
+    #[regex("(awk::)?RS", accept_expression)]
     RsVariable,
-    #[token("OFS", accept_expression)]
+    #[regex("(awk::)?OFS", accept_expression)]
     OfsVariable,
-    #[token("ORS", accept_expression)]
+    #[regex("(awk::)?ORS", accept_expression)]
     OrsVariable,
-    #[token("FILENAME", accept_expression)]
+    #[regex("(awk::)?FILENAME", accept_expression)]
     FilenameVariable,
-    #[token("ARGC", accept_expression)]
+    #[regex("(awk::)?ARGC", accept_expression)]
     ArgcVariable,
-    #[token("ARGV", accept_expression)]
+    #[regex("(awk::)?ARGV", accept_expression)]
     ArgvVariable,
-    #[token("SUBSEP", accept_expression)]
+    #[regex("(awk::)?SUBSEP", accept_expression)]
     SubsepVariable,
-    #[token("FNR", accept_expression)]
+    #[regex("(awk::)?FNR", accept_expression)]
     FnrVariable,
-    #[token("ARGIND")]
+    #[regex("(awk::)?ARGIND")]
     ArgindVariable,
-    #[token("OFMT", accept_expression)]
+    #[regex("(awk::)?OFMT", accept_expression)]
     OfmtVariable,
-    #[token("RSTART", accept_expression)]
+    #[regex("(awk::)?RSTART", accept_expression)]
     RstartVariable,
-    #[token("RLENGTH", accept_expression)]
+    #[regex("(awk::)?RLENGTH", accept_expression)]
     RlengthVariable,
-    #[token("ENVIRON", accept_expression)]
+    #[regex("(awk::)?ENVIRON", accept_expression)]
     EnvironVariable,
-    #[token("PROCINFO", accept_expression)]
+    #[regex("(awk::)?PROCINFO", accept_expression)]
     ProcinfoVariable,
-    #[token("SYMTAB", accept_expression)]
+    #[regex("(awk::)?SYMTAB", accept_expression)]
     SymtabVariable,
-    #[token("FUNCTAB", accept_expression)]
+    #[regex("(awk::)?FUNCTAB", accept_expression)]
     FunctabVariable,
     #[regex("(?&identifier)", Identifier::parse::<0>)]
     Identifier(Identifier<'a>),
