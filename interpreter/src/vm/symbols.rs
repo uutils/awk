@@ -11,6 +11,7 @@ use ahash::RandomState;
 use bumpalo::Bump;
 use indexmap_allocator_api::IndexMap;
 use itertools::Itertools;
+use memchr::{memchr_iter, memchr3_iter};
 use minrx::RegexError;
 use parser::{Identifier, Span};
 use smallvec::SmallVec;
@@ -320,51 +321,134 @@ impl Record {
     /// spans of the record.
     fn split_fields_raw(
         &mut self,
-        symbols: &mut SymbolTable<'_>,
+        symbols: &mut SymbolTable,
         mode: ExecMode,
     ) -> Result<&mut Vec<Span>, RegexError> {
-        // TODO: wire in FPAT and non-regex split, etc.
+        // TODO: trace FPAT/FIELDWIDTHS assignments.
+        // TODO: string caching; non UTF-8 conversions
         match self.fields {
             Some(ref mut fields) => Ok(fields),
-            None => self.fs_regex_split(symbols, mode),
+            None if false => {
+                let fpat = symbols.fpat.to_string();
+                self.fpat_regex_split(fpat.as_bytes(), mode, symbols)
+            }
+            None if false => {
+                let _fieldwidths = symbols.fieldwidths.to_string();
+                todo!()
+            }
+            None => {
+                let fs = symbols.fs.to_string();
+                let mut fs_chars = fs.chars();
+                match &*fs {
+                    " " => self.fs_whitespace_split(symbols),
+                    _ if let Some(char) = fs_chars.next()
+                        && fs_chars.next().is_none() =>
+                    {
+                        self.fs_char_split(char, symbols)
+                    }
+                    "" => self.fs_all_split(symbols),
+                    s => self.fs_regex_split(s.as_bytes(), symbols, mode),
+                }
+            }
         }
+    }
+
+    fn init_fields(
+        &mut self,
+        symbols: &mut SymbolTable,
+        f: impl FnOnce(&mut Vec<u8>, &mut Vec<Span>) -> Result<(), RegexError>,
+    ) -> Result<&mut Vec<Span>, RegexError> {
+        let buf = self.fields.get_or_insert_default();
+        buf.clear();
+        buf.push(Span::from(0..self.raw.len())); // $0
+
+        f(&mut self.raw, buf)?;
+        symbols.nf = Value::Int(buf.len() as isize - 1);
+        Ok(buf)
+    }
+
+    fn fs_whitespace_split(
+        &mut self,
+        symbols: &mut SymbolTable,
+    ) -> Result<&mut Vec<Span>, RegexError> {
+        self.init_fields(symbols, |raw, buf| {
+            buf.extend(
+                memchr3_iter(b' ', b'\t', b'\n', raw)
+                    .coalesce(|a, b| (a + 1 == b).then_some(b).ok_or((a, b)))
+                    .map(to_span)
+                    .split_by(raw.len()),
+            );
+            Ok(())
+        })
+    }
+
+    fn fs_char_split(
+        &mut self,
+        c: char,
+        symbols: &mut SymbolTable,
+    ) -> Result<&mut Vec<Span>, RegexError> {
+        let mut bytes = [0; 4];
+        let bytes = c.encode_utf8(&mut bytes).as_bytes();
+        let last_i = bytes.len() - 1;
+        let last = bytes[last_i];
+
+        self.init_fields(symbols, |raw, buf| {
+            buf.extend(
+                memchr_iter(last, raw)
+                    .map(|i| Span::from(i.saturating_sub(last_i)..i + 1))
+                    .filter(|&span| raw[span].ends_with(bytes))
+                    .split_by(raw.len()),
+            );
+            Ok(())
+        })
     }
 
     /// Splits the record into fields via the regex engine with `FS` as the
     /// value separator.
     fn fs_regex_split(
         &mut self,
-        symbols: &mut SymbolTable<'_>,
+        fs: &[u8],
+        symbols: &mut SymbolTable,
         mode: ExecMode,
     ) -> Result<&mut Vec<Span>, RegexError> {
-        let len = self.raw.len();
-        let buf = self.fields.get_or_insert_default();
-        buf.clear();
-        buf.push(Span::from(0..len)); // $0
+        self.init_fields(symbols, |raw, buf| {
+            regex::automaton(fs, mode, false)?
+                .find_iter(&raw)
+                .map(|m| m.map(Span::from))
+                .process_results(|matches| {
+                    buf.extend(split_by(matches, raw.len()));
+                })?;
+            Ok(())
+        })
+    }
 
-        // Aren't iterators beautiful?
-        regex::automaton(symbols.fs.to_string().as_bytes(), mode, false)?
-            .find_iter(&self.raw)
-            .map(|m| m.map(Span::from))
-            .process_results(|matches| {
-                buf.extend(
-                    once(Span::from(0..0))
-                        .chain(matches)
-                        .chain(once(Span::from(len..len)))
-                        .tuple_windows()
-                        .map(|(prev, next)| Span::from(prev.end..next.start)),
-                );
-            })?;
+    fn fs_all_split(&mut self, symbols: &mut SymbolTable) -> Result<&mut Vec<Span>, RegexError> {
+        self.init_fields(symbols, |raw, buf| {
+            buf.extend((0..raw.len()).map(to_span));
+            Ok(())
+        })
+    }
 
-        symbols.nf = Value::Int(buf.len() as isize - 1);
-        Ok(buf)
+    fn fpat_regex_split(
+        &mut self,
+        fpat: &[u8],
+        mode: ExecMode,
+        symbols: &mut SymbolTable,
+    ) -> Result<&mut Vec<Span>, RegexError> {
+        self.init_fields(symbols, |raw, buf| {
+            regex::automaton(fpat, mode, false)?
+                .find_iter(&raw)
+                .map(|m| m.map(Span::from))
+                .process_results(|matches| buf.extend(matches))?;
+            Ok(())
+        })
     }
 
     /// Gets access to the byte span of the `n`th field. Splits if unsplit.
     fn get_raw(
         &mut self,
         n: usize,
-        symbols: &mut SymbolTable<'_>,
+        symbols: &mut SymbolTable,
         mode: ExecMode,
     ) -> Result<Option<&[u8]>, RegexError> {
         let span = self.split_fields_raw(symbols, mode)?.get(n).copied();
@@ -391,7 +475,7 @@ impl Record {
         &mut self,
         val: Value<'_>,
         n: usize,
-        symbols: &mut SymbolTable<'_>,
+        symbols: &mut SymbolTable,
         mode: ExecMode,
     ) -> Result<(), RegexError> {
         if n == 0 {
@@ -414,7 +498,7 @@ impl Record {
         &mut self,
         val: &Value<'_>,
         n: usize,
-        symbols: &mut SymbolTable<'_>,
+        symbols: &mut SymbolTable,
         mode: ExecMode,
     ) -> Result<(), RegexError> {
         let mut fields = take(self.split_fields_raw(symbols, mode)?);
@@ -465,6 +549,32 @@ impl Record {
         self.clear();
         &mut self.raw
     }
+}
+
+trait SplitByExt {
+    fn split_by(self, len: usize) -> impl Iterator<Item = Span>;
+}
+
+impl<T> SplitByExt for T
+where
+    T: Iterator<Item = Span>,
+{
+    fn split_by(self, len: usize) -> impl Iterator<Item = Span> {
+        split_by(self, len)
+    }
+}
+
+fn split_by(iter: impl Iterator<Item = Span>, len: usize) -> impl Iterator<Item = Span> {
+    once(Span::from(0..0))
+        .chain(iter)
+        .chain(once(Span::from(len..len)))
+        .tuple_windows()
+        .map(|(prev, next)| Span::from(prev.end..next.start))
+}
+
+#[inline]
+const fn to_span(start: usize) -> Span {
+    Span { start, end: start + 1 }
 }
 
 #[cfg(test)]
