@@ -550,3 +550,54 @@ fn chained_array_assignment_through_a_parameter_propagates_value() {
         .succeeds()
         .stdout_is("10\n");
 }
+
+#[test]
+fn whitespace_field_split() {
+    ucmd()
+        .arg(r#"BEGIN { $0 = "foo\n bar \n \t baz qux"; print $1 " " $2 " " $3 " " $4 }"#)
+        .succeeds()
+        .stdout_is("foo bar baz qux\n");
+}
+
+#[test]
+fn ere_regex_field_split() {
+    ucmd()
+        .arg(r#"BEGIN { FS = ";+"; $0 = "foo;;;bar;baz;;"; print $1, $2, $3 }"#)
+        .succeeds()
+        .stdout_is("foo bar baz\n");
+}
+
+#[test]
+fn null_match_regex_field_split() {
+    ucmd()
+        .arg(
+            r#"function test(x) { $0 = x; print "$1 = `" $1 "`"; print "$2 = `" $2 "`" }
+               BEGIN { FS = "ab|()"; test("abc def"); test("12 34") }"#,
+        )
+        .succeeds()
+        .stdout_is("$1 = ``\n$2 = `c def`\n$1 = `12 34`\n$2 = ``\n");
+}
+
+#[test]
+fn empty_fs_field_split() {
+    ucmd()
+        .arg(r#"BEGIN { FS = ""; $0 = "foo bar baz"; print $1 $2 $3, NF }"#)
+        .succeeds()
+        .stdout_is("foo 11\n");
+}
+
+#[test]
+fn unicode_char_fs_field_split() {
+    ucmd()
+        .arg(r#"BEGIN { FS = "🤪"; $0 = "foo🤪🤪bar🤪baz"; print $1, $2, $3, $4 }"#)
+        .succeeds()
+        .stdout_is("foo  bar baz\n");
+}
+
+#[test]
+fn ascii_char_fs_field_split() {
+    ucmd()
+        .arg(r#"BEGIN { FS = ";"; $0 = "foo;;bar;baz"; print $1, $2, $3, $4 }"#)
+        .succeeds()
+        .stdout_is("foo  bar baz\n");
+}
