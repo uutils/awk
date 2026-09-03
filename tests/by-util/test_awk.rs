@@ -601,3 +601,21 @@ fn ascii_char_fs_field_split() {
         .succeeds()
         .stdout_is("foo  bar baz\n");
 }
+
+#[test]
+fn return_stmnt_sets_typedness_eagerly() {
+    ucmd()
+        .arg("function f(x) { return a } BEGIN { a[f(a)] = 1; }")
+        .fails_with_code(1);
+}
+
+#[test]
+fn stmnt_conditions_set_typedness_eagerly() {
+    ucmd()
+        .arg("BEGIN { a[1] = 1; if(a) print; }")
+        .fails_with_code(1);
+
+    ucmd()
+        .arg("BEGIN { a[1] = 1; while(a) break; }")
+        .fails_with_code(1);
+}
