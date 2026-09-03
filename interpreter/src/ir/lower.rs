@@ -521,11 +521,11 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_atom_into(&mut self, atom: &Atom, dest: Reg) {
-        let t_arg = self.lower_atom_arg(atom, dest);
-        let (arg, ty) = t_arg.into_arg();
+        let arg = self.lower_atom_arg(atom, dest);
 
-        if t_arg.as_reg().is_none_or(|reg| reg != dest) {
-            self.emit(Instruction::CopyP { dest, arg, ty });
+        if arg.as_reg().is_none_or(|reg| reg != dest) {
+            let (arg, ty) = arg.into_arg();
+            self.emit(Instruction::CopyS { dest, arg, ty });
         }
     }
 
