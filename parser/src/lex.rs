@@ -362,9 +362,12 @@ pub trait SpanExt: Copy {
 }
 
 impl SpanExt for Span {
+    #[inline]
     fn since(self, start: usize) -> Self {
         Self { start, end: self.end }
     }
+
+    #[inline]
     fn up_from(self, start: usize) -> Self {
         Self { start, end: self.start }
     }
