@@ -25,12 +25,9 @@ use lexer::Token;
 pub use crate::{
     ast::*,
     diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError},
-    lex::Lexer,
+    lex::{Lexer, SpanExt},
 };
-use crate::{
-    lex::{SpanExt, TokenExt},
-    pratt::Pratt,
-};
+use crate::{lex::TokenExt, pratt::Pratt};
 
 type Result<T, E = ParsingError> = std::result::Result<T, E>;
 

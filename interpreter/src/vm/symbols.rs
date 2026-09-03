@@ -13,7 +13,7 @@ use indexmap_allocator_api::IndexMap;
 use itertools::Itertools;
 use memchr::{memchr_iter, memchr3_iter};
 use minrx::RegexError;
-use parser::{Identifier, Span};
+use parser::{Identifier, Span, SpanExt};
 use smallvec::SmallVec;
 
 use crate::{
@@ -374,8 +374,8 @@ impl Record {
         self.init_fields(symbols, |raw, buf| {
             buf.extend(
                 memchr3_iter(b' ', b'\t', b'\n', raw)
-                    .coalesce(|a, b| (a + 1 == b).then_some(b).ok_or((a, b)))
                     .map(to_span)
+                    .coalesce(|a, b| (a.end == b.start).then_some(b.since(a.start)).ok_or((a, b)))
                     .split_by(raw.len()),
             );
             Ok(())
