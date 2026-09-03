@@ -545,18 +545,8 @@ impl<'a> CodeGen<'a> {
                         ExprNode::BinaryOperation(op, lhs, rhs) => match op {
                             BinaryOperator::And => this.lower_and_into(lhs, rhs, dest),
                             BinaryOperator::Or => this.lower_or_into(lhs, rhs, dest),
-                            _ => {
-                                let lhs = this.lower_expr(lhs);
-                                let rhs = this.lower_expr(rhs);
-                                this.emit(Instruction::from_binary(
-                                    *op,
-                                    dest,
-                                    lhs.to_arg(),
-                                    rhs.to_arg(),
-                                ));
-                                rhs.free(this);
-                                lhs.free(this);
-                            }
+                            BinaryOperator::Concat => this.lower_cats_into(lhs, rhs, dest),
+                            _ => this.lower_binop_general(*op, lhs, rhs, dest),
                         },
                         ExprNode::Ternary(condition, true_then, false_then) => {
                             let (if_label, state) = this.emit_branch(condition, |this| {
@@ -869,6 +859,25 @@ impl<'a> CodeGen<'a> {
         })
     }
 
+    fn lower_binop_general(
+        &mut self,
+        op: BinaryOperator,
+        lhs: &Expr<'_>,
+        rhs: &Expr<'_>,
+        dest: Reg,
+    ) {
+        let lhs = self.lower_expr(lhs);
+        let rhs = self.lower_expr(rhs);
+        self.emit(Instruction::from_binary(
+            op,
+            dest,
+            lhs.to_arg(),
+            rhs.to_arg(),
+        ));
+        rhs.free(self);
+        lhs.free(self);
+    }
+
     fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, ()) = self.emit_branch(lhs, |this| {
             this.scoped_reg(|this, rhs_reg| {
@@ -895,6 +904,40 @@ impl<'a> CodeGen<'a> {
                 this.truthify(dest, rhs_reg);
             });
         });
+    }
+
+    fn lower_cats_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
+        fn recurse(
+            this: &mut CodeGen<'_>,
+            lhs: &Expr<'_>,
+            rhs: &Expr<'_>,
+            depth: RegWidth,
+        ) -> LinearRegRange {
+            let range = if let Expr::Node(lhs, _) = lhs
+                && let ExprNode::BinaryOperation(BinaryOperator::Concat, lhs, rhs) = lhs.as_ref()
+            {
+                recurse(this, lhs, rhs, depth + 1)
+            } else {
+                let range = this.regs.alloc_many(depth + 2); // Accounts for `lhs` and `rhs`.
+                this.lower_expr_into(lhs, range.as_range().0);
+                range
+            };
+            let dest = Reg((range.as_range().1.0 - 1) - depth);
+            this.lower_expr_into(rhs, dest);
+            range
+        }
+
+        if let Expr::Node(cat, _) = lhs
+            && let ExprNode::BinaryOperation(BinaryOperator::Concat, _, _) = cat.as_ref()
+        {
+            let range = recurse(self, lhs, rhs, 0);
+            let (start, end) = range.as_range();
+
+            self.emit(Instruction::ConcatMany { dest, start, end });
+            self.regs.free_many(range);
+        } else {
+            self.lower_binop_general(BinaryOperator::Concat, lhs, rhs, dest);
+        }
     }
 
     /// Coerce `src` to an integer truth value (0 or 1), as gawk does via `mkbool()`.

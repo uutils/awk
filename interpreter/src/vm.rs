@@ -353,6 +353,16 @@ impl<'a> Interpreter<'a> {
 
                     self.write_reg(dest, val);
                 }
+                Instruction::ConcatMany { dest, start, end } => {
+                    let offset = self.reg_offset();
+                    let args = self.registers.get_range(start..end, offset);
+                    let mut buf = StdVec::with_capacity(4 * args.len()); // Heuristic
+
+                    for arg in args {
+                        arg.write_string(&mut buf);
+                    }
+                    self.write_reg(dest, Value::String(buf.into()));
+                }
                 Instruction::IntrinsicCall { dest, start, end, fun } => {
                     let offset = self.reg_offset();
                     let args = self.registers.get_range(start..end, offset);

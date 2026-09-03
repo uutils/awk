@@ -84,6 +84,7 @@ pub enum Instruction {
     InA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     IndexA { dest: Reg, arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     DeleteP { arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
+    ConcatMany { dest: Reg, start: Reg, end: Reg },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: UserNonLocal },
@@ -420,8 +421,11 @@ impl Display for Instruction {
                 write!(f, "{op}")?;
                 fmt_arg(f, arg, ty, " ")
             }
+            Self::ConcatMany { dest, start, end } => {
+                write!(f, "{op} {dest}, {start}..{end}")
+            }
             Self::IntrinsicCall { dest, start, end, fun } => {
-                write!(f, "{op} {dest} {fun}, {start}..{end}")
+                write!(f, "{op} {dest}, {fun}, {start}..{end}")
             }
             Self::IndirectCall { dest, start, end, name, ty } => {
                 write!(f, "{op} {dest}")?;
@@ -435,7 +439,7 @@ impl Display for Instruction {
                 write!(f, "{cmd} {start}..{end}")
             }
             Self::UserCall { dest, start, end, name } => {
-                write!(f, "{op} {dest} {name}, {start}..{end}")
+                write!(f, "{op} {dest}, {name}, {start}..{end}")
             }
             Self::Next | Self::NextFile | Self::ReturnUnassigned => {
                 write!(f, "{op}")
@@ -482,6 +486,7 @@ impl Instruction {
             Self::CopyP { .. } => "pcpy",
             Self::DeleteA { .. } => "adel",
             Self::DeleteP { .. } => "pdel",
+            Self::ConcatMany { .. } => "catv",
             Self::IntrinsicCall { .. } => "bcall",
             Self::UserCall { .. } => "ucall",
             Self::IndirectCall { .. } => "icall",
