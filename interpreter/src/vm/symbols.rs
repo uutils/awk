@@ -405,6 +405,17 @@ impl Record {
 
     /// Splits the record into fields via the regex engine with `FS` as the
     /// value separator.
+    //
+    /// # Note:
+    /// GNU appears to finish after the first null match. This is undefined by
+    /// POSIX and gawk behaves the same in POSIX mode. Essentially, this means
+    /// that for `FS = "ab|()"`:
+    ///   * `$0 = "abc def"` is split as `$1 = ""`, `$2 = "c def"`.
+    ///   * `$0 = "12 34"` is split as `$1 = "12 34"`.
+    ///
+    /// This may be a bug and is historically inconsistent; we encapsulate this
+    /// in the `let matches = ...` statement below. Removing it matches just
+    /// like the empty `FS`, except for a possible leading null match.
     fn fs_regex_split(
         &mut self,
         fs: &[u8],
@@ -416,6 +427,7 @@ impl Record {
                 .find_iter(&raw)
                 .map(|m| m.map(Span::from))
                 .process_results(|matches| {
+                    let matches = matches.take_while(|s| !s.is_empty());
                     buf.extend(split_by(matches, raw.len()));
                 })?;
             Ok(())
