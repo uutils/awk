@@ -619,3 +619,35 @@ fn stmnt_conditions_set_typedness_eagerly() {
         .arg("BEGIN { a[1] = 1; while(a) break; }")
         .fails_with_code(1);
 }
+
+#[test]
+fn nf_assign_truncates() {
+    ucmd()
+        .arg(r#"BEGIN { $0 = "foo bar baz"; NF = 1; print }"#)
+        .succeeds()
+        .stdout_is("foo\n");
+}
+
+#[test]
+fn nf_assign_extends_ofs() {
+    ucmd()
+        .arg(r#"BEGIN { $0 = "foo bar baz"; OFS = ";"; NF = 6; print }"#)
+        .succeeds()
+        .stdout_is("foo;bar;baz;;;\n");
+}
+
+#[test]
+fn nf_is_consistent() {
+    ucmd()
+        .arg(r#"BEGIN { $0 = "foo bar baz"; print NF; OFS = ";"; NF = 2; print NF, $NF }"#)
+        .succeeds()
+        .stdout_is("3\n2;bar\n");
+}
+
+#[test]
+fn nf_inc_works() {
+    ucmd()
+        .arg(r#"BEGIN { $0 = "foo bar baz"; NF++; print NF, $NF }"#)
+        .succeeds()
+        .stdout_is("4 \n");
+}
