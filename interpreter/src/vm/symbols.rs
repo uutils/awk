@@ -70,9 +70,6 @@ pub struct SymbolTable<'a> {
     pub(super) ignorecase: Value<'a>,
     /// GNU extension: dynamic control of `--lint` from AWK code.
     pub(super) lint: Value<'a>,
-    /// Field count for the current record. Updated on record read or when `$0` /
-    /// fields change.
-    pub(super) nf: Value<'a>,
     /// Total records read so far. Incremented on each record read.
     pub(super) nr: Value<'a>,
     /// `sprintf` format for numbers in `print`. Default `"%.6g"`.
@@ -181,7 +178,6 @@ impl<'a> SymbolTable<'a> {
             fs: Value::String(b" ".into()),
             ignorecase: Value::Int(0),
             lint: Value::Int(0),
-            nf: Value::Int(0),
             nr: Value::Int(0),
             ofmt: Value::String(b"%.6g".into()),
             ofs: Value::String(b" ".into()),
@@ -272,7 +268,6 @@ impl<'a> SymbolTable<'a> {
     pub fn get_btin(&self, var: BuiltInVar) -> &Value<'a> {
         match var {
             BuiltInVar::Nr => &self.nr,
-            BuiltInVar::Nf => &self.nf,
             BuiltInVar::Fs => &self.fs,
             BuiltInVar::Rs => &self.rs,
             BuiltInVar::Ofs => &self.ofs,
@@ -293,7 +288,6 @@ impl<'a> SymbolTable<'a> {
     pub fn get_btin_mut(&mut self, var: BuiltInVar) -> &mut Value<'a> {
         match var {
             BuiltInVar::Nr => &mut self.nr,
-            BuiltInVar::Nf => &mut self.nf,
             BuiltInVar::Fs => &mut self.fs,
             BuiltInVar::Rs => &mut self.rs,
             BuiltInVar::Ofs => &mut self.ofs,
@@ -317,6 +311,15 @@ impl Record {
         Self::default()
     }
 
+    pub fn nf<'a>(
+        &mut self,
+        symbols: &mut SymbolTable<'a>,
+        mode: ExecMode,
+    ) -> Result<Value<'a>, RegexError> {
+        let fields = self.split_fields_raw(symbols, mode)?;
+        Ok(Value::Int(fields.len() as isize - 1))
+    }
+
     /// Splits the fields if unsplit and grants access to the inner buffer of
     /// spans of the record.
     fn split_fields_raw(
@@ -330,7 +333,7 @@ impl Record {
             Some(ref mut fields) => Ok(fields),
             None if false => {
                 let fpat = symbols.fpat.to_string();
-                self.fpat_regex_split(fpat.as_bytes(), mode, symbols)
+                self.fpat_regex_split(fpat.as_bytes(), mode)
             }
             None if false => {
                 let _fieldwidths = symbols.fieldwidths.to_string();
@@ -340,67 +343,52 @@ impl Record {
                 let fs = symbols.fs.to_string();
                 let mut fs_chars = fs.chars();
                 match &*fs {
-                    " " => self.fs_whitespace_split(symbols),
+                    " " => Ok(self.fs_whitespace_split()),
                     _ if let Some(char) = fs_chars.next()
                         && fs_chars.next().is_none() =>
                     {
-                        self.fs_char_split(char, symbols)
+                        Ok(self.fs_char_split(char))
                     }
-                    "" => self.fs_all_split(symbols),
-                    s => self.fs_regex_split(s.as_bytes(), symbols, mode),
+                    "" => Ok(self.fs_all_split()),
+                    s => self.fs_regex_split(s.as_bytes(), mode),
                 }
             }
         }
     }
 
-    fn init_fields(
-        &mut self,
-        symbols: &mut SymbolTable,
-        f: impl FnOnce(&mut Vec<u8>, &mut Vec<Span>) -> Result<(), RegexError>,
-    ) -> Result<&mut Vec<Span>, RegexError> {
+    fn init_fields(&mut self) -> (&mut Vec<u8>, &mut Vec<Span>) {
         let buf = self.fields.get_or_insert_default();
         buf.clear();
         buf.push(Span::from(0..self.raw.len())); // $0
 
-        f(&mut self.raw, buf)?;
-        symbols.nf = Value::Int(buf.len() as isize - 1);
-        Ok(buf)
+        (&mut self.raw, buf)
     }
 
-    fn fs_whitespace_split(
-        &mut self,
-        symbols: &mut SymbolTable,
-    ) -> Result<&mut Vec<Span>, RegexError> {
-        self.init_fields(symbols, |raw, buf| {
-            buf.extend(
-                memchr3_iter(b' ', b'\t', b'\n', raw)
-                    .map(to_span)
-                    .coalesce(|a, b| (a.end == b.start).then_some(b.since(a.start)).ok_or((a, b)))
-                    .split_by(raw.len()),
-            );
-            Ok(())
-        })
+    fn fs_whitespace_split(&mut self) -> &mut Vec<Span> {
+        let (raw, buf) = self.init_fields();
+        buf.extend(
+            memchr3_iter(b' ', b'\t', b'\n', raw)
+                .map(to_span)
+                .coalesce(|a, b| (a.end == b.start).then_some(b.since(a.start)).ok_or((a, b)))
+                .split_by(raw.len()),
+        );
+        buf
     }
 
-    fn fs_char_split(
-        &mut self,
-        c: char,
-        symbols: &mut SymbolTable,
-    ) -> Result<&mut Vec<Span>, RegexError> {
+    fn fs_char_split(&mut self, c: char) -> &mut Vec<Span> {
         let mut bytes = [0; 4];
         let bytes = c.encode_utf8(&mut bytes).as_bytes();
         let last_i = bytes.len() - 1;
         let last = bytes[last_i];
+        let (raw, buf) = self.init_fields();
 
-        self.init_fields(symbols, |raw, buf| {
-            buf.extend(
-                memchr_iter(last, raw)
-                    .map(|i| Span::from(i.saturating_sub(last_i)..i + 1))
-                    .filter(|&span| raw[span].ends_with(bytes))
-                    .split_by(raw.len()),
-            );
-            Ok(())
-        })
+        buf.extend(
+            memchr_iter(last, raw)
+                .map(|i| Span::from(i.saturating_sub(last_i)..i + 1))
+                .filter(|&span| raw[span].ends_with(bytes))
+                .split_by(raw.len()),
+        );
+        buf
     }
 
     /// Splits the record into fields via the regex engine with `FS` as the
@@ -416,44 +404,35 @@ impl Record {
     /// This may be a bug and is historically inconsistent; we encapsulate this
     /// in the `let matches = ...` statement below. Removing it matches just
     /// like the empty `FS`, except for a possible leading null match.
-    fn fs_regex_split(
-        &mut self,
-        fs: &[u8],
-        symbols: &mut SymbolTable,
-        mode: ExecMode,
-    ) -> Result<&mut Vec<Span>, RegexError> {
-        self.init_fields(symbols, |raw, buf| {
-            regex::automaton(fs, mode, false)?
-                .find_iter(&raw)
-                .map(|m| m.map(Span::from))
-                .process_results(|matches| {
-                    let matches = matches.take_while(|s| !s.is_empty());
-                    buf.extend(split_by(matches, raw.len()));
-                })?;
-            Ok(())
-        })
+    fn fs_regex_split(&mut self, fs: &[u8], mode: ExecMode) -> Result<&mut Vec<Span>, RegexError> {
+        let (raw, buf) = self.init_fields();
+        regex::automaton(fs, mode, false)?
+            .find_iter(&raw)
+            .map(|m| m.map(Span::from))
+            .process_results(|matches| {
+                let matches = matches.take_while(|s| !s.is_empty());
+                buf.extend(split_by(matches, raw.len()));
+            })?;
+        Ok(buf)
     }
 
-    fn fs_all_split(&mut self, symbols: &mut SymbolTable) -> Result<&mut Vec<Span>, RegexError> {
-        self.init_fields(symbols, |raw, buf| {
-            buf.extend((0..raw.len()).map(to_span));
-            Ok(())
-        })
+    fn fs_all_split(&mut self) -> &mut Vec<Span> {
+        let (raw, buf) = self.init_fields();
+        buf.extend((0..raw.len()).map(to_span));
+        buf
     }
 
     fn fpat_regex_split(
         &mut self,
         fpat: &[u8],
         mode: ExecMode,
-        symbols: &mut SymbolTable,
     ) -> Result<&mut Vec<Span>, RegexError> {
-        self.init_fields(symbols, |raw, buf| {
-            regex::automaton(fpat, mode, false)?
-                .find_iter(&raw)
-                .map(|m| m.map(Span::from))
-                .process_results(|matches| buf.extend(matches))?;
-            Ok(())
-        })
+        let (raw, buf) = self.init_fields();
+        regex::automaton(fpat, mode, false)?
+            .find_iter(&raw)
+            .map(|m| m.map(Span::from))
+            .process_results(|matches| buf.extend(matches))?;
+        Ok(buf)
     }
 
     /// Gets access to the byte span of the `n`th field. Splits if unsplit.
@@ -513,18 +492,50 @@ impl Record {
         symbols: &mut SymbolTable,
         mode: ExecMode,
     ) -> Result<(), RegexError> {
-        let mut fields = take(self.split_fields_raw(symbols, mode)?);
+        let fields = take(self.split_fields_raw(symbols, mode)?);
+        self.reconstruct(n, Some(val), false, symbols, fields);
+
+        Ok(())
+    }
+
+    /// Truncates or extends the record when writing to `NF`.
+    pub fn resize(
+        &mut self,
+        n: usize,
+        symbols: &mut SymbolTable,
+        mode: ExecMode,
+    ) -> Result<(), RegexError> {
+        let fields = take(self.split_fields_raw(symbols, mode)?);
+        self.reconstruct(n, None, true, symbols, fields);
+
+        Ok(())
+    }
+
+    /// Rebuilds the record with `OFS` as field separator, truncating or
+    /// extending on demand and updating the field spans. Also takes a new
+    /// value to be written. Writes the data to [`Self`] at the end.
+    fn reconstruct(
+        &mut self,
+        at: usize,
+        new: Option<&Value>,
+        truncate: bool,
+        symbols: &mut SymbolTable,
+        mut fields: Vec<Span>,
+    ) {
         // If writing out-of-bounds, we grow the record by one OFS each and
         // materialize empty fields. This is partly why re-splitting isn't
         // idempotent, as a regex engine could eat up the consecutive FSs.
-        if n >= fields.len() {
-            let len = self.raw.len();
-            fields.resize(n + 1, Span::from(len..len));
+        if at >= fields.len() {
+            let raw_len = self.raw.len();
+            fields.resize(at + 1, Span::from(raw_len..raw_len));
+        } else if truncate {
+            fields.truncate(at + 1);
         }
 
         let mut ofs = SmallVec::<[u8; 16]>::new();
         let _ = write!(ofs, "{}", symbols.ofs);
-        let mut buf = Vec::with_capacity(self.raw.len() + val.string_size_hint() + ofs.len());
+        let val_size = new.map(Value::string_size_hint).unwrap_or_default();
+        let mut buf = Vec::with_capacity(self.raw.len() + val_size + ofs.len());
 
         for (i, span) in fields.iter_mut().enumerate().skip(1) {
             if i > 1 {
@@ -532,19 +543,16 @@ impl Record {
             }
 
             let start = buf.len();
-            if i == n {
-                val.write_string(&mut buf);
-            } else {
-                buf.extend_from_slice(&self.raw()[*span]);
+            match new {
+                Some(val) if i == at => val.write_string(&mut buf),
+                _ => buf.extend_from_slice(&self.raw()[*span]),
             }
             *span = Span::from(start..buf.len());
         }
         fields[0] = Span::from(0..buf.len());
-        symbols.nf = Value::Int(fields.len() as isize - 1);
 
         self.raw = buf;
         self.fields = Some(fields);
-        Ok(())
     }
 
     /// Grants access to the record's byte slice.
@@ -554,6 +562,10 @@ impl Record {
 
     pub fn clear(&mut self) {
         self.raw.clear();
+        self.fields = None;
+    }
+
+    pub fn invalidate(&mut self) {
         self.fields = None;
     }
 
@@ -611,7 +623,6 @@ mod tests {
         assert_eq!(st.fs, Value::String(b" ".into()));
         assert_eq!(st.ignorecase, Value::Int(0));
         assert_eq!(st.lint, Value::Int(0));
-        assert_eq!(st.nf, Value::Int(0));
         assert_eq!(st.nr, Value::Int(0));
         assert_eq!(st.ofmt, Value::String(b"%.6g".into()));
         assert_eq!(st.ofs, Value::String(b" ".into()));

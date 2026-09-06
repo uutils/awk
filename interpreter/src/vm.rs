@@ -31,7 +31,7 @@ pub use symbols::SymbolTable;
 use crate::{
     InterpreterError,
     ir::{
-        Arg, ArgTy, Instruction, IxWidth, Label, PlaceTy, Reg, RegWidth, UserNonLocal,
+        Arg, ArgTy, BuiltInVar, Instruction, IxWidth, Label, PlaceTy, Reg, RegWidth, UserNonLocal,
         lower::{Bytecode, CodeGen},
     },
     vm::{
@@ -178,16 +178,16 @@ impl<'a> Interpreter<'a> {
                         Instruction::IncrementPost { .. } | Instruction::DecrementPost { .. }
                     );
 
-                    let Some(place) = Place::new(arg, ty).scalar(self) else {
-                        return Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata)));
-                    };
-                    let new_val = rhs + place;
-                    let observed = if is_post {
-                        &Value::Int(0) + place
-                    } else {
-                        new_val.clone()
-                    };
-                    *place = new_val;
+                    let (new_val, observed) = self.get_val(arg, *ty, metadata, |old_val| {
+                        let new_val = rhs + old_val;
+                        let observed = if is_post {
+                            &Value::Int(0) + old_val
+                        } else {
+                            new_val.clone()
+                        };
+                        (new_val, observed)
+                    })?;
+                    Place::new(arg, ty).write(self, new_val);
                     self.write_reg(dest, observed);
                 }
                 Instruction::CopyS { dest, arg, ty } => {
@@ -334,7 +334,7 @@ impl<'a> Interpreter<'a> {
                 Instruction::DeleteA { arg, ty } => {
                     let place = Place::new(arg, ty);
                     // Remember typedness
-                    *place.resolve(self) = Value::empty_array();
+                    place.write(self, Value::empty_array());
                 }
                 Instruction::DeleteP { arg, ty, start, end } => {
                     let key = self.make_array_key(start, end);
@@ -463,6 +463,29 @@ impl<'a> Interpreter<'a> {
             Some(x) => Ok(x),
             None => Err(InterpreterError::ScalarUseOfArrary(self.get_span(metadata))),
         }
+    }
+
+    /// Reads and triggers side-effects of built-in variables on read.
+    pub fn sync_nf_read(&mut self) -> Value<'a> {
+        // Materialize fields if record is unsplit
+        // TODO: refactor so there are no errors at this point
+        self.record.nf(&mut self.symbols, self.mode).unwrap()
+    }
+
+    /// Writes and triggers side-effects of built-in variables on write.
+    pub fn sync_btin_write(&mut self, sys: BuiltInVar, val: Value<'a>) {
+        // Apply side effects before writing the value
+        match sys {
+            BuiltInVar::Nf => {
+                // TODO: errors
+                let n = usize::try_from(val.to_int()).unwrap();
+                let _ = self.record.resize(n, &mut self.symbols, self.mode);
+                return; // auto-updated
+            }
+            BuiltInVar::Fs | BuiltInVar::Ofs => self.record.invalidate(),
+            _ => {}
+        }
+        *self.symbols.get_btin_mut(sys) = val;
     }
 
     fn array_elem_get(
@@ -756,12 +779,15 @@ impl Arg {
     fn get_pure<'v, 'a>(
         self,
         ty: ArgTy,
-        intrp: &'v Interpreter<'a>,
+        intrp: &'v mut Interpreter<'a>,
         stack_space: &'v mut MaybeUninit<Value<'a>>,
     ) -> &'v Value<'a> {
         match ty {
             ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
             ArgTy::Cnt => &intrp.consts.0[unsafe { self.cnt.0 } as usize],
+            ArgTy::BtInVal if unsafe { self.sys } == BuiltInVar::Nf => {
+                stack_space.write(intrp.sync_nf_read())
+            }
             ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
             _ => unreachable!(),
         }
@@ -783,6 +809,10 @@ impl Arg {
                 Some(())
             }
             ArgTy::Cnt => Some(()),
+            ArgTy::BtInVal if unsafe { self.sys } == BuiltInVar::Nf => {
+                stack_space.write(intrp.sync_nf_read());
+                Some(())
+            }
             ty if let Ok(place) = ty.try_into() => {
                 Place::new(self, place).scalar(intrp).map(|_| ())
             }
@@ -804,6 +834,9 @@ impl Arg {
         match ty {
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
             ArgTy::Cnt => &intrp.consts.0[unsafe { self.cnt.0 } as usize],
+            ArgTy::BtInVal if unsafe { self.sys } == BuiltInVar::Nf => unsafe {
+                stack_space.assume_init_ref()
+            },
             ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
             _ => unreachable!(),
         }
@@ -850,6 +883,10 @@ impl Place {
 
     #[inline(always)]
     fn write<'a>(self, intrp: &mut Interpreter<'a>, val: Value<'a>) {
+        if let PlaceTy::BtInVal = self.ty {
+            intrp.sync_btin_write(unsafe { self.arg.sys }, val);
+            return;
+        }
         *self.resolve(intrp) = val;
     }
 }
@@ -890,7 +927,6 @@ impl Display for SymbolTable<'_> {
             ("FS", &self.fs),
             ("IGNORECASE", &self.ignorecase),
             ("LINT", &self.lint),
-            ("NF", &self.nf),
             ("NR", &self.nr),
             ("OFMT", &self.ofmt),
             ("OFS", &self.ofs),
