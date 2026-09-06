@@ -17,6 +17,7 @@ use std::{
 
 use ahash::RandomState;
 use hashbrown::HashMap;
+use smallvec::SmallVec;
 
 use crate::{ExecMode, vm::regex};
 
@@ -159,7 +160,7 @@ impl<'a> Value<'a> {
         })
     }
 
-    pub fn write_string(&self, out: &mut Vec<u8>) {
+    pub fn write_string(&self, out: &mut impl VecAdaptor<u8>) {
         match self {
             Self::String(s) | Self::Regex(s) => out.extend_from_slice(s),
             Self::Float(n) => write!(out, "{n}").unwrap(),
@@ -391,6 +392,35 @@ impl From<bool> for Value<'_> {
 impl From<Vec<u8>> for Value<'_> {
     fn from(value: Vec<u8>) -> Self {
         Self::String(value.into())
+    }
+}
+
+pub trait VecAdaptor<T>: Write {
+    fn push(&mut self, e: T);
+    fn extend_from_slice(&mut self, slice: &[T]);
+}
+
+impl VecAdaptor<u8> for Vec<u8> {
+    #[inline(always)]
+    fn push(&mut self, e: u8) {
+        self.push(e);
+    }
+
+    #[inline(always)]
+    fn extend_from_slice(&mut self, slice: &[u8]) {
+        self.extend_from_slice(slice);
+    }
+}
+
+impl<const N: usize> VecAdaptor<u8> for SmallVec<[u8; N]> {
+    #[inline(always)]
+    fn push(&mut self, e: u8) {
+        self.push(e);
+    }
+
+    #[inline(always)]
+    fn extend_from_slice(&mut self, slice: &[u8]) {
+        self.extend_from_slice(slice);
     }
 }
 

@@ -5,7 +5,7 @@
 
 //! TODO: `SYMTAB`, `FUNCTAB`, `PROCINFO` magic, auto-set variables.
 
-use std::{borrow::Cow, cell::RefCell, io::Write, iter::once, mem::take, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, iter::once, mem::take, rc::Rc};
 
 use ahash::RandomState;
 use bumpalo::Bump;
@@ -532,8 +532,8 @@ impl Record {
             fields.truncate(at + 1);
         }
 
-        let mut ofs = SmallVec::<[u8; 16]>::new();
-        let _ = write!(ofs, "{}", symbols.ofs);
+        let mut ofs = SmallVec::<[u8; 16]>::new_const();
+        symbols.ofs.write_string(&mut ofs);
         let val_size = new.map(Value::string_size_hint).unwrap_or_default();
         let mut buf = Vec::with_capacity(self.raw.len() + val_size + ofs.len());
 

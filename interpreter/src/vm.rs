@@ -18,7 +18,7 @@ pub mod types;
 
 use std::{
     fmt::{self, Display},
-    io::{Result as IoResult, Write},
+    io::Result as IoResult,
     mem::MaybeUninit,
     ops::Range,
     vec::Vec as StdVec,
@@ -26,6 +26,7 @@ use std::{
 
 use bumpalo::{Bump, collections::Vec};
 use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection};
+use smallvec::SmallVec;
 pub use symbols::SymbolTable;
 
 use crate::{
@@ -582,15 +583,19 @@ impl<'a> Interpreter<'a> {
         if range.is_empty() {
             buf.extend_from_slice(self.record.raw());
         } else {
+            let mut ofs = SmallVec::<[u8; 16]>::new_const();
+            self.symbols.ofs.write_string(&mut ofs);
+
             let mut range = range.iter();
             if let Some(reg) = range.next() {
-                let _ = write!(buf, "{reg}");
+                reg.write_string(&mut buf);
             }
             for reg in range {
-                let _ = write!(buf, "{ofs}{reg}", ofs = self.symbols.ofs);
+                buf.extend_from_slice(&ofs);
+                reg.write_string(&mut buf);
             }
         }
-        let _ = write!(buf, "{ors}", ors = self.symbols.ors);
+        self.symbols.ors.write_string(&mut buf);
 
         IoRequest::FileWrite { buf, at: FilePath::Stdout }
     }
