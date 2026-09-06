@@ -295,13 +295,15 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::IndexS { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.array_elem_get(Place::new(arg, ty), &key, metadata)?;
+                    let place = Place::new(arg, ty);
+                    let val = self.array_op(place, metadata, |arr| arr.get_array_elem(&key))?;
 
                     self.write_reg(dest, val);
                 }
                 Instruction::IndexA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.array_elem_aoa(Place::new(arg, ty), key, metadata)?;
+                    let place = Place::new(arg, ty);
+                    let val = self.array_op(place, metadata, |arr| arr.array_elem_aoa(key))?;
 
                     self.write_reg(dest, val);
                 }
@@ -326,28 +328,31 @@ impl<'a> Interpreter<'a> {
                 Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr } => {
                     let key = self.make_array_key(start, end);
                     let val = self.get_val(rhs, tyr, metadata, Value::clone)?;
+                    let place = Place::new(lhs, tyl);
 
-                    self.array_elem_set(Place::new(lhs, tyl), key, val.clone(), metadata)?;
+                    self.array_op(place, metadata, |arr| arr.array_insert(key, val.clone()))?;
                     self.write_reg(dest, val);
                 }
                 Instruction::DeleteA { arg, ty } => {
                     // Remember typedness
-                    Place::new(arg, ty).write(self, Value::empty_array());
+                    self.array_op(Place::new(arg, ty), metadata, Value::reset_array)?;
                 }
                 Instruction::DeleteP { arg, ty, start, end } => {
                     let key = self.make_array_key(start, end);
                     // Forget typedness
-                    self.array_elem_set(Place::new(arg, ty), key, Value::Untyped, metadata)?;
+                    self.array_op(Place::new(arg, ty), metadata, |arr| arr.array_remove(&key))?;
                 }
                 Instruction::In { dest, lhs, rhs, tyr, tyl } => {
                     let key = self.get_val(rhs, tyr, metadata, Value::to_string)?;
-                    let val = self.has_array_elem(Place::new(lhs, tyl), &key, metadata)?;
+                    let place = Place::new(lhs, tyl);
+                    let val = self.array_op(place, metadata, |arr| arr.has_array_elem(&key))?;
 
                     self.write_reg(dest, val);
                 }
                 Instruction::InA { dest, arg, start, end, ty } => {
                     let key = self.make_array_key(start, end);
-                    let val = self.has_array_elem(Place::new(arg, ty), &key, metadata)?;
+                    let place = Place::new(arg, ty);
+                    let val = self.array_op(place, metadata, |arr| arr.has_array_elem(&key))?;
 
                     self.write_reg(dest, val);
                 }
@@ -486,47 +491,15 @@ impl<'a> Interpreter<'a> {
         *self.symbols.get_btin_mut(sys) = val;
     }
 
-    fn array_elem_get(
+    fn array_op<T>(
         &mut self,
         place: Place,
-        key: &str,
         metadata: &[MetaId],
-    ) -> Result<Value<'a>> {
+        f: impl FnOnce(&mut Value<'a>) -> Option<T>,
+    ) -> Result<T> {
         place
             .array(self)
-            .and_then(|arr| arr.get_array_elem(key))
-            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
-    }
-
-    fn array_elem_aoa(
-        &mut self,
-        place: Place,
-        key: String,
-        metadata: &[MetaId],
-    ) -> Result<Value<'a>> {
-        place
-            .array(self)
-            .and_then(|arr| arr.array_elem_aoa(key))
-            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
-    }
-
-    fn array_elem_set(
-        &mut self,
-        place: Place,
-        key: String,
-        val: Value<'a>,
-        metadata: &[MetaId],
-    ) -> Result<()> {
-        place
-            .array(self)
-            .and_then(|arr| arr.set_array_elem(key, val))
-            .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
-    }
-
-    fn has_array_elem(&mut self, place: Place, key: &str, metadata: &[MetaId]) -> Result<bool> {
-        place
-            .array(self)
-            .and_then(|arr| arr.has_array_elem(key))
+            .and_then(f)
             .ok_or_else(|| InterpreterError::ArrayUseOfScalar(self.get_span(metadata)))
     }
 

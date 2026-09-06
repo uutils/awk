@@ -123,8 +123,18 @@ impl<'a> Value<'a> {
         Some(Rc::clone(arr))
     }
 
-    pub fn set_array_elem(&mut self, key: String, val: Self) -> Option<()> {
+    pub fn array_insert(&mut self, key: String, val: Self) -> Option<()> {
         self.as_array()?.borrow_mut().insert(key, val);
+        Some(())
+    }
+
+    pub fn array_remove(&mut self, key: &str) -> Option<()> {
+        self.as_array()?.borrow_mut().remove(key);
+        Some(())
+    }
+
+    pub fn reset_array(&mut self) -> Option<()> {
+        *self.as_array()?.borrow_mut() = HashMap::default();
         Some(())
     }
 
