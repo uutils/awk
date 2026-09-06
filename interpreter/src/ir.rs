@@ -263,6 +263,14 @@ impl From<PlaceTy> for ArgTy {
     }
 }
 
+impl BuiltInVar {
+    pub const fn is_always_scalar(self) -> bool {
+        !matches!(
+            self,
+            Self::Environ | Self::Symtab | Self::Procinfo | Self::Argv
+        )
+    }
+}
 impl<'a, 'r> TryFrom<&'r Variable<'a>> for BuiltInVar {
     type Error = &'r Identifier<'a>;
 

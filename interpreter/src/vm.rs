@@ -308,9 +308,8 @@ impl<'a> Interpreter<'a> {
                 Instruction::StoreS { dest, ty_place, var, arg, ty } => {
                     debug_assert!(matches!(ty_place, PlaceTy::UserVal | PlaceTy::BtInVal));
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
-                    let place = Place::new(var, ty_place);
 
-                    place.write(self, val.clone());
+                    Place::new(var, ty_place).write(self, val.clone());
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreF { dest, src, arg, ty, tys } => {
@@ -332,9 +331,8 @@ impl<'a> Interpreter<'a> {
                     self.write_reg(dest, val);
                 }
                 Instruction::DeleteA { arg, ty } => {
-                    let place = Place::new(arg, ty);
                     // Remember typedness
-                    place.write(self, Value::empty_array());
+                    Place::new(arg, ty).write(self, Value::empty_array());
                 }
                 Instruction::DeleteP { arg, ty, start, end } => {
                     let key = self.make_array_key(start, end);
@@ -783,13 +781,14 @@ impl Arg {
         stack_space: &'v mut MaybeUninit<Value<'a>>,
     ) -> &'v Value<'a> {
         match ty {
+            ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Imm => stack_space.write(Value::Int(unsafe { self.imm } as isize)),
             ArgTy::Cnt => &intrp.consts.0[unsafe { self.cnt.0 } as usize],
+            ArgTy::UserVal => intrp.symbols.user(unsafe { self.usr }),
             ArgTy::BtInVal if unsafe { self.sys } == BuiltInVar::Nf => {
                 stack_space.write(intrp.sync_nf_read())
             }
-            ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
-            _ => unreachable!(),
+            ArgTy::BtInVal => intrp.symbols.get_btin(unsafe { self.sys }),
         }
     }
 
@@ -804,20 +803,20 @@ impl Arg {
         stack_space: &mut MaybeUninit<Value<'a>>,
     ) -> Option<()> {
         match ty {
+            ArgTy::Reg => intrp.read_reg_mut(unsafe { self.reg }),
             ArgTy::Imm => {
                 stack_space.write(Value::Int(unsafe { self.imm } as isize));
-                Some(())
+                return Some(());
             }
-            ArgTy::Cnt => Some(()),
+            ArgTy::Cnt => return Some(()),
+            ArgTy::UserVal => intrp.symbols.user_mut(unsafe { self.usr }),
             ArgTy::BtInVal if unsafe { self.sys } == BuiltInVar::Nf => {
-                stack_space.write(intrp.sync_nf_read());
-                Some(())
+                stack_space.write(intrp.sync_nf_read())
             }
-            ty if let Ok(place) = ty.try_into() => {
-                Place::new(self, place).scalar(intrp).map(|_| ())
-            }
-            _ => unreachable!(),
+            ArgTy::BtInVal => intrp.symbols.get_btin_mut(unsafe { self.sys }),
         }
+        .scalar_context()
+        .map(drop)
     }
 
     /// # SAFETY
@@ -832,13 +831,14 @@ impl Arg {
         stack_space: &'v MaybeUninit<Value<'a>>,
     ) -> &'v Value<'a> {
         match ty {
+            ArgTy::Reg => intrp.read_reg(unsafe { self.reg }),
             ArgTy::Imm => unsafe { stack_space.assume_init_ref() },
             ArgTy::Cnt => &intrp.consts.0[unsafe { self.cnt.0 } as usize],
+            ArgTy::UserVal => intrp.symbols.user(unsafe { self.usr }),
             ArgTy::BtInVal if unsafe { self.sys } == BuiltInVar::Nf => unsafe {
                 stack_space.assume_init_ref()
             },
-            ty if let Ok(place) = ty.try_into() => Place::new(self, place).read(intrp),
-            _ => unreachable!(),
+            ArgTy::BtInVal => intrp.symbols.get_btin(unsafe { self.sys }),
         }
     }
 }
@@ -849,45 +849,24 @@ impl Place {
         Self { arg, ty }
     }
 
-    /// Single source of truth for mapping `(Arg, PlaceTy) |=> &mut Value`.
-    #[inline(always)]
-    fn resolve<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> &'v mut Value<'a> {
+    /// Forces array typeck and returns the resolved place.
+    fn array<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> Option<&'v mut Value<'a>> {
         match self.ty {
             PlaceTy::Reg => intrp.read_reg_mut(unsafe { self.arg.reg }),
             PlaceTy::UserVal => intrp.symbols.user_mut(unsafe { self.arg.usr }),
+            PlaceTy::BtInVal if unsafe { self.arg.sys }.is_always_scalar() => return None,
             PlaceTy::BtInVal => intrp.symbols.get_btin_mut(unsafe { self.arg.sys }),
         }
-    }
-
-    /// Pure read, without typeck.
-    #[inline(always)]
-    fn read<'v, 'a>(self, intrp: &'v Interpreter<'a>) -> &'v Value<'a> {
-        match self.ty {
-            PlaceTy::Reg => intrp.read_reg(unsafe { self.arg.reg }),
-            PlaceTy::UserVal => intrp.symbols.user(unsafe { self.arg.usr }),
-            PlaceTy::BtInVal => intrp.symbols.get_btin(unsafe { self.arg.sys }),
-        }
-    }
-
-    /// Forces scalar typeck and returns the resolved place.
-    #[inline(always)]
-    fn scalar<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> Option<&'v mut Value<'a>> {
-        self.resolve(intrp).scalar_context()
-    }
-
-    /// Forces array typeck and returns the resolved place.
-    #[inline(always)]
-    fn array<'v, 'a>(self, intrp: &'v mut Interpreter<'a>) -> Option<&'v mut Value<'a>> {
-        self.resolve(intrp).array_context()
+        .array_context()
     }
 
     #[inline(always)]
     fn write<'a>(self, intrp: &mut Interpreter<'a>, val: Value<'a>) {
-        if let PlaceTy::BtInVal = self.ty {
-            intrp.sync_btin_write(unsafe { self.arg.sys }, val);
-            return;
+        match self.ty {
+            PlaceTy::Reg => *intrp.read_reg_mut(unsafe { self.arg.reg }) = val,
+            PlaceTy::UserVal => *intrp.symbols.user_mut(unsafe { self.arg.usr }) = val,
+            PlaceTy::BtInVal => intrp.sync_btin_write(unsafe { self.arg.sys }, val),
         }
-        *self.resolve(intrp) = val;
     }
 }
 
