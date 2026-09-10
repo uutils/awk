@@ -593,7 +593,7 @@ impl<'a> Interpreter<'a> {
     /// Join index register values with `SUBSEP` into an array key (gawk-compatible).
     fn make_array_key(&mut self, start: Reg, end: Reg) -> StdVec<u8> {
         let range = self.read_reg_range(start..end);
-        let mut buf = StdVec::new();
+        let mut buf = StdVec::with_capacity(8 * end.0.saturating_sub(start.0) as usize);
         for (i, value) in range.iter().enumerate() {
             if i > 0 {
                 self.symbols.subsep.write_string(&mut buf);
