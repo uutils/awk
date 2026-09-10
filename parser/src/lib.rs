@@ -514,11 +514,11 @@ impl<'a> Parser<'a> {
     ) -> Result<(Statement<'a>, bool)> {
         let (array, variable) = match expr {
             Some(SimpleStatement::Expression(Expr::Node(node, _), _))
-                if matches!(&*node, ExprNode::ArrayOperation(ArrayOperator::In, _, _)) =>
+                if matches!(&*node, ExprNode::InArray(_, _, _)) =>
             {
-                if let ExprNode::ArrayOperation(ArrayOperator::In, array, mut args) =
-                    Box::into_inner(node)
-                    && let [Expr::Leaf(Atom::Variable(var), _)] = &mut *args
+                if let ExprNode::InArray(array, indices, mut test) = Box::into_inner(node)
+                    && indices.is_empty()
+                    && let [Expr::Leaf(Atom::Variable(var), _)] = &mut *test
                 {
                     (array, replace(var, Variable::Nr))
                 } else {
@@ -587,17 +587,31 @@ impl<'a> Parser<'a> {
                 ParsingError::UnclosedParenthesisInStatement,
             )?;
             // Handles ambiguities of `print (1, 2) in arr`. Lol.
-            // TODO: refactor properly, accept other places.
             if lex.consume(&Token::In) {
-                let Place::Variable(var) = Pratt::new(self, false).parse_place(lex)? else {
-                    return Err(ParsingError::OperatorExpectsVariable(
-                        lex.span().since(start),
-                    ));
+                let (var, indices) = match Pratt::new(self, false).parse_place(lex)? {
+                    Place::Variable(var) => (var, Vec::new_in(self.arena)),
+                    Place::Index(var, index) => (var, vec![in self.arena; index]),
+                    Place::ChainedIndex(var, indices) => (var, indices),
+                    Place::Record(_) => {
+                        return Err(ParsingError::OperatorExpectsVariable(
+                            lex.span().since(start),
+                        ));
+                    }
                 };
-                let expr = replace(&mut args, Vec::new_in(self.arena));
-                let span = lex.span().since(start);
+                let test = replace(&mut args, Vec::new_in(self.arena));
 
-                args.push(Expr::node(ArrayOperator::In.expr(var, expr), self, span));
+                args.push(Expr::node(
+                    ExprNode::InArray(var, indices, test),
+                    self,
+                    lex.span().since(start),
+                ));
+
+                if lex.consume(&Token::Comma) && !lex.peek_with(Token::is_expr_start) {
+                    return Err(ParsingError::InvalidExpression(
+                        lex.span(),
+                        String::from("Expected next argument!"),
+                    ));
+                }
                 self.parse_command_args(lex, &mut args)?;
             } else if lex.consume(&Token::Comma) {
                 let is_err = args.len() > 1;

@@ -416,41 +416,7 @@ impl ExprNode<'_> {
                     )
                 )
             }
-            Self::ArrayOperation(op, arr, args) => {
-                let (left_bp, right_bp) = op.binding_power();
-                fmt_seq!(
-                    f,
-                    maybe(
-                        left_bp < parent_bp,
-                        p(match op {
-                            ArrayOperator::Index => {
-                                fmt_seq!(
-                                    f,
-                                    arr.fmt(f, namespace),
-                                    bt(write_expr_args(f, args, indent, namespace))
-                                )
-                            }
-                            ArrayOperator::In if args.len() > 1 => {
-                                fmt_seq!(
-                                    f,
-                                    p(write_expr_args(f, args, indent, namespace)),
-                                    " in ",
-                                    arr.fmt(f, namespace)
-                                )
-                            }
-                            ArrayOperator::In => {
-                                fmt_seq!(
-                                    f,
-                                    args[0].fmt(f, indent, right_bp, namespace),
-                                    " in ",
-                                    arr.fmt(f, namespace)
-                                )
-                            }
-                        })
-                    )
-                )
-            }
-            Self::ChainedIndex(var, indices) => {
+            Self::ArrayIndex(var, indices) => {
                 let left_bp = ArrayOperator::Index.binding_power().0;
                 fmt_seq!(
                     f,
@@ -458,10 +424,34 @@ impl ExprNode<'_> {
                         left_bp < parent_bp,
                         p(var.fmt(f, namespace), {
                             for args in indices {
-                                fmt_seq!(f, bt(write_expr_args(f, args, 0, namespace)))?;
+                                fmt_seq!(f, bt(write_expr_args(f, args, indent, namespace)))?;
                             }
                             Ok(())
                         })
+                    )
+                )
+            }
+            Self::InArray(var, indices, test) => {
+                let (left_bp, right_bp) = ArrayOperator::In.binding_power();
+                fmt_seq!(
+                    f,
+                    maybe(
+                        left_bp < parent_bp,
+                        p(
+                            select(
+                                test.len() > 1,
+                                (p(write_expr_args(f, test, indent, namespace))),
+                                (test[0].fmt(f, indent, right_bp, namespace))
+                            ),
+                            " in ",
+                            var.fmt(f, namespace),
+                            {
+                                for args in indices {
+                                    fmt_seq!(f, bt(write_expr_args(f, args, indent, namespace)))?;
+                                }
+                                Ok(())
+                            }
+                        )
                     )
                 )
             }

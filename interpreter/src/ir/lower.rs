@@ -13,7 +13,7 @@ use std::{
 
 use bumpalo::{Bump, collections::Vec};
 use parser::{
-    ArrayOperator, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
+    Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
     Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
     SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
@@ -633,23 +633,41 @@ impl<'a> CodeGen<'a> {
                             });
                         }
                         ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
-                        ExprNode::ArrayOperation(ArrayOperator::Index, var, index) => {
+                        ExprNode::ArrayIndex(var, index) if let [index] = index.as_slice() => {
                             this.load_index(dest, var, index);
                         }
-                        ExprNode::ArrayOperation(ArrayOperator::In, var, index)
-                            if let [expr] = index.as_slice() =>
-                        {
-                            let index = this.lower_expr(expr);
-                            let (rhs, tyr) = index.to_arg().into_arg();
-                            let (lhs, tyl) = TypedPlace::new_var(this, var).into_place();
-                            this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
-                            index.free(this);
+                        ExprNode::ArrayIndex(var, indices) => {
+                            this.load_chained_index(dest, var, indices);
                         }
-                        ExprNode::ArrayOperation(ArrayOperator::In, var, indices) => {
-                            let (arg, ty) = TypedPlace::new_var(this, var).into_place();
-                            this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                                this.emit(Instruction::InA { dest, arg, start, end, ty });
-                            });
+                        ExprNode::InArray(var, indices, test) => {
+                            let (lhs, tyl) = if indices.is_empty() {
+                                // Elide copies
+                                TypedPlace::new_var(this, var).into_place()
+                            } else {
+                                // Copy to-be-tested array into a register.
+                                this.load_aoa_place(dest, var, indices, |this, arg, ty, range| {
+                                    let (start, end) = range;
+                                    let instr = Instruction::IndexA { dest, arg, start, end, ty };
+                                    this.emit(instr);
+                                });
+                                TypedPlace::new_reg(dest).into_place()
+                            };
+
+                            if let [test] = test.as_slice() {
+                                // One-dimensional test.
+                                let test = this.lower_expr(test);
+                                let (rhs, tyr) = test.to_arg().into_arg();
+
+                                this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
+                                test.free(this);
+                            } else {
+                                // Lower multi-dimensional test
+                                let (arg, ty) = (lhs, tyl);
+                                this.scoped_reg_range(RtType::Scalar, test, |this, range| {
+                                    let (start, end) = range;
+                                    this.emit(Instruction::InA { dest, arg, start, end, ty });
+                                });
+                            }
                         }
                         ExprNode::FunctionCall(name, args) => {
                             let name = this.symbols.get_user_fun(name, self.arena);
@@ -670,9 +688,6 @@ impl<'a> CodeGen<'a> {
                             let (name, ty) = TypedPlace::new_var(this, var).into_arg();
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
-                        }
-                        ExprNode::ChainedIndex(var, indices) => {
-                            this.load_chained_index(dest, var, indices);
                         }
                         &ExprNode::Getline(_) => todo!(),
                     }

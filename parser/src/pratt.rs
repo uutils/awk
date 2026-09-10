@@ -145,15 +145,22 @@ impl<'a, 'b> Pratt<'a, 'b> {
                         match Place::lower_from(lhs.take(), span.since(expr_anchor)) {
                             Ok(Place::Variable(var)) => {
                                 let index = self.parse_index_exprs(lex, op, expr_anchor)?;
+                                let indices = vec![in self.parser.arena; index];
                                 let node_span = lex.span().since(expr_anchor);
-                                Expr::node(op.expr(var, index), self.parser, node_span)
+
+                                Expr::node(
+                                    ExprNode::ArrayIndex(var, indices),
+                                    self.parser,
+                                    node_span,
+                                )
                             }
                             Ok(Place::Index(var, index)) => {
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
                                 let indices = vec![in self.parser.arena; index, new_indices];
                                 let node_span = lex.span().since(expr_anchor);
+
                                 Expr::node(
-                                    ExprNode::ChainedIndex(var, indices),
+                                    ExprNode::ArrayIndex(var, indices),
                                     self.parser,
                                     node_span,
                                 )
@@ -162,8 +169,9 @@ impl<'a, 'b> Pratt<'a, 'b> {
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
                                 indices.push(new_indices);
                                 let node_span = lex.span().since(expr_anchor);
+
                                 Expr::node(
-                                    ExprNode::ChainedIndex(var, indices),
+                                    ExprNode::ArrayIndex(var, indices),
                                     self.parser,
                                     node_span,
                                 )
@@ -186,14 +194,21 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     }
                     ArrayOperator::In => {
                         lex.next();
-                        let Place::Variable(var) = self.parse_place(lex)? else {
-                            return Err(ParsingError::OperatorExpectsVariable(
-                                lex.span().since(expr_anchor),
-                            ));
+                        let (var, indices) = match self.parse_place(lex)? {
+                            Place::Variable(var) => (var, Vec::new_in(self.parser.arena)),
+                            Place::Index(var, index) => (var, vec![in self.parser.arena; index]),
+                            Place::ChainedIndex(var, indices) => (var, indices),
+                            Place::Record(_) => {
+                                return Err(ParsingError::OperatorExpectsVariable(
+                                    lex.span().since(expr_anchor),
+                                ));
+                            }
                         };
+                        let test = vec![in self.parser.arena; lhs.take()];
                         let node_span = lex.span().since(expr_anchor);
+
                         Expr::node(
-                            op.expr(var, vec![in self.parser.arena; lhs.take()]),
+                            ExprNode::InArray(var, indices, test),
                             self.parser,
                             node_span,
                         )
@@ -243,14 +258,19 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     "expected `in` after multidimensional array look-up.".into(),
                 )
             })?;
-            let Place::Variable(var) = self.parse_place(lex)? else {
-                return Err(ParsingError::OperatorExpectsVariable(
-                    lex.span().since(anchor),
-                ));
+            let (var, indices) = match self.parse_place(lex)? {
+                Place::Variable(var) => (var, Vec::new_in(self.parser.arena)),
+                Place::Index(var, index) => (var, vec![in self.parser.arena; index]),
+                Place::ChainedIndex(var, indices) => (var, indices),
+                Place::Record(_) => {
+                    return Err(ParsingError::OperatorExpectsVariable(
+                        lex.span().since(anchor),
+                    ));
+                }
             };
             let node_span = lex.span().since(anchor);
             Ok(Expr::node(
-                ArrayOperator::In.expr(var, expr),
+                ExprNode::InArray(var, indices, expr),
                 self.parser,
                 node_span,
             ))

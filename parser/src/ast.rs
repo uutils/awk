@@ -114,8 +114,8 @@ pub enum ExprNode<'a> {
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
     BinaryPlaceOperation(BinaryPlaceOperator, Place<'a>, Expr<'a>),
-    ArrayOperation(ArrayOperator, Variable<'a>, Vec<'a, Expr<'a>>),
-    ChainedIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
+    ArrayIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
+    InArray(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>, Vec<'a, Expr<'a>>),
     Ternary(Expr<'a>, Expr<'a>, Expr<'a>),
     Getline(Getline<'a>),
 }
@@ -363,12 +363,6 @@ impl BinaryPlaceOperator {
     }
 }
 
-impl ArrayOperator {
-    pub const fn expr<'a>(self, a: Variable<'a>, b: Vec<'a, Expr<'a>>) -> ExprNode<'a> {
-        ExprNode::ArrayOperation(self, a, b)
-    }
-}
-
 impl<'a> From<Getline<'a>> for ExprNode<'a> {
     fn from(value: Getline<'a>) -> Self {
         Self::Getline(value)
@@ -506,14 +500,15 @@ impl<'a> Place<'a> {
                 if matches!(
                     &*node,
                     &ExprNode::UnaryOperation(UnaryOperator::Record, _)
-                        | &ExprNode::ArrayOperation(ArrayOperator::Index, _, _)
-                        | &ExprNode::ChainedIndex(_, _)
+                        | &ExprNode::ArrayIndex(_, _)
                 ) =>
             {
                 match Box::into_inner(node) {
                     ExprNode::UnaryOperation(_, index) => Ok(Self::Record(index)),
-                    ExprNode::ArrayOperation(_, var, index) => Ok(Self::Index(var, index)),
-                    ExprNode::ChainedIndex(arr, indices) => Ok(Self::ChainedIndex(arr, indices)),
+                    ExprNode::ArrayIndex(var, mut indices) if indices.len() == 1 => {
+                        Ok(Self::Index(var, indices.pop().unwrap()))
+                    }
+                    ExprNode::ArrayIndex(var, indices) => Ok(Self::ChainedIndex(var, indices)),
                     _ => unreachable!("Box is magic; handled awkwardly in the match guard."),
                 }
             }

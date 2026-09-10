@@ -283,9 +283,9 @@ fn materialize_expr<'a>(expr: &GenExpr, arena: &'a Bump) -> Expr<'a> {
             arena,
         ),
         GenExpr::Index(var, idx) => Expr::node_nm(
-            crate::ast::ArrayOperator::Index.expr(
+            ExprNode::ArrayIndex(
                 materialize_var(*var, arena),
-                bumpalo::vec![in arena; materialize_expr(idx, arena)],
+                bumpalo::vec![in arena; bumpalo::vec![in arena; materialize_expr(idx, arena)]],
             ),
             arena,
         ),

@@ -202,14 +202,7 @@ impl Debug for Expr<'_> {
                 ExprNode::UnaryOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::BinaryPlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
-                ExprNode::ArrayOperation(op, arr, args) => {
-                    write!(f, "({op:?} {arr:?}")?;
-                    for arg in args {
-                        write!(f, " {arg:?}")?;
-                    }
-                    write!(f, ")")
-                }
-                ExprNode::ChainedIndex(var, indices) => {
+                ExprNode::ArrayIndex(var, indices) => {
                     for _ in 0..indices.len() {
                         write!(f, "(Index ")?;
                     }
@@ -221,6 +214,23 @@ impl Debug for Expr<'_> {
                         write!(f, ")")?;
                     }
                     Ok(())
+                }
+                ExprNode::InArray(var, indices, test) => {
+                    write!(f, "(In ")?;
+                    for _ in 0..indices.len() {
+                        write!(f, "(Index ")?;
+                    }
+                    write!(f, "{var:?}")?;
+                    for index in indices {
+                        for i in index {
+                            write!(f, " {i:?}")?;
+                        }
+                        write!(f, ")")?;
+                    }
+                    for i in test {
+                        write!(f, " {i:?}")?;
+                    }
+                    write!(f, ")")
                 }
                 ExprNode::UnaryPlaceOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
