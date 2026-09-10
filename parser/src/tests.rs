@@ -884,6 +884,37 @@ fn test_parser_proper_assignments() {
 }
 
 #[test]
+fn test_rejections_next() {
+    test_parser!("{ next }" => {
+        rules: [(None, Some("(body (next))"))],
+    });
+    test_parser!("BEGIN {} END {} { next }" => {
+        begin: ["(body)"],
+        end: ["(body)"],
+        rules: [(None, Some("(body (next))"))],
+    });
+    for e in ["BEGIN", "END", "BEGINFILE", "ENDFILE"] {
+        test_parser!(is_err!(&format!("{{}} {e} {{ next }}")));
+    }
+}
+
+#[test]
+fn test_rejections_nextfile() {
+    test_parser!("{ nextfile }" => {
+        rules: [(None, Some("(body (nextfile))"))],
+    });
+    test_parser!("BEGIN {} END {} { nextfile } BEGINFILE { nextfile }" => {
+        begin: ["(body)"],
+        end: ["(body)"],
+        begin_file: ["(body (nextfile))"],
+        rules: [(None, Some("(body (nextfile))"))],
+    });
+    for e in ["BEGIN", "END", "ENDFILE"] {
+        test_parser!(is_err!(&format!("{{}} {e} {{ nextfile }}")));
+    }
+}
+
+#[test]
 fn test_pretty_print_omits_default_namespace() {
     use std::fmt::Write;
 
