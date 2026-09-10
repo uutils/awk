@@ -120,6 +120,8 @@ pub enum ParsingError {
     NoFunctionSignature(Span, String),
     #[error("Missing closing parenthesis `(` in function `{}`'s signature.", .1)]
     UnclosedSignature(Span, String),
+    #[error("Duplicated function definition of `{}`!", .1)]
+    DuplicatedFunction(Span, String),
     #[error("Missing closing parenthesis `(` in expression.")]
     UnclosedParenthesisExpression(Span),
     #[error("Missing closing bracket `]` in array access.")]
@@ -187,6 +189,7 @@ impl ParsingError {
             | &Self::UnclosedParenthesisInStatement(span)
             | &Self::NoFunctionSignature(span, _)
             | &Self::UnclosedSignature(span, _)
+            | &Self::DuplicatedFunction(span, _)
             | &Self::UnclosedParenthesisExpression(span)
             | &Self::UnclosedArrayAccess(span)
             | &Self::OperatorExpectsVariable(span)

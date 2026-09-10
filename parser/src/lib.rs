@@ -713,12 +713,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {
+        let start = lex.span().start;
         let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
         let args = self.parse_signature(lex, &name)?;
+        let span = lex.span().since(start);
         lex.consume(&Token::Newline);
         let body = self.with_return_context(|this| this.parse_body(lex))?;
 
-        self.ast.functions.insert(name, Function { args, body });
+        let Ok(_) = self.ast.functions.try_insert(name, Function { args, body }) else {
+            return Err(ParsingError::DuplicatedFunction(span, name.to_string()));
+        };
         Ok(())
     }
 
