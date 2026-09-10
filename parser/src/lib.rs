@@ -50,6 +50,10 @@ pub struct Parser<'a> {
     continue_allowed: bool,
     /// Whether `return` is allowed (inside a function body).
     return_allowed: bool,
+    /// Whether `next` is allowed (forbidden in all special rules).
+    next_allowed: bool,
+    /// Whether `nextfile` is allowed (allowed in rules and BEGINFILE only).
+    nextfile_allowed: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -65,6 +69,8 @@ impl<'a> Parser<'a> {
             break_allowed: false,
             continue_allowed: false,
             return_allowed: false,
+            next_allowed: true,
+            nextfile_allowed: true,
         }
     }
 
@@ -114,14 +120,21 @@ impl<'a> Parser<'a> {
                     }
                     Right(special_pattern) => {
                         lex.next();
-                        let body = self.parse_body(lex)?;
+
+                        self.next_allowed = false;
+                        self.nextfile_allowed =
+                            matches!(special_pattern, SpecialPattern::BeginFile);
+                        let body = self.parse_body(lex);
+                        self.nextfile_allowed = true;
+                        self.next_allowed = true;
+
                         match special_pattern {
                             SpecialPattern::Begin => &mut self.ast.begin,
                             SpecialPattern::End => &mut self.ast.end,
                             SpecialPattern::BeginFile => &mut self.ast.begin_file,
                             SpecialPattern::EndFile => &mut self.ast.end_file,
                         }
-                        .push(body);
+                        .push(body?);
                     }
                 }
             } else if lex.peek_is(&Token::OpenBrace) {
@@ -439,6 +452,12 @@ impl<'a> Parser<'a> {
                             .transpose()?,
                         self.gen_metadata(lex.span().since(start)),
                     )
+                }
+                Token::Next if !self.next_allowed => {
+                    return Err(ParsingError::NextInForbiddenCtx(lex.span()));
+                }
+                Token::NextFile if !self.nextfile_allowed => {
+                    return Err(ParsingError::NextFileInForbiddenCtx(lex.span()));
                 }
                 Token::Next => Statement::Next(self.gen_metadata(lex.span())),
                 Token::NextFile => Statement::NextFile(self.gen_metadata(lex.span())),

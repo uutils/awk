@@ -162,6 +162,10 @@ pub enum ParsingError {
     ReturnOutsideFunction(Span),
     #[error("Arguments already provided in function-style call!")]
     CommandDoubleCall(Span, Span),
+    #[error("`next` is forbidden in BEGIN, END, BEGINFILE, and ENDFILE rules!")]
+    NextInForbiddenCtx(Span),
+    #[error("`nextfile` is forbidden in BEGIN, END, and ENDFILE rules!")]
+    NextFileInForbiddenCtx(Span),
 }
 
 impl ParsingError {
@@ -209,7 +213,9 @@ impl ParsingError {
             | &Self::BreakOutsideLoopOrSwitch(span)
             | &Self::ContinueOutsideLoop(span)
             | &Self::ReturnOutsideFunction(span)
-            | &Self::CommandDoubleCall(span, _) => Some(span),
+            | &Self::CommandDoubleCall(span, _)
+            | &Self::NextInForbiddenCtx(span)
+            | &Self::NextFileInForbiddenCtx(span) => Some(span),
         }
     }
     const fn hint(&self) -> Option<&'static str> {
