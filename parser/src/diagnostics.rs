@@ -154,11 +154,11 @@ pub enum ParsingError {
     SpecialVariableIndirectCall(Span, String),
     #[error("Can't chain non-associative operators.")]
     NonAssociativeOperator(Span),
-    #[error("`break' is not allowed outside a loop or switch")]
+    #[error("`break' is not allowed outside a loop or switch.")]
     BreakOutsideLoopOrSwitch(Span),
-    #[error("`continue' is not allowed outside a loop")]
+    #[error("`continue' is not allowed outside a loop.")]
     ContinueOutsideLoop(Span),
-    #[error("`return' used outside function context")]
+    #[error("`return' used outside function context.")]
     ReturnOutsideFunction(Span),
     #[error("Arguments already provided in function-style call!")]
     CommandDoubleCall(Span, Span),
