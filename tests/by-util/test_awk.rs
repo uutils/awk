@@ -659,3 +659,14 @@ fn fs_empty_non_utf8_split() {
         .succeeds()
         .stdout_is_bytes(b"f o o \xFF   b \xF0\x9F\xA4\xAA a r\n");
 }
+
+#[test]
+fn mdim_in_array() {
+    ucmd()
+        .arg(
+            r#"BEGIN { a[1, 2][2 + 1, "4"][5, 6][7] = 3; print (1, 2) in a, (3, "4") in a[1, 2], \
+                            (5, 6) in a[1, 2][3, 4], 7 in a[1, 2][3, 4][5, 6], 2 in a[1, 2] }"#,
+        )
+        .succeeds()
+        .stdout_is("1 1 1 1 0\n");
+}
