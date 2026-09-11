@@ -428,6 +428,10 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::Next => return Ok(Signal::Terminal(CtrlSig::Next)),
                 Instruction::NextFile => return Ok(Signal::Terminal(CtrlSig::NextFile)),
+                Instruction::GetlineInput { .. } => todo!(),
+                Instruction::GetlineFile { .. } => todo!(),
+                Instruction::GetlinePipe { .. } => todo!(),
+                Instruction::GetlineCoproc { .. } => todo!(),
             }
             self.program_counter += 1;
         }

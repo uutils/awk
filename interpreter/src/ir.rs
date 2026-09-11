@@ -93,6 +93,12 @@ pub enum Instruction {
     Jump { to: Label },
     Branch { then_label: Label, else_label: Label, condition: Reg },
 
+    // Various getline incarnations; TODO: consider variants for `$0` target.
+    GetlineInput { dest: Reg, lhs: Arg, tyl: PlaceTy },
+    GetlineFile { dest: Reg, lhs: Arg, rhs: Arg, tyl: PlaceTy, tyr: ArgTy },
+    GetlinePipe { dest: Reg, lhs: Arg, rhs: Arg, tyl: PlaceTy, tyr: ArgTy },
+    GetlineCoproc { dest: Reg, lhs: Arg, rhs: Arg, tyl: PlaceTy, tyr: ArgTy },
+
     // Traps
     Exit { arg: Arg, ty: ArgTy },
     Return { arg: Arg, ty: ArgTy },
@@ -461,6 +467,17 @@ impl Display for Instruction {
             Self::Next | Self::NextFile | Self::ReturnUnassigned => {
                 write!(f, "{op}")
             }
+            Self::GetlineInput { dest, lhs, tyl } => {
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, lhs, tyl, ", ")
+            }
+            Self::GetlineFile { dest, lhs, rhs, tyl, tyr }
+            | Self::GetlinePipe { dest, lhs, rhs, tyl, tyr }
+            | Self::GetlineCoproc { dest, lhs, rhs, tyl, tyr } => {
+                write!(f, "{op} {dest}")?;
+                fmt_arg(f, lhs, tyl, ", ")?;
+                fmt_arg(f, rhs, tyr, ", ")
+            }
         }
     }
 }
@@ -515,6 +532,10 @@ impl Instruction {
             Self::Exit { .. } => "exit",
             Self::Next => "next",
             Self::NextFile => "nextf",
+            Self::GetlineInput { .. } => "gli",
+            Self::GetlineFile { .. } => "glf",
+            Self::GetlinePipe { .. } => "glp",
+            Self::GetlineCoproc { .. } => "glc",
         }
     }
 }

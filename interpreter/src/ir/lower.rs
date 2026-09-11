@@ -14,7 +14,7 @@ use std::{
 use bumpalo::{Bump, collections::Vec};
 use parser::{
     Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
-    Function as AstFunction, FunctionTable, Identifier, MetaId, Place, Rule, RulePattern,
+    Function as AstFunction, FunctionTable, Getline, Identifier, MetaId, Place, Rule, RulePattern,
     SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
 use smallvec::SmallVec;
@@ -689,7 +689,32 @@ impl<'a> CodeGen<'a> {
                             this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
                             this.regs.free_many(range);
                         }
-                        &ExprNode::Getline(_) => todo!(),
+                        ExprNode::Getline(Getline::FromInput(place)) => {
+                            this.emit_getline(dest, place.as_ref(), |lhs, tyl| {
+                                Instruction::GetlineInput { dest, lhs, tyl }
+                            });
+                        }
+                        ExprNode::Getline(Getline::FromFile(place, file)) => {
+                            this.lower_expr_into(file, dest);
+                            let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
+                            let instr =
+                                |lhs, tyl| Instruction::GetlineFile { dest, lhs, rhs, tyl, tyr };
+                            this.emit_getline(dest, place.as_ref(), instr);
+                        }
+                        ExprNode::Getline(Getline::PipeOut(place, pipe)) => {
+                            this.lower_expr_into(pipe, dest);
+                            let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
+                            let instr =
+                                |lhs, tyl| Instruction::GetlinePipe { dest, lhs, rhs, tyl, tyr };
+                            this.emit_getline(dest, place.as_ref(), instr);
+                        }
+                        ExprNode::Getline(Getline::CoprocessOut(place, coprocess)) => {
+                            this.lower_expr_into(coprocess, dest);
+                            let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
+                            let instr =
+                                |lhs, tyl| Instruction::GetlineCoproc { dest, lhs, rhs, tyl, tyr };
+                            this.emit_getline(dest, place.as_ref(), instr);
+                        }
                     }
                 });
             }
@@ -817,10 +842,9 @@ impl<'a> CodeGen<'a> {
                             self.emit(Instruction::CopyP { dest, arg, ty });
                         }
                     }
-                    PlaceTy::UserVal => {
+                    PlaceTy::UserVal | PlaceTy::BtInVal => {
                         self.emit(Instruction::StoreS { dest, ty_place, var, arg, ty });
                     }
-                    PlaceTy::BtInVal => todo!(),
                 }
             }
             Place::Variable(var) => {
@@ -968,22 +992,28 @@ impl<'a> CodeGen<'a> {
         self.emit(Instruction::Negation { dest, arg, ty });
     }
 
+    fn emit_branch_reg<T>(
+        &mut self,
+        condition: Reg,
+        cb: impl FnOnce(&mut Self) -> T,
+    ) -> (Label, T) {
+        let then_label = self.following_instr(1);
+        let if_label = self.emit(Instruction::br(condition, then_label));
+        let res = cb(self);
+        let next = self.following_instr(0);
+        self.bc.nth(if_label).set_label(next);
+        (if_label, res)
+    }
+
     fn emit_branch<T>(
         &mut self,
         condition_expr: &Expr<'_>,
         cb: impl FnOnce(&mut Self) -> T,
     ) -> (Label, T) {
-        let if_label = self.scoped_reg(|this, condition| {
+        self.scoped_reg(|this, condition| {
             this.lower_expr_into(condition_expr, condition);
-            let then_label = this.following_instr(1);
-            this.emit(Instruction::br(condition, then_label))
-        });
-
-        let res = cb(self);
-        let next = self.following_instr(0);
-        self.bc.nth(if_label).set_label(next);
-
-        (if_label, res)
+            this.emit_branch_reg(condition, cb)
+        })
     }
 
     fn emit_jump<T>(&mut self, cb: impl FnOnce(&mut Self) -> T) -> T {
@@ -1058,6 +1088,43 @@ impl<'a> CodeGen<'a> {
         });
 
         (range, ret)
+    }
+
+    fn emit_getline(
+        &mut self,
+        dest: Reg,
+        place: Option<&Place>,
+        f: impl FnOnce(Arg, PlaceTy) -> Instruction,
+    ) {
+        // fast path; the VM never writes on EOF
+        if let Some(Place::Variable(var)) = place {
+            let (arg, ty) = TypedPlace::new_var(self, var).into_place();
+            self.emit(f(arg, ty));
+            return;
+        }
+
+        let record = Place::Record(Expr::Leaf(Atom::Integer(0), self.current_metadata));
+        let place = place.unwrap_or(&record);
+
+        // gawk evaluates the place eagerly, so even if getline hits EOF, side
+        // effects still trigger. We do this by using `ResolvedPlace` and
+        // branching on `dest`.
+        self.with_resolved_place(place, |this, resolved| {
+            this.scoped_reg(|this, read| {
+                let (arg, ty) = TypedPlace::new_reg(read).into_place();
+                this.emit(f(arg, ty));
+
+                this.scoped_reg(|this, did_read| {
+                    let (lhs, tyl) = TypedArg::new_reg(dest).into_arg();
+                    let (rhs, tyr) = TypedArg::new_imm(0).into_arg();
+                    this.emit(Instruction::Gt { dest: did_read, lhs, rhs, tyl, tyr });
+
+                    this.emit_branch_reg(did_read, |this| {
+                        this.store_resolved(resolved, place, read, TypedArg::new_reg(read));
+                    });
+                });
+            });
+        });
     }
 
     fn register_const(&mut self, value: Value<'a>) -> ConstNonLocal {
