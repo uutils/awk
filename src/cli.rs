@@ -26,7 +26,11 @@ use memchr::memchr;
 pub struct Args {
     #[arg(required_unless_present_any = ["file", "source"])]
     pub code: Option<OsString>,
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        default_value = "-"
+    )]
     pub read_queue: Vec<ArgQueueItem>,
     #[arg(short = 'f', long)]
     pub file: Vec<PathBuf>,

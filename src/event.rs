@@ -106,6 +106,10 @@ impl<'a> AwkRt<'a> {
 
     pub fn rule_event_loop(&mut self) -> Result<()> {
         let range = self.bc.rules_code();
+        if range.is_empty() {
+            return Ok(());
+        }
+
         let mut reader = BufReader::new(ReadSource::None);
 
         while let Some(item) = self.queue.split_off_first() {
