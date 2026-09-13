@@ -302,23 +302,13 @@ impl<'a> CodeGen<'a> {
                     this.regs.free_many(range);
                 });
             }
-            Statement::Simple(SimpleStatement::DeleteElement(
-                ArrayPlace(var, indices),
-                metadata,
-            )) if indices.len() == 1 => self.with_metadata(*metadata, |this| {
-                let (arg, ty) = TypedPlace::new_var(this, var).into_place();
-                this.scoped_reg_range(RtType::Scalar, &indices[0], |this, (start, end)| {
-                    this.emit(Instruction::DeleteP { arg, ty, start, end });
-                });
-            }),
-            Statement::Simple(SimpleStatement::DeleteElement(place, metadata)) => self
-                .with_metadata(*metadata, |this| {
-                    this.scoped_reg(|this, tmp| {
-                        this.load_aoa_place(tmp, place, |this, arg, ty, (start, end)| {
-                            this.emit(Instruction::DeleteP { arg, ty, start, end });
-                        });
+            Statement::Simple(SimpleStatement::DeleteElement(place, metadata)) => {
+                self.with_metadata(*metadata, |this| {
+                    this.load_array_place(place, |this, arg, ty, (start, end)| {
+                        this.emit(Instruction::DeleteP { arg, ty, start, end });
                     });
-                }),
+                });
+            }
             Statement::Simple(SimpleStatement::Delete(var, metadata)) => {
                 self.with_metadata(*metadata, |this| {
                     let (arg, ty) = TypedPlace::new_var(this, var).into_place();
@@ -643,11 +633,6 @@ impl<'a> CodeGen<'a> {
                             });
                         }
                         ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
-                        ExprNode::ArrayIndex(ArrayPlace(var, index))
-                            if let [index] = index.as_slice() =>
-                        {
-                            this.load_index(dest, var, index);
-                        }
                         ExprNode::ArrayIndex(place) => {
                             this.load_chained_index(dest, place);
                         }
@@ -657,7 +642,7 @@ impl<'a> CodeGen<'a> {
                                 TypedPlace::new_var(this, &array.0).into_place()
                             } else {
                                 // Copy to-be-tested array into a register.
-                                this.load_aoa_place(dest, array, |this, arg, ty, range| {
+                                this.resolve_array_place(dest, array, |this, arg, ty, range| {
                                     let (start, end) = range;
                                     let instr = Instruction::IndexA { dest, arg, start, end, ty };
                                     this.emit(instr);
@@ -747,16 +732,8 @@ impl<'a> CodeGen<'a> {
                 f(this, ResolvedPlace::Record(reg))
             }),
             Place::Variable(_) => f(self, ResolvedPlace::Variable),
-            Place::Array(ArrayPlace(var, indices)) if indices.len() == 1 => {
-                let (arg, ty) = TypedPlace::new_var(self, var).into_place();
-                self.scoped_reg_range(RtType::Scalar, &indices[0], |this, range| {
-                    f(this, ResolvedPlace::Index { arg, ty, range })
-                })
-            }
-            Place::Array(place) => self.scoped_reg(|this, array_reg| {
-                this.load_aoa_place(array_reg, place, |this, arg, ty, range| {
-                    f(this, ResolvedPlace::Index { arg, ty, range })
-                })
+            Place::Array(place) => self.load_array_place(place, |this, arg, ty, range| {
+                f(this, ResolvedPlace::Index { arg, ty, range })
             }),
         }
     }
@@ -813,21 +790,8 @@ impl<'a> CodeGen<'a> {
                 TypedPlace::new_reg(dest)
             }
             Place::Variable(var) => TypedPlace::new_var(self, var),
-            Place::Array(ArrayPlace(var, index)) if index.len() == 1 => {
-                self.load_index(dest, var, &index[0])
-            }
             Place::Array(place) => self.load_chained_index(dest, place),
         }
-    }
-
-    fn load_index(&mut self, dest: Reg, var: &Variable<'_>, indices: &[Expr<'_>]) -> TypedPlace {
-        self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-            let (arg, ty) = TypedPlace::new_var(this, var).into_place();
-            this.emit(Instruction::IndexS { dest, arg, ty, start, end });
-
-            // Element value was written to `dest`; subsequent ops must use the register.
-            TypedPlace::new_reg(dest)
-        })
     }
 
     fn store_place(&mut self, place: &Place<'_>, dest: Reg, src: TypedArg) {
@@ -865,49 +829,55 @@ impl<'a> CodeGen<'a> {
                 let (var, ty_place) = TypedPlace::new_var(self, var).into_place();
                 self.emit(Instruction::StoreS { dest, ty_place, var, arg, ty });
             }
-            Place::Array(ArrayPlace(var, indices)) if indices.len() == 1 => {
-                let (lhs, tyl) = TypedPlace::new_var(self, var).into_place();
-                let (rhs, tyr) = src.into_arg();
-                self.scoped_reg_range(RtType::Scalar, &indices[0], |this, (start, end)| {
-                    this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
-                });
-            }
             Place::Array(place) => {
-                self.scoped_reg(|this, array| {
-                    this.load_aoa_place(array, place, |this, lhs, tyl, (start, end)| {
-                        let (rhs, tyr) = (arg, ty);
-                        this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
-                    });
+                self.load_array_place(place, |this, lhs, tyl, (start, end)| {
+                    let (rhs, tyr) = (arg, ty);
+                    this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
                 });
             }
         }
     }
 
     fn load_chained_index(&mut self, dest: Reg, place: &ArrayPlace) -> TypedPlace {
-        self.load_aoa_place(dest, place, |this, arg, ty, (start, end)| {
+        self.resolve_array_place(dest, place, |this, arg, ty, (start, end)| {
             this.emit(Instruction::IndexS { dest, arg, start, end, ty });
         });
         TypedPlace::new_reg(dest)
     }
 
-    fn load_aoa_place<T>(
+    /// Mainly equivalent to [`Self::load_array_place`], but reuses a scratch
+    /// register `dest`.
+    fn resolve_array_place<T>(
         &mut self,
         dest: Reg,
         ArrayPlace(var, indices): &ArrayPlace,
         f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
     ) -> T {
         let (mut arg, mut ty) = TypedPlace::new_var(self, var).into_place();
-        let last = indices.len() - 1;
+        let (last, indices) = indices.split_last().unwrap();
 
-        for index in &indices[..last] {
+        // This is an empty loop for non array-of-arrays.
+        for index in indices {
             self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
                 this.emit(Instruction::IndexA { dest, arg, start, end, ty });
                 (arg, ty) = TypedPlace::new_reg(dest).into_place();
             });
         }
-        self.scoped_reg_range(RtType::Scalar, &indices[last], |this, range| {
-            f(this, arg, ty, range)
-        })
+        self.scoped_reg_range(RtType::Scalar, last, |this, range| f(this, arg, ty, range))
+    }
+
+    /// Directly loads simple arrays, and allocates a register to load arrays
+    /// of arrays.
+    fn load_array_place<T>(
+        &mut self,
+        place @ ArrayPlace(var, indices): &ArrayPlace,
+        f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
+    ) -> T {
+        if let [index] = &indices[..] {
+            let (arg, ty) = TypedPlace::new_var(self, var).into_place();
+            return self.scoped_reg_range(RtType::Scalar, index, |this, rg| f(this, arg, ty, rg));
+        }
+        self.scoped_reg(|this, tmp| this.resolve_array_place(tmp, place, f))
     }
 
     fn lower_binop_general(
