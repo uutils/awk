@@ -341,13 +341,13 @@ impl TryFrom<ArgTy> for PlaceTy {
 }
 
 impl fmt::Debug for Instruction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "0x{:032x}", self.to_bytes())
     }
 }
 
 impl Display for Instruction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let op = self.display_name();
         let fmt_arg = |f: &mut Formatter, arg: &Arg, ty: &ArgTy, sep| match ty {
             ArgTy::Reg => write!(f, "{sep}{}", unsafe { arg.reg }),

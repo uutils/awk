@@ -142,7 +142,7 @@ const fn require_args<'a, 'b>(
     Ok(args)
 }
 
-fn value_length(v: &Value<'_>) -> usize {
+fn value_length(v: &Value) -> usize {
     if let Some(len) = v.array_len() {
         len
     } else {
@@ -231,7 +231,7 @@ fn shift<'a>(args: &[Value<'a>], left: bool) -> Result<Value<'a>, BuiltinError> 
     Ok(Value::new_num(result as f64))
 }
 
-fn to_bits(v: &Value<'_>) -> u64 {
+fn to_bits(v: &Value) -> u64 {
     let n = v.to_num();
     // FIXME: gawk fatals on negative bitwise operands; do not coerce to 0.
     if !n.is_finite() || n < 0. {
@@ -240,7 +240,7 @@ fn to_bits(v: &Value<'_>) -> u64 {
     (n.trunc() as u64) & BIT_MASK
 }
 
-fn strtonum(v: &Value<'_>) -> f64 {
+fn strtonum(v: &Value) -> f64 {
     let bytes = value_bytes(v);
     let Ok(s) = std::str::from_utf8(&bytes) else {
         return 0.;
@@ -256,7 +256,7 @@ fn strtonum(v: &Value<'_>) -> f64 {
     s.parse().unwrap_or(0.)
 }
 
-fn value_bytes(v: &Value<'_>) -> Vec<u8> {
+fn value_bytes(v: &Value) -> Vec<u8> {
     let mut buf = Vec::with_capacity(v.string_size_hint());
     v.write_string(&mut buf);
     buf
@@ -271,7 +271,7 @@ mod tests {
     use super::*;
     use crate::{ExecMode, ir::lower::CodeGen, vm::types::Value};
 
-    fn with_intrp(f: impl FnOnce(&mut Interpreter<'_>)) {
+    fn with_intrp(f: impl FnOnce(&mut Interpreter)) {
         let arena = Bump::new();
         let cg = CodeGen::new(&arena);
         let mut intrp = Interpreter::new(ExecMode::Uu, cg, MetadataStore::new());

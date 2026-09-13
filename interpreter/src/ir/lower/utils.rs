@@ -73,7 +73,7 @@ impl Operand {
 }
 
 impl TypedArg {
-    pub fn new_var(code: &mut CodeGen<'_>, var: &Variable<'_>) -> Self {
+    pub fn new_var(code: &mut CodeGen, var: &Variable) -> Self {
         TypedPlace::new_var(code, var).into()
     }
 
@@ -81,7 +81,7 @@ impl TypedArg {
         Self(Arg { imm }, ArgTy::Imm)
     }
 
-    pub fn new_immf(code: &mut CodeGen<'_>, n: f64) -> Self {
+    pub fn new_immf(code: &mut CodeGen, n: f64) -> Self {
         let cnt = code.register_const(Value::new_num(n));
         Self(Arg { cnt }, ArgTy::Cnt)
     }
@@ -106,14 +106,14 @@ impl TypedArg {
 }
 
 impl TypedPlace {
-    pub fn new_var(code: &mut CodeGen<'_>, var: &Variable<'_>) -> Self {
+    pub fn new_var(code: &mut CodeGen, var: &Variable) -> Self {
         match BuiltInVar::try_from(var) {
             Ok(var) => Self::new_btin(var),
             Err(ident) => Self::new_user(code, ident),
         }
     }
 
-    pub fn new_user(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
+    pub fn new_user(code: &mut CodeGen, ident: &Identifier) -> Self {
         let usr = code.symbols.register_user_var(ident, code.arena);
         if let Some(reg) = code.get_local_arg(usr) {
             Self(Arg { reg }, PlaceTy::Reg)

@@ -175,7 +175,7 @@ impl<'a> CodeGen<'a> {
         (arity, replace(&mut self.regs.hwm, old_hwm))
     }
 
-    pub fn set_value(&mut self, var: &Identifier<'_>, value: &str) {
+    pub fn set_value(&mut self, var: &Identifier, value: &str) {
         self.symbols.register_user_var_with(var, value, self.arena);
     }
 
@@ -386,9 +386,9 @@ impl<'a> CodeGen<'a> {
 
     fn lower_switch(
         &mut self,
-        scrutinee: &Expr<'_>,
-        branches: &[(Atom<'_>, Body<'_>)],
-        default: Option<&(Body<'_>, usize)>,
+        scrutinee: &Expr,
+        branches: &[(Atom, Body)],
+        default: Option<&(Body, usize)>,
     ) {
         let scr = self.regs.alloc();
         self.lower_expr_into(scrutinee, *scr);
@@ -439,7 +439,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         scr: Reg,
         cmp: Reg,
-        case: &Atom<'_>,
+        case: &Atom,
         case_ix: usize,
     ) -> (Label, usize) {
         let (lhs, tyl) = TypedArg::new_reg(scr).into_arg();
@@ -723,7 +723,7 @@ impl<'a> CodeGen<'a> {
     /// `array[f(x)] += 1`, which would otherwise evaluate `f(x)` twice.
     fn with_resolved_place<T>(
         &mut self,
-        place: &Place<'_>,
+        place: &Place,
         f: impl FnOnce(&mut Self, ResolvedPlace) -> T,
     ) -> T {
         match place {
@@ -739,12 +739,7 @@ impl<'a> CodeGen<'a> {
     }
 
     /// Loads the current value of an already-resolved place into `dest`.
-    fn load_resolved(
-        &mut self,
-        resolved: ResolvedPlace,
-        place: &Place<'_>,
-        dest: Reg,
-    ) -> TypedPlace {
+    fn load_resolved(&mut self, resolved: ResolvedPlace, place: &Place, dest: Reg) -> TypedPlace {
         match resolved {
             ResolvedPlace::Record(reg) => {
                 let (arg, ty) = TypedArg::new_reg(reg).into_arg();
@@ -760,13 +755,7 @@ impl<'a> CodeGen<'a> {
     }
 
     /// Stores `src` into an already-resolved place.
-    fn store_resolved(
-        &mut self,
-        resolved: ResolvedPlace,
-        place: &Place<'_>,
-        dest: Reg,
-        src: TypedArg,
-    ) {
+    fn store_resolved(&mut self, resolved: ResolvedPlace, place: &Place, dest: Reg, src: TypedArg) {
         match resolved {
             ResolvedPlace::Record(reg) => {
                 let (arg, ty) = src.into_arg();
@@ -781,7 +770,7 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn load_place(&mut self, dest: Reg, place: &Place<'_>) -> TypedPlace {
+    fn load_place(&mut self, dest: Reg, place: &Place) -> TypedPlace {
         match place {
             Place::Record(expr) => {
                 self.lower_expr_into(expr, dest);
@@ -794,7 +783,7 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn store_place(&mut self, place: &Place<'_>, dest: Reg, src: TypedArg) {
+    fn store_place(&mut self, place: &Place, dest: Reg, src: TypedArg) {
         let (arg, ty) = src.into_arg();
         match place {
             Place::Record(expr) => {
@@ -880,13 +869,7 @@ impl<'a> CodeGen<'a> {
         self.scoped_reg(|this, tmp| this.resolve_array_place(tmp, place, f))
     }
 
-    fn lower_binop_general(
-        &mut self,
-        op: BinaryOperator,
-        lhs: &Expr<'_>,
-        rhs: &Expr<'_>,
-        dest: Reg,
-    ) {
+    fn lower_binop_general(&mut self, op: BinaryOperator, lhs: &Expr, rhs: &Expr, dest: Reg) {
         let lhs = self.lower_expr(lhs);
         let rhs = self.lower_expr(rhs);
         self.emit(Instruction::from_binary(
@@ -899,7 +882,7 @@ impl<'a> CodeGen<'a> {
         lhs.free(self);
     }
 
-    fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
+    fn lower_and_into(&mut self, lhs: &Expr, rhs: &Expr, dest: Reg) {
         let (if_label, ()) = self.emit_branch(lhs, |this| {
             this.scoped_reg(|this, rhs_reg| {
                 this.lower_expr_into(rhs, rhs_reg);
@@ -913,7 +896,7 @@ impl<'a> CodeGen<'a> {
         });
     }
 
-    fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
+    fn lower_or_into(&mut self, lhs: &Expr, rhs: &Expr, dest: Reg) {
         let (if_label, ()) = self.emit_branch(lhs, |this| {
             let (arg, ty) = TypedArg::new_imm(1).into_arg();
             this.emit(Instruction::CopyP { dest, arg, ty });
@@ -927,13 +910,8 @@ impl<'a> CodeGen<'a> {
         });
     }
 
-    fn lower_cats_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
-        fn recurse(
-            this: &mut CodeGen<'_>,
-            lhs: &Expr<'_>,
-            rhs: &Expr<'_>,
-            depth: RegWidth,
-        ) -> LinearRegRange {
+    fn lower_cats_into(&mut self, lhs: &Expr, rhs: &Expr, dest: Reg) {
+        fn recurse(this: &mut CodeGen, lhs: &Expr, rhs: &Expr, depth: RegWidth) -> LinearRegRange {
             let range = if let Expr::Node(lhs, _) = lhs
                 && let ExprNode::BinaryOperation(BinaryOperator::Concat, lhs, rhs) = lhs.as_ref()
             {
@@ -985,7 +963,7 @@ impl<'a> CodeGen<'a> {
 
     fn emit_branch<T>(
         &mut self,
-        condition_expr: &Expr<'_>,
+        condition_expr: &Expr,
         cb: impl FnOnce(&mut Self) -> T,
     ) -> (Label, T) {
         self.scoped_reg(|this, condition| {
@@ -1005,7 +983,7 @@ impl<'a> CodeGen<'a> {
     fn scoped_reg_range<T>(
         &mut self,
         typeck: impl CallConv,
-        args: &[Expr<'_>],
+        args: &[Expr],
         f: impl FnOnce(&mut Self, (Reg, Reg)) -> T,
     ) -> T {
         let r = self
@@ -1016,7 +994,7 @@ impl<'a> CodeGen<'a> {
         ret
     }
 
-    fn gen_call_convention(&mut self, typeck: impl CallConv, args: &[Expr<'_>]) -> LinearRegRange {
+    fn gen_call_convention(&mut self, typeck: impl CallConv, args: &[Expr]) -> LinearRegRange {
         self.alloc_reg_range_patched::<true, _>(typeck, args, |_| {})
             .0
     }
@@ -1024,7 +1002,7 @@ impl<'a> CodeGen<'a> {
     fn alloc_reg_range_patched<const TOP_OF_STACK: bool, T>(
         &mut self,
         typeck: impl CallConv,
-        args: &[Expr<'_>],
+        args: &[Expr],
         extra: impl FnOnce(&mut CodeGen) -> T,
     ) -> (LinearRegRange, T) {
         // TODO: Nicer error reporting.
@@ -1269,7 +1247,7 @@ const fn unary_place_to_binop(op: UnaryPlaceOperator) -> BinaryOperator {
 }
 
 impl Display for Bytecode<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let n = self.code.len().checked_ilog10().unwrap_or(0) as usize + 1;
 
         writeln!(f, "Bytecode: {{")?;

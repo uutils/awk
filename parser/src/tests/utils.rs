@@ -128,7 +128,7 @@ macro_rules! test_parser {
 }
 
 /// Canonical `Debug` fingerprint used to compare ASTs across round-trips.
-pub fn ast_signature(ast: &Ast<'_>) -> String {
+pub fn ast_signature(ast: &Ast) -> String {
     let mut out = String::new();
     for load in &ast.loads {
         let _ = writeln!(out, "load:{load:?}");
@@ -167,7 +167,7 @@ pub fn parse_top<'a>(source: &'a str, arena: &'a Bump) -> Result<&'a Ast<'a>> {
 }
 
 /// Pretty-print `ast`, parse the result, and require both signatures to match.
-pub fn roundtrip_ast(ast: &Ast<'_>) -> Result<(), String> {
+pub fn roundtrip_ast(ast: &Ast) -> Result<(), String> {
     let mut printed = String::new();
     write!(printed, "{ast}").map_err(|e| format!("display failed: {e}"))?;
 

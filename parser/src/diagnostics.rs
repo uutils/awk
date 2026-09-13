@@ -292,7 +292,7 @@ impl FileCache {
 }
 
 impl Display for FileCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self.0 {
             Some(p) => write!(f, "{}", p.display()),
             None => f.write_str("CLI"),

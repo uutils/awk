@@ -3,7 +3,7 @@ use parser::{FileCache, Parser};
 
 use super::{lower::CodeGen, *};
 
-fn with_lower(source: &str, f: impl FnOnce(&CodeGen<'_>)) {
+fn with_lower(source: &str, f: impl FnOnce(&CodeGen)) {
     let arena = Bump::new();
     let mut parser = Parser::new(&arena, false);
     let ast = parser
@@ -39,7 +39,7 @@ fn switch_lowers_regex_case_with_matches() {
     });
 }
 
-fn brif_count(cg: &CodeGen<'_>) -> usize {
+fn brif_count(cg: &CodeGen) -> usize {
     cg.bc
         .code
         .iter()
@@ -146,7 +146,7 @@ fn chained_or_lowers_one_branch_per_operator() {
     });
 }
 
-fn jump_targets(cg: &CodeGen<'_>) -> Vec<IxWidth> {
+fn jump_targets(cg: &CodeGen) -> Vec<IxWidth> {
     cg.bc
         .code
         .iter()

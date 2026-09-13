@@ -520,7 +520,7 @@ impl Record {
     /// is load-bearing since field-splitting isn't necessarily idempotent.
     pub fn write_field(
         &mut self,
-        val: Value<'_>,
+        val: Value,
         n: usize,
         symbols: &mut SymbolTable,
         mode: ExecMode,
@@ -534,7 +534,7 @@ impl Record {
     }
 
     /// Rewrites the entire record and invalidates the field splits.
-    fn write_record_raw(&mut self, val: Value<'_>) {
+    fn write_record_raw(&mut self, val: Value) {
         self.fields = None;
         self.raw.clear();
         val.write_string(&mut self.raw);
@@ -544,7 +544,7 @@ impl Record {
     /// the public function for more details.
     fn write_field_raw(
         &mut self,
-        val: &Value<'_>,
+        val: &Value,
         n: usize,
         symbols: &mut SymbolTable,
         mode: ExecMode,

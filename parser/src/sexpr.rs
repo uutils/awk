@@ -15,13 +15,13 @@ use crate::{
 
 const PRETTY_PRINT_INDENT: usize = 2;
 
-fn fmt_vars(f: &mut Formatter<'_>) -> (bool, usize, String) {
+fn fmt_vars(f: &mut Formatter) -> (bool, usize, String) {
     let ni = f.width().unwrap_or(0) + PRETTY_PRINT_INDENT;
     (f.alternate(), ni, " ".repeat(ni))
 }
 
 impl Debug for Statement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let (alt, ni, pad) = fmt_vars(f);
 
         match self {
@@ -136,7 +136,7 @@ impl Debug for Statement<'_> {
 }
 
 impl Debug for SimpleStatement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let (alt, ni, pad) = fmt_vars(f);
         match self {
             Self::Expression(expr, _) => {
@@ -169,7 +169,7 @@ impl Debug for SimpleStatement<'_> {
 }
 
 impl Debug for Expr<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Leaf(atom, _) => write!(f, "{atom:?}"),
             Self::Node(expr, _) => match expr.as_ref() {
@@ -227,7 +227,7 @@ impl Debug for Expr<'_> {
 
 struct ListLispFmt<'a, T: Debug>(&'a [T]);
 impl<T: Debug> Debug for ListLispFmt<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let (alt, ni, pad) = fmt_vars(f);
         for e in self.0 {
             if alt {
@@ -242,7 +242,7 @@ impl<T: Debug> Debug for ListLispFmt<'_, T> {
 
 struct ListLispCasesFmt<'a, T: Debug>(&'a [(T, Body<'a>)]);
 impl<T: Debug> Debug for ListLispCasesFmt<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let (alt, ni, pad) = fmt_vars(f);
         let (ni, pad) = (ni - PRETTY_PRINT_INDENT, &pad[PRETTY_PRINT_INDENT..]);
         for (i, e) in self.0 {
@@ -261,13 +261,13 @@ impl<T: Debug> Debug for ListLispCasesFmt<'_, T> {
 }
 
 impl Debug for Identifier<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         write!(f, "{}::{}", self.namespace, self.literal)
     }
 }
 
 impl Debug for Body<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let (alt, ni, pad) = fmt_vars(f);
         write!(f, "(body")?;
         for e in &self.0 {
@@ -282,7 +282,7 @@ impl Debug for Body<'_> {
 }
 
 impl Debug for Atom<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Variable(var) => write!(f, "{var:?}"),
             Self::String(str) => write!(f, "{str:?}"),
@@ -296,7 +296,7 @@ impl Debug for Atom<'_> {
 }
 
 impl Debug for Place<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Record(expr) => write!(f, "(Record {expr:?})"),
             Self::Variable(var) => <_ as Debug>::fmt(var, f),
@@ -306,13 +306,13 @@ impl Debug for Place<'_> {
 }
 
 impl Debug for Variable<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         <Self as std::fmt::Display>::fmt(self, f)
     }
 }
 
 impl Debug for ArrayPlace<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let ArrayPlace(var, indices) = self;
         for _ in 0..indices.len() {
             write!(f, "(Index ")?;
@@ -329,7 +329,7 @@ impl Debug for ArrayPlace<'_> {
 }
 
 impl Debug for Redirection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::WriteFile => write!(f, ">"),
             Self::AppendFile => write!(f, ">>"),
@@ -340,7 +340,7 @@ impl Debug for Redirection {
 }
 
 impl Debug for RulePattern<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Expression(expr) => <_ as Debug>::fmt(expr, f),
             Self::Range(on, off) => write!(f, "(Range {on:?} {off:?})"),

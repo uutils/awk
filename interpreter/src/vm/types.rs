@@ -599,7 +599,7 @@ impl Hash for AwkNum {
 }
 
 impl Display for AwkValue<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             AwkValue::Int(n) => <_ as Display>::fmt(n, f),
             AwkValue::Float(n) => <_ as Display>::fmt(n, f),

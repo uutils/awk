@@ -342,7 +342,7 @@ impl<'a> Expr<'a> {
 }
 
 impl UnaryOperator {
-    pub const fn expr(self, a: Expr<'_>) -> ExprNode<'_> {
+    pub const fn expr(self, a: Expr) -> ExprNode {
         ExprNode::UnaryOperation(self, a)
     }
 }
@@ -354,7 +354,7 @@ impl BinaryOperator {
 }
 
 impl UnaryPlaceOperator {
-    pub const fn expr(self, a: Place<'_>) -> ExprNode<'_> {
+    pub const fn expr(self, a: Place) -> ExprNode {
         ExprNode::UnaryPlaceOperation(self, a)
     }
 }
@@ -445,7 +445,7 @@ impl<'a> BinaryOperator {
 }
 
 impl UnaryPlaceOperator {
-    pub const fn parse_prefix(value: &Token<'_>, span: Span) -> Result<Self> {
+    pub const fn parse_prefix(value: &Token, span: Span) -> Result<Self> {
         match value {
             Token::Increment => Ok(Self::IncrementL),
             Token::Decrement => Ok(Self::DecrementL),
@@ -453,7 +453,7 @@ impl UnaryPlaceOperator {
         }
     }
 
-    pub const fn parse_suffix(value: &Token<'_>, span: Span) -> Result<Self> {
+    pub const fn parse_suffix(value: &Token, span: Span) -> Result<Self> {
         match value {
             Token::Increment => Ok(Self::IncrementR),
             Token::Decrement => Ok(Self::DecrementR),

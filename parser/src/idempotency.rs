@@ -35,7 +35,7 @@ macro_rules! fmt_seq {
     }};
     ($f:expr, opt($v:expr, |$ff:ident, $vv:ident| $cb:expr) $(, $($rest:tt)*)?) => {{
         if let Some(x) = $v {
-            let ($ff, $vv): (&mut Formatter<'_>, _) = ($f, x);
+            let ($ff, $vv): (&mut Formatter, _) = ($f, x);
             fmt_seq!($f, $cb $(, $($rest)*)?)
         } else {
             fmt_seq!($f $(, $($rest)*)?)
@@ -64,7 +64,7 @@ struct NamespaceState<'a> {
 }
 
 impl Display for Ast<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let mut state = NamespaceState::default();
 
         for load in &self.loads {
@@ -103,7 +103,7 @@ impl Display for Ast<'_> {
 
 fn write_special_rule<'a>(
     this: &Ast<'a>,
-    f: &mut Formatter<'_>,
+    f: &mut Formatter,
     state: &mut NamespaceState<'a>,
     lb: &str,
     rules: &[Body<'a>],
@@ -116,7 +116,7 @@ fn write_special_rule<'a>(
 }
 
 impl Statement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, indent: u8, namespace: &str) -> Result {
         match self {
             Self::Simple(simple) => simple.fmt(f, indent, namespace),
             Self::If { condition, then_body, else_body, .. } => {
@@ -185,7 +185,7 @@ impl Statement<'_> {
                     " {{\n"
                 )?;
                 let default_pos = default.as_ref().map_or(branches.len(), |x| x.1);
-                let print_case = |f: &mut Formatter<'_>, (case, branch): &(Atom<'_>, Body<'_>)| {
+                let print_case = |f: &mut Formatter, (case, branch): &(Atom, Body)| {
                     fmt_seq!(f, tabs(f, indent), "case ", case.fmt(f, namespace), ":\n")?;
                     write_stmnts(f, branch, indent + 1, namespace)
                 };
@@ -217,7 +217,7 @@ impl Statement<'_> {
 }
 
 impl SimpleStatement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, indent: u8, namespace: &str) -> Result {
         match self {
             SimpleStatement::Expression(expr, _) => expr.fmt(f, indent, 0, namespace),
             SimpleStatement::Command { name, args, redirection: Some((rx, expr)), .. } => {
@@ -243,7 +243,7 @@ impl SimpleStatement<'_> {
 }
 
 impl Rule<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         match (&self.pattern, &self.actions) {
             (None, None) => Ok(()),
             (None, Some(body)) => write_body_ln(f, body, 0, namespace),
@@ -260,7 +260,7 @@ impl Rule<'_> {
 }
 
 impl RulePattern<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         match self {
             Self::Range(a, b) => {
                 fmt_seq!(f, a.fmt(f, 0, 0, namespace), ", ")?;
@@ -272,7 +272,7 @@ impl RulePattern<'_> {
 }
 
 impl Expr<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, parent_bp: u8, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, indent: u8, parent_bp: u8, namespace: &str) -> Result {
         match self {
             Expr::Leaf(atom, _) => atom.fmt(f, namespace),
             Expr::Node(node, _) => node.as_ref().fmt(f, indent, parent_bp, namespace),
@@ -280,7 +280,7 @@ impl Expr<'_> {
     }
 }
 impl Atom<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         if let Self::Variable(var) = self {
             var.fmt(f, namespace)
         } else {
@@ -290,7 +290,7 @@ impl Atom<'_> {
 }
 
 impl Variable<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         match self {
             Variable::User(ident) => ident.fmt(f, namespace),
             _ => <_ as Debug>::fmt(self, f),
@@ -299,7 +299,7 @@ impl Variable<'_> {
 }
 
 impl Place<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         match self {
             Self::Variable(var) => var.fmt(f, namespace),
             Self::Record(Expr::Leaf(leaf, _)) => {
@@ -320,7 +320,7 @@ impl Place<'_> {
 }
 
 impl ArrayPlace<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         let ArrayPlace(var, indices) = self;
         var.fmt(f, namespace)?;
         for args in indices {
@@ -331,7 +331,7 @@ impl ArrayPlace<'_> {
 }
 
 impl ExprNode<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, parent_bp: u8, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, indent: u8, parent_bp: u8, namespace: &str) -> Result {
         match self {
             // This is an AST construct; the bp checks resolve parenthesis.
             Self::Parenthesized(expr) => expr.fmt(f, indent, parent_bp, namespace),
@@ -493,7 +493,7 @@ impl ExprNode<'_> {
 }
 
 impl Identifier<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+    fn fmt(&self, f: &mut Formatter, namespace: &str) -> Result {
         if namespace != self.namespace {
             write!(f, "{}::", self.namespace)?;
         }
@@ -502,7 +502,7 @@ impl Identifier<'_> {
 }
 
 impl Display for UnaryOperator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Record => f.write_char('$'),
             Self::Negation => f.write_char('!'),
@@ -513,7 +513,7 @@ impl Display for UnaryOperator {
 }
 
 impl Display for BinaryOperator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Concat => f.write_char(' '),
             Self::Eq => write!(f, " == "),
@@ -537,7 +537,7 @@ impl Display for BinaryOperator {
 }
 
 impl Display for BinaryPlaceOperator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Assignment => write!(f, " = "),
             Self::AddAssign => write!(f, " += "),
@@ -551,7 +551,7 @@ impl Display for BinaryPlaceOperator {
 }
 
 impl Display for Redirection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::WriteFile => write!(f, " > "),
             Self::AppendFile => write!(f, " >> "),
@@ -562,7 +562,7 @@ impl Display for Redirection {
 }
 
 impl<'a> NamespaceState<'a> {
-    fn advance(&mut self, f: &mut Formatter<'_>, ast: &Ast<'a>) -> Result {
+    fn advance(&mut self, f: &mut Formatter, ast: &Ast<'a>) -> Result {
         // Heuristic: we know search range is upper-bounded by `len() - tl_ix`.
         // Linear search is the best option given constraints.
         if let Some((_, s)) = ast.ns_metadata.iter().find(|&&(i, _)| i == self.tl_ix) {
@@ -576,7 +576,7 @@ impl<'a> NamespaceState<'a> {
 }
 
 impl Display for Identifier<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         <Self as Debug>::fmt(self, f)
     }
 }
@@ -587,11 +587,7 @@ impl Default for NamespaceState<'_> {
     }
 }
 
-fn write_cb<T>(
-    f: &mut Formatter<'_>,
-    args: &[T],
-    cb: impl Fn(&mut Formatter<'_>, &T) -> Result,
-) -> Result {
+fn write_cb<T>(f: &mut Formatter, args: &[T], cb: impl Fn(&mut Formatter, &T) -> Result) -> Result {
     for (i, arg) in args.iter().enumerate() {
         if i != 0 {
             write!(f, ", ")?;
@@ -601,22 +597,22 @@ fn write_cb<T>(
     Ok(())
 }
 
-fn write_args(f: &mut Formatter<'_>, args: &[Identifier], namespace: &str) -> Result {
+fn write_args(f: &mut Formatter, args: &[Identifier], namespace: &str) -> Result {
     write_cb(f, args, |f, ident| ident.fmt(f, namespace))
 }
 
-fn write_expr_args(f: &mut Formatter<'_>, args: &[Expr], indent: u8, namespace: &str) -> Result {
+fn write_expr_args(f: &mut Formatter, args: &[Expr], indent: u8, namespace: &str) -> Result {
     write_cb(f, args, |f, expr| expr.fmt(f, indent, 0, namespace))
 }
 
-fn write_stmnts(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
+fn write_stmnts(f: &mut Formatter, body: &Body, indent: u8, namespace: &str) -> Result {
     for stmnt in &body.0 {
         fmt_seq!(f, tabs(f, indent), stmnt.fmt(f, indent, namespace), "\n")?;
     }
     Ok(())
 }
 
-fn write_body(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
+fn write_body(f: &mut Formatter, body: &Body, indent: u8, namespace: &str) -> Result {
     fmt_seq!(
         f,
         b(
@@ -627,12 +623,12 @@ fn write_body(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -
     )
 }
 
-fn write_body_ln(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
+fn write_body_ln(f: &mut Formatter, body: &Body, indent: u8, namespace: &str) -> Result {
     write_body(f, body, indent, namespace)?;
     writeln!(f)
 }
 
-fn tabs(f: &mut Formatter<'_>, indent: u8) -> Result {
+fn tabs(f: &mut Formatter, indent: u8) -> Result {
     for _ in 0..indent {
         f.write_char('\t')?;
     }

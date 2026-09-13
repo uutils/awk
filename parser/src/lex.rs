@@ -353,7 +353,7 @@ impl TokenExt for Token<'_> {
 }
 
 impl Debug for Lexer<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Lexer {{ span: {:?} }}", self.span)
     }
 }

@@ -400,28 +400,28 @@ impl<'a> Token<'a> {
 }
 
 impl LexingError {
-    fn to_utf8(lex: &mut Lexer<'_>) -> String {
+    fn to_utf8(lex: &mut Lexer) -> String {
         String::from_utf8_lossy(lex.slice()).to_string()
     }
 
     #[cold]
-    fn unexpected(lex: &mut Lexer<'_>) -> Self {
+    fn unexpected(lex: &mut Lexer) -> Self {
         Self::Unexpected(lex.span().into(), Self::to_utf8(lex))
     }
 
     #[cold]
-    fn non_posix(lex: &mut Lexer<'_>) -> Self {
+    fn non_posix(lex: &mut Lexer) -> Self {
         Self::UnavailableOnPosix(lex.span().into(), Self::to_utf8(lex))
     }
 
     #[cold]
     #[allow(dead_code)] // Remove if we add extensions that require it.
-    fn non_uu(lex: &mut Lexer<'_>) -> Self {
+    fn non_uu(lex: &mut Lexer) -> Self {
         Self::UnavailableOnGnu(lex.span().into(), Self::to_utf8(lex))
     }
 }
 
-fn skip_line(lex: &mut Lexer<'_>) -> Skip {
+fn skip_line(lex: &mut Lexer) -> Skip {
     lex.bump(memchr(b'\n', lex.remainder()).unwrap_or(lex.remainder().len()));
     logos::skip(lex)
 }
@@ -602,7 +602,7 @@ fn parse_ident<'a>(lex: &mut Lexer<'a>, index: impl SliceIndex<[u8], Output = [u
     unsafe { str::from_utf8_unchecked(lex.slice().get_unchecked(index)) }
 }
 
-fn parse_float(lex: &mut Lexer<'_>) -> f64 {
+fn parse_float(lex: &mut Lexer) -> f64 {
     parse_ident(lex, ..).parse().unwrap_or(0.)
 }
 
@@ -623,7 +623,7 @@ fn parse_non_posix_keyword<'a>(lex: &mut Lexer<'a>, other: Token<'a>) -> Token<'
     }
 }
 
-fn parse_non_posix_operator(lex: &mut Lexer<'_>) -> Result<()> {
+fn parse_non_posix_operator(lex: &mut Lexer) -> Result<()> {
     if lex.extras.posix_strict {
         Err(LexingError::non_posix(lex))
     } else {
@@ -657,11 +657,11 @@ impl<'a> Identifier<'a> {
     }
 }
 
-const fn accept_expression(lex: &mut Lexer<'_>) {
+const fn accept_expression(lex: &mut Lexer) {
     lex.extras.ctx = Context::AcceptExpression;
 }
 
-const fn accept_operator(lex: &mut Lexer<'_>) {
+const fn accept_operator(lex: &mut Lexer) {
     lex.extras.ctx = Context::AcceptOperator;
 }
 
@@ -672,13 +672,13 @@ pub enum Slice<'a> {
 }
 
 impl Display for Slice<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", String::from_utf8_lossy(self.as_ref()).as_ref())
     }
 }
 
 impl Debug for Slice<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "\"{self}\"")
     }
 }
