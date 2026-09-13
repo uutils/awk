@@ -7,7 +7,7 @@ use bumpalo::{collections::Vec, vec};
 use lexer::{Span, Token};
 
 use crate::{
-    IdentifierExt, Lexer, Parser, Result,
+    ArrayPlace, IdentifierExt, Lexer, Parser, Result,
     ast::{
         ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Expr, ExprNode,
         Getline, Place, Redirection, Ternary, UnaryOperator, UnaryPlaceOperator, Variable,
@@ -149,32 +149,17 @@ impl<'a, 'b> Pratt<'a, 'b> {
                                 let node_span = lex.span().since(expr_anchor);
 
                                 Expr::node(
-                                    ExprNode::ArrayIndex(var, indices),
+                                    ExprNode::ArrayIndex(ArrayPlace(var, indices)),
                                     self.parser,
                                     node_span,
                                 )
                             }
-                            Ok(Place::Index(var, index)) => {
+                            Ok(Place::Array(mut array)) => {
                                 let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
-                                let indices = vec![in self.parser.arena; index, new_indices];
+                                array.1.push(new_indices);
                                 let node_span = lex.span().since(expr_anchor);
 
-                                Expr::node(
-                                    ExprNode::ArrayIndex(var, indices),
-                                    self.parser,
-                                    node_span,
-                                )
-                            }
-                            Ok(Place::ChainedIndex(var, mut indices)) => {
-                                let new_indices = self.parse_index_exprs(lex, op, expr_anchor)?;
-                                indices.push(new_indices);
-                                let node_span = lex.span().since(expr_anchor);
-
-                                Expr::node(
-                                    ExprNode::ArrayIndex(var, indices),
-                                    self.parser,
-                                    node_span,
-                                )
+                                Expr::node(ExprNode::ArrayIndex(array), self.parser, node_span)
                             }
                             Ok(_) => {
                                 return Err(ParsingError::OperatorExpectsVariable(
@@ -194,10 +179,9 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     }
                     ArrayOperator::In => {
                         lex.next();
-                        let (var, indices) = match self.parse_place(lex)? {
-                            Place::Variable(var) => (var, Vec::new_in(self.parser.arena)),
-                            Place::Index(var, index) => (var, vec![in self.parser.arena; index]),
-                            Place::ChainedIndex(var, indices) => (var, indices),
+                        let array = match self.parse_place(lex)? {
+                            Place::Variable(var) => ArrayPlace(var, Vec::new_in(self.parser.arena)),
+                            Place::Array(place) => place,
                             Place::Record(_) => {
                                 return Err(ParsingError::OperatorExpectsVariable(
                                     lex.span().since(expr_anchor),
@@ -207,11 +191,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                         let test = vec![in self.parser.arena; lhs.take()];
                         let node_span = lex.span().since(expr_anchor);
 
-                        Expr::node(
-                            ExprNode::InArray(var, indices, test),
-                            self.parser,
-                            node_span,
-                        )
+                        Expr::node(ExprNode::InArray(array, test), self.parser, node_span)
                     }
                 }
             } else if let Ok(op) = BinaryOperator::parse(next, span)
@@ -258,10 +238,9 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     "expected `in` after multidimensional array look-up.".into(),
                 )
             })?;
-            let (var, indices) = match self.parse_place(lex)? {
-                Place::Variable(var) => (var, Vec::new_in(self.parser.arena)),
-                Place::Index(var, index) => (var, vec![in self.parser.arena; index]),
-                Place::ChainedIndex(var, indices) => (var, indices),
+            let array = match self.parse_place(lex)? {
+                Place::Variable(var) => ArrayPlace(var, Vec::new_in(self.parser.arena)),
+                Place::Array(place) => place,
                 Place::Record(_) => {
                     return Err(ParsingError::OperatorExpectsVariable(
                         lex.span().since(anchor),
@@ -270,7 +249,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
             };
             let node_span = lex.span().since(anchor);
             Ok(Expr::node(
-                ExprNode::InArray(var, indices, expr),
+                ExprNode::InArray(array, expr),
                 self.parser,
                 node_span,
             ))
@@ -506,7 +485,10 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     let index = self.parse_index_exprs(lex, ArrayOperator::Index, start)?;
 
                     if !lex.peek_is(&Token::OpenBracket) {
-                        return Ok(Place::Index(var, index));
+                        return Ok(Place::Array(ArrayPlace(
+                            var,
+                            vec![in self.parser.arena; index],
+                        )));
                     }
 
                     let mut indices = vec![in self.parser.arena; index];
@@ -516,7 +498,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                         indices.push(index);
                     }
 
-                    return Ok(Place::ChainedIndex(var, indices));
+                    return Ok(Place::Array(ArrayPlace(var, indices)));
                 }
                 expr
             }

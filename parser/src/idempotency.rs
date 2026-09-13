@@ -6,7 +6,7 @@
 use std::fmt::{Debug, Display, Formatter, Result, Write};
 
 use crate::{
-    Ast, Function, Identifier,
+    ArrayPlace, Ast, Function, Identifier,
     ast::{
         ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Expr,
         ExprNode, Getline, Place, Redirection, Rule, RulePattern, SimpleStatement, Statement,
@@ -232,15 +232,10 @@ impl SimpleStatement<'_> {
             SimpleStatement::Command { name, args, redirection: None, .. } => {
                 fmt_seq!(f, "{name} ", write_expr_args(f, args, indent, namespace))
             }
-            SimpleStatement::Delete(array, Some(args), _) => {
-                fmt_seq!(
-                    f,
-                    "delete ",
-                    array.fmt(f, namespace),
-                    bt(write_expr_args(f, args, indent, namespace))
-                )
+            SimpleStatement::Delete(array, _) => {
+                fmt_seq!(f, "delete ", array.fmt(f, namespace),)
             }
-            SimpleStatement::Delete(array, None, _) => {
+            SimpleStatement::DeleteElement(array, _) => {
                 fmt_seq!(f, "delete ", array.fmt(f, namespace))
             }
         }
@@ -319,21 +314,19 @@ impl Place<'_> {
             Self::Record(Expr::Node(node, _)) => {
                 fmt_seq!(f, "$", p(node.as_ref().fmt(f, 0, 0, namespace)))
             }
-            Self::Index(var, args) => {
-                fmt_seq!(
-                    f,
-                    var.fmt(f, namespace),
-                    bt(write_expr_args(f, args, 0, namespace))
-                )
-            }
-            Self::ChainedIndex(var, index) => {
-                fmt_seq!(f, var.fmt(f, namespace))?;
-                for args in index {
-                    fmt_seq!(f, bt(write_expr_args(f, args, 0, namespace)))?;
-                }
-                Ok(())
-            }
+            Self::Array(place) => place.fmt(f, namespace),
         }
+    }
+}
+
+impl ArrayPlace<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+        let ArrayPlace(var, indices) = self;
+        var.fmt(f, namespace)?;
+        for args in indices {
+            fmt_seq!(f, bt(write_expr_args(f, args, 0, namespace)))?;
+        }
+        Ok(())
     }
 }
 
@@ -416,22 +409,11 @@ impl ExprNode<'_> {
                     )
                 )
             }
-            Self::ArrayIndex(var, indices) => {
+            Self::ArrayIndex(array) => {
                 let left_bp = ArrayOperator::Index.binding_power().0;
-                fmt_seq!(
-                    f,
-                    maybe(
-                        left_bp < parent_bp,
-                        p(var.fmt(f, namespace), {
-                            for args in indices {
-                                fmt_seq!(f, bt(write_expr_args(f, args, indent, namespace)))?;
-                            }
-                            Ok(())
-                        })
-                    )
-                )
+                fmt_seq!(f, maybe(left_bp < parent_bp, p(array.fmt(f, namespace))))
             }
-            Self::InArray(var, indices, test) => {
+            Self::InArray(array, test) => {
                 let (left_bp, right_bp) = ArrayOperator::In.binding_power();
                 fmt_seq!(
                     f,
@@ -444,13 +426,7 @@ impl ExprNode<'_> {
                                 (test[0].fmt(f, indent, right_bp, namespace))
                             ),
                             " in ",
-                            var.fmt(f, namespace),
-                            {
-                                for args in indices {
-                                    fmt_seq!(f, bt(write_expr_args(f, args, indent, namespace)))?;
-                                }
-                                Ok(())
-                            }
+                            array.fmt(f, namespace)
                         )
                     )
                 )

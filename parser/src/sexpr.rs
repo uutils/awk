@@ -5,9 +5,12 @@
 
 use std::fmt::{Debug, Formatter, Result};
 
-use crate::ast::{
-    Atom, Body, Expr, ExprNode, Getline, Identifier, Place, Redirection, RulePattern,
-    SimpleStatement, Statement, Variable,
+use crate::{
+    ArrayPlace,
+    ast::{
+        Atom, Body, Expr, ExprNode, Getline, Identifier, Place, Redirection, RulePattern,
+        SimpleStatement, Statement, Variable,
+    },
 };
 
 const PRETTY_PRINT_INDENT: usize = 2;
@@ -159,14 +162,8 @@ impl Debug for SimpleStatement<'_> {
                 write!(f, "({name:?}{:?})", ListLispFmt(args))
             }
 
-            Self::Delete(array, Some(index), ..) => {
-                write!(f, "(delete (Index {array:?}")?;
-                for i in index {
-                    write!(f, " {i:?}")?;
-                }
-                write!(f, "))")
-            }
-            Self::Delete(array, None, _) => write!(f, "(delete {array:?})"),
+            Self::Delete(array, _) => write!(f, "(delete {array:?})"),
+            Self::DeleteElement(array, _) => write!(f, "(delete {array:?})"),
         }
     }
 }
@@ -202,31 +199,10 @@ impl Debug for Expr<'_> {
                 ExprNode::UnaryOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::BinaryPlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
-                ExprNode::ArrayIndex(var, indices) => {
-                    for _ in 0..indices.len() {
-                        write!(f, "(Index ")?;
-                    }
-                    write!(f, "{var:?}")?;
-                    for index in indices {
-                        for i in index {
-                            write!(f, " {i:?}")?;
-                        }
-                        write!(f, ")")?;
-                    }
-                    Ok(())
-                }
-                ExprNode::InArray(var, indices, test) => {
+                ExprNode::ArrayIndex(array) => <_ as Debug>::fmt(array, f),
+                ExprNode::InArray(array, test) => {
                     write!(f, "(In ")?;
-                    for _ in 0..indices.len() {
-                        write!(f, "(Index ")?;
-                    }
-                    write!(f, "{var:?}")?;
-                    for index in indices {
-                        for i in index {
-                            write!(f, " {i:?}")?;
-                        }
-                        write!(f, ")")?;
-                    }
+                    <_ as Debug>::fmt(array, f)?;
                     for i in test {
                         write!(f, " {i:?}")?;
                     }
@@ -324,26 +300,7 @@ impl Debug for Place<'_> {
         match self {
             Self::Record(expr) => write!(f, "(Record {expr:?})"),
             Self::Variable(var) => <_ as Debug>::fmt(var, f),
-            Self::Index(var, index) => {
-                write!(f, "(Index {var:?}")?;
-                for i in index {
-                    write!(f, " {i:?}")?;
-                }
-                write!(f, ")")
-            }
-            Self::ChainedIndex(var, indices) => {
-                for _ in 0..indices.len() {
-                    write!(f, "(Index ")?;
-                }
-                write!(f, "{var:?}")?;
-                for index in indices {
-                    for i in index {
-                        write!(f, " {i:?}")?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
+            Self::Array(place) => <_ as Debug>::fmt(place, f),
         }
     }
 }
@@ -351,6 +308,23 @@ impl Debug for Place<'_> {
 impl Debug for Variable<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         <Self as std::fmt::Display>::fmt(self, f)
+    }
+}
+
+impl Debug for ArrayPlace<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let ArrayPlace(var, indices) = self;
+        for _ in 0..indices.len() {
+            write!(f, "(Index ")?;
+        }
+        write!(f, "{var:?}")?;
+        for index in indices {
+            for i in index {
+                write!(f, " {i:?}")?;
+            }
+            write!(f, ")")?;
+        }
+        Ok(())
     }
 }
 

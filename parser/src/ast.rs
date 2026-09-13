@@ -114,8 +114,8 @@ pub enum ExprNode<'a> {
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
     BinaryPlaceOperation(BinaryPlaceOperator, Place<'a>, Expr<'a>),
-    ArrayIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
-    InArray(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>, Vec<'a, Expr<'a>>),
+    ArrayIndex(ArrayPlace<'a>),
+    InArray(ArrayPlace<'a>, Vec<'a, Expr<'a>>),
     Ternary(Expr<'a>, Expr<'a>, Expr<'a>),
     Getline(Getline<'a>),
 }
@@ -178,9 +178,10 @@ pub enum ArrayOperator {
 pub enum Place<'a> {
     Record(Expr<'a>),
     Variable(Variable<'a>),
-    Index(Variable<'a>, Vec<'a, Expr<'a>>),
-    ChainedIndex(Variable<'a>, Vec<'a, Vec<'a, Expr<'a>>>),
+    Array(ArrayPlace<'a>),
 }
+
+pub struct ArrayPlace<'a>(pub Variable<'a>, pub Vec<'a, Vec<'a, Expr<'a>>>);
 
 /// GNU docs: <https://www.gnu.org/software/gawk/manual/html_node/Redirection.html>
 #[derive(Clone, Copy)]
@@ -238,7 +239,7 @@ pub enum Statement<'a> {
     },
     ForEach {
         variable: Variable<'a>,
-        array: Variable<'a>,
+        array: ArrayPlace<'a>,
         body: Body<'a>,
         metadata: MetaId,
     },
@@ -264,7 +265,8 @@ pub enum SimpleStatement<'a> {
         redirection: Option<(Redirection, Expr<'a>)>,
         metadata: MetaId,
     },
-    Delete(Variable<'a>, Option<Vec<'a, Expr<'a>>>, MetaId),
+    Delete(Variable<'a>, MetaId),
+    DeleteElement(ArrayPlace<'a>, MetaId),
 }
 
 #[derive(Debug)]
@@ -499,16 +501,12 @@ impl<'a> Place<'a> {
             Expr::Node(node, _)
                 if matches!(
                     &*node,
-                    &ExprNode::UnaryOperation(UnaryOperator::Record, _)
-                        | &ExprNode::ArrayIndex(_, _)
+                    &ExprNode::UnaryOperation(UnaryOperator::Record, _) | &ExprNode::ArrayIndex(_)
                 ) =>
             {
                 match Box::into_inner(node) {
                     ExprNode::UnaryOperation(_, index) => Ok(Self::Record(index)),
-                    ExprNode::ArrayIndex(var, mut indices) if indices.len() == 1 => {
-                        Ok(Self::Index(var, indices.pop().unwrap()))
-                    }
-                    ExprNode::ArrayIndex(var, indices) => Ok(Self::ChainedIndex(var, indices)),
+                    ExprNode::ArrayIndex(array) => Ok(Self::Array(array)),
                     _ => unreachable!("Box is magic; handled awkwardly in the match guard."),
                 }
             }

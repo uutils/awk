@@ -9,7 +9,7 @@ use bumpalo::{Bump, collections::CollectIn};
 use proptest::prelude::*;
 
 use crate::{
-    Ast, Body, ExprNode, MetaId, Place, Rule,
+    ArrayPlace, Ast, Body, ExprNode, MetaId, Place, Rule,
     ast::{
         Atom, BinaryOperator, BinaryPlaceOperator, Command, Expr, Identifier, RulePattern,
         SimpleStatement, Statement, UnaryOperator, Variable,
@@ -283,10 +283,10 @@ fn materialize_expr<'a>(expr: &GenExpr, arena: &'a Bump) -> Expr<'a> {
             arena,
         ),
         GenExpr::Index(var, idx) => Expr::node_nm(
-            ExprNode::ArrayIndex(
+            ExprNode::ArrayIndex(ArrayPlace(
                 materialize_var(*var, arena),
                 bumpalo::vec![in arena; bumpalo::vec![in arena; materialize_expr(idx, arena)]],
-            ),
+            )),
             arena,
         ),
     }

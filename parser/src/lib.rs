@@ -536,15 +536,15 @@ impl<'a> Parser<'a> {
         expr: Option<SimpleStatement<'a>>,
         start: usize,
     ) -> Result<(Statement<'a>, bool)> {
-        let (array, variable) = match expr {
+        let (variable, array) = match expr {
             Some(SimpleStatement::Expression(Expr::Node(node, _), _))
-                if matches!(&*node, ExprNode::InArray(_, _, _)) =>
+                if matches!(&*node, ExprNode::InArray(_, _)) =>
             {
-                if let ExprNode::InArray(array, indices, mut test) = Box::into_inner(node)
-                    && indices.is_empty()
-                    && let [Expr::Leaf(Atom::Variable(var), _)] = &mut *test
+                let node = Box::into_inner(node);
+                if let ExprNode::InArray(array, expr) = node
+                    && let [Expr::Leaf(Atom::Variable(var), _)] = expr.as_slice()
                 {
-                    (array, replace(var, Variable::Nr))
+                    (*var, array)
                 } else {
                     return Err(ParsingError::InvalidForLoop(lex.span()));
                 }
@@ -612,10 +612,9 @@ impl<'a> Parser<'a> {
             )?;
             // Handles ambiguities of `print (1, 2) in arr`. Lol.
             if lex.consume(&Token::In) {
-                let (var, indices) = match Pratt::new(self, false).parse_place(lex)? {
-                    Place::Variable(var) => (var, Vec::new_in(self.arena)),
-                    Place::Index(var, index) => (var, vec![in self.arena; index]),
-                    Place::ChainedIndex(var, indices) => (var, indices),
+                let array = match Pratt::new(self, false).parse_place(lex)? {
+                    Place::Variable(var) => ArrayPlace(var, Vec::new_in(self.arena)),
+                    Place::Array(place) => place,
                     Place::Record(_) => {
                         return Err(ParsingError::OperatorExpectsVariable(
                             lex.span().since(start),
@@ -625,7 +624,7 @@ impl<'a> Parser<'a> {
                 let test = replace(&mut args, Vec::new_in(self.arena));
 
                 args.push(Expr::node(
-                    ExprNode::InArray(var, indices, test),
+                    ExprNode::InArray(array, test),
                     self,
                     lex.span().since(start),
                 ));
@@ -719,21 +718,17 @@ impl<'a> Parser<'a> {
 
     fn parse_delete(&mut self, lex: &mut Lexer<'a>) -> Result<SimpleStatement<'a>> {
         let start = lex.span().start;
-        let next = lex.expect_next()?;
-        let Ok(var) = self.get_place(lex, next) else {
-            return Err(ParsingError::OperatorExpectsVariable(lex.span()));
-        };
-        let index = if lex.consume(&Token::OpenBracket) {
-            let mut pratt = Pratt::new(self, false);
-            let expr = pratt.parse(lex)?;
-            let expr = pratt.parse_comma_expr(lex, expr)?;
-            lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
-            Some(expr)
-        } else {
-            None
-        };
+        let mut pratt = Pratt::new(self, false);
+        let place = pratt.parse_place(lex)?;
         let metadata = self.gen_metadata(lex.span().since(start));
-        Ok(SimpleStatement::Delete(var, index, metadata))
+
+        match place {
+            Place::Variable(var) => Ok(SimpleStatement::Delete(var, metadata)),
+            Place::Array(place) => Ok(SimpleStatement::DeleteElement(place, metadata)),
+            Place::Record(_) => Err(ParsingError::OperatorExpectsVariable(
+                lex.span().since(start),
+            )),
+        }
     }
 
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {

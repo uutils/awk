@@ -13,7 +13,7 @@ use std::{
 
 use bumpalo::{Bump, collections::Vec};
 use parser::{
-    Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
+    ArrayPlace, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
     Function as AstFunction, FunctionTable, Getline, Identifier, MetaId, Place, Rule, RulePattern,
     SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
@@ -302,14 +302,24 @@ impl<'a> CodeGen<'a> {
                     this.regs.free_many(range);
                 });
             }
-            Statement::Simple(SimpleStatement::Delete(var, Some(indices), metadata)) => self
+            Statement::Simple(SimpleStatement::DeleteElement(
+                ArrayPlace(var, indices),
+                metadata,
+            )) if indices.len() == 1 => self.with_metadata(*metadata, |this| {
+                let (arg, ty) = TypedPlace::new_var(this, var).into_place();
+                this.scoped_reg_range(RtType::Scalar, &indices[0], |this, (start, end)| {
+                    this.emit(Instruction::DeleteP { arg, ty, start, end });
+                });
+            }),
+            Statement::Simple(SimpleStatement::DeleteElement(place, metadata)) => self
                 .with_metadata(*metadata, |this| {
-                    let (arg, ty) = TypedPlace::new_var(this, var).into_place();
-                    this.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
-                        this.emit(Instruction::DeleteP { arg, ty, start, end });
+                    this.scoped_reg(|this, tmp| {
+                        this.load_aoa_place(tmp, place, |this, arg, ty, (start, end)| {
+                            this.emit(Instruction::DeleteP { arg, ty, start, end });
+                        });
                     });
                 }),
-            Statement::Simple(SimpleStatement::Delete(var, None, metadata)) => {
+            Statement::Simple(SimpleStatement::Delete(var, metadata)) => {
                 self.with_metadata(*metadata, |this| {
                     let (arg, ty) = TypedPlace::new_var(this, var).into_place();
                     this.emit(Instruction::DeleteA { arg, ty });
@@ -633,19 +643,21 @@ impl<'a> CodeGen<'a> {
                             });
                         }
                         ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
-                        ExprNode::ArrayIndex(var, index) if let [index] = index.as_slice() => {
+                        ExprNode::ArrayIndex(ArrayPlace(var, index))
+                            if let [index] = index.as_slice() =>
+                        {
                             this.load_index(dest, var, index);
                         }
-                        ExprNode::ArrayIndex(var, indices) => {
-                            this.load_chained_index(dest, var, indices);
+                        ExprNode::ArrayIndex(place) => {
+                            this.load_chained_index(dest, place);
                         }
-                        ExprNode::InArray(var, indices, test) => {
-                            let (lhs, tyl) = if indices.is_empty() {
+                        ExprNode::InArray(array, test) => {
+                            let (lhs, tyl) = if array.1.is_empty() {
                                 // Elide copies
-                                TypedPlace::new_var(this, var).into_place()
+                                TypedPlace::new_var(this, &array.0).into_place()
                             } else {
                                 // Copy to-be-tested array into a register.
-                                this.load_aoa_place(dest, var, indices, |this, arg, ty, range| {
+                                this.load_aoa_place(dest, array, |this, arg, ty, range| {
                                     let (start, end) = range;
                                     let instr = Instruction::IndexA { dest, arg, start, end, ty };
                                     this.emit(instr);
@@ -735,14 +747,14 @@ impl<'a> CodeGen<'a> {
                 f(this, ResolvedPlace::Record(reg))
             }),
             Place::Variable(_) => f(self, ResolvedPlace::Variable),
-            Place::Index(var, indices) => {
+            Place::Array(ArrayPlace(var, indices)) if indices.len() == 1 => {
                 let (arg, ty) = TypedPlace::new_var(self, var).into_place();
-                self.scoped_reg_range(RtType::Scalar, indices, |this, range| {
+                self.scoped_reg_range(RtType::Scalar, &indices[0], |this, range| {
                     f(this, ResolvedPlace::Index { arg, ty, range })
                 })
             }
-            Place::ChainedIndex(var, indices) => self.scoped_reg(|this, array_reg| {
-                this.load_aoa_place(array_reg, var, indices, |this, arg, ty, range| {
+            Place::Array(place) => self.scoped_reg(|this, array_reg| {
+                this.load_aoa_place(array_reg, place, |this, arg, ty, range| {
                     f(this, ResolvedPlace::Index { arg, ty, range })
                 })
             }),
@@ -801,8 +813,10 @@ impl<'a> CodeGen<'a> {
                 TypedPlace::new_reg(dest)
             }
             Place::Variable(var) => TypedPlace::new_var(self, var),
-            Place::Index(var, index) => self.load_index(dest, var, index),
-            Place::ChainedIndex(var, indices) => self.load_chained_index(dest, var, indices),
+            Place::Array(ArrayPlace(var, index)) if index.len() == 1 => {
+                self.load_index(dest, var, &index[0])
+            }
+            Place::Array(place) => self.load_chained_index(dest, place),
         }
     }
 
@@ -851,16 +865,16 @@ impl<'a> CodeGen<'a> {
                 let (var, ty_place) = TypedPlace::new_var(self, var).into_place();
                 self.emit(Instruction::StoreS { dest, ty_place, var, arg, ty });
             }
-            Place::Index(var, indices) => {
+            Place::Array(ArrayPlace(var, indices)) if indices.len() == 1 => {
                 let (lhs, tyl) = TypedPlace::new_var(self, var).into_place();
                 let (rhs, tyr) = src.into_arg();
-                self.scoped_reg_range(RtType::Scalar, indices, |this, (start, end)| {
+                self.scoped_reg_range(RtType::Scalar, &indices[0], |this, (start, end)| {
                     this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
                 });
             }
-            Place::ChainedIndex(var, indices) => {
+            Place::Array(place) => {
                 self.scoped_reg(|this, array| {
-                    this.load_aoa_place(array, var, indices, |this, lhs, tyl, (start, end)| {
+                    this.load_aoa_place(array, place, |this, lhs, tyl, (start, end)| {
                         let (rhs, tyr) = (arg, ty);
                         this.emit(Instruction::Insert { dest, lhs, rhs, start, end, tyl, tyr });
                     });
@@ -869,13 +883,8 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn load_chained_index(
-        &mut self,
-        dest: Reg,
-        var: &Variable<'_>,
-        indices: &[Vec<'_, Expr<'_>>],
-    ) -> TypedPlace {
-        self.load_aoa_place(dest, var, indices, |this, arg, ty, (start, end)| {
+    fn load_chained_index(&mut self, dest: Reg, place: &ArrayPlace) -> TypedPlace {
+        self.load_aoa_place(dest, place, |this, arg, ty, (start, end)| {
             this.emit(Instruction::IndexS { dest, arg, start, end, ty });
         });
         TypedPlace::new_reg(dest)
@@ -884,8 +893,7 @@ impl<'a> CodeGen<'a> {
     fn load_aoa_place<T>(
         &mut self,
         dest: Reg,
-        var: &Variable<'_>,
-        indices: &[Vec<'_, Expr<'_>>],
+        ArrayPlace(var, indices): &ArrayPlace,
         f: impl FnOnce(&mut Self, Arg, PlaceTy, (Reg, Reg)) -> T,
     ) -> T {
         let (mut arg, mut ty) = TypedPlace::new_var(self, var).into_place();
