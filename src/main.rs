@@ -46,9 +46,14 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
     let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
     let (mut cg, metadata, diagnostics) = {
         let ast_arena = Bump::with_capacity(4000);
-        let code = args.code.as_ref().unwrap(); // TODO: handle other forms of code input.
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
-        let ast = match parser.parse(FileCache(None), code.as_encoded_bytes()) {
+        let ast = if args.file.is_empty() {
+            let code = args.code.as_ref().unwrap();
+            parser.parse(FileCache(None), code.as_encoded_bytes())
+        } else {
+            parser.include_many(&args.file)
+        };
+        let ast = match ast {
             Ok(ast) => ast,
             Err(mut diagnostics) => {
                 diagnostics.flush()?;

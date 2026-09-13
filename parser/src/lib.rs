@@ -12,7 +12,14 @@ mod sexpr;
 #[cfg(test)]
 mod tests;
 
-use std::mem::replace;
+#[cfg(not(unix))]
+use std::{borrow::Cow, path::PathBuf};
+use std::{
+    fs::File,
+    mem::{replace, take},
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
@@ -149,19 +156,17 @@ impl<'a> Parser<'a> {
                     }
                     Token::IncludeDirective => {
                         let path = lex.expect_string()?;
-                        let old_namespace = self.namespace;
-                        let content = self.preprocessor.include_in(path.as_ref(), self.arena);
-                        self.parse_top(&mut Lexer::new(content, self.arena), true)?;
+                        if let (Err(e), _) = self.include(make_path(path.as_ref()), Some("awk")) {
+                            return Err(e);
+                        }
                         lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
-                        self.namespace = old_namespace;
                     }
                     Token::NsIncludeDirective => {
                         let path = lex.expect_string()?;
-                        let old_namespace = self.namespace;
-                        let content = self.preprocessor.include_in(path.as_ref(), self.arena);
-                        self.parse_top(&mut Lexer::new(content, self.arena), false)?;
+                        if let (Err(e), _) = self.include(make_path(path.as_ref()), None) {
+                            return Err(e);
+                        }
                         lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
-                        self.namespace = old_namespace;
                     }
                     Token::NamespaceDirective => {
                         let namespace = lex.expect_string()?;
@@ -949,6 +954,59 @@ impl<'a> Parser<'a> {
         let span = AriadneSpan(self.file.clone(), span);
         self.ast.loc_metadata.store(span)
     }
+
+    fn enter_file<T>(
+        &mut self,
+        path: Rc<Path>,
+        source: &'a [u8],
+        f: impl FnOnce(&mut Self, &mut Lexer<'a>) -> T,
+    ) -> (T, FileCache) {
+        let old = replace(&mut self.file, FileCache::new_file(path));
+        self.ast.diagnostics.cache(self.file.clone(), source);
+        let mut lex = Lexer::new(source, self.arena);
+
+        let ret = f(self, &mut lex);
+        (ret, replace(&mut self.file, old))
+    }
+
+    fn include(&mut self, path: Rc<Path>, ns: Option<&'static str>) -> (Result<()>, FileCache) {
+        let old_namespace = self.namespace;
+        let source = self.preprocessor.read_to_arena(path.clone(), self.arena);
+
+        if let Some(ns) = ns {
+            self.namespace = ns;
+        }
+
+        let file = match self.enter_file(path, source, |this, lex| {
+            this.parse_top(lex, false).map(|_| ())
+        }) {
+            (Ok(()), file) => file,
+            e => return e,
+        };
+        self.namespace = old_namespace;
+
+        (Ok(()), file)
+    }
+
+    pub fn include_many(&mut self, files: &[PathBuf]) -> Result<&mut Ast<'a>, DiagnosticStore> {
+        for path in files {
+            let path = Rc::from(path.as_path());
+            let (res, file) = self.include(path, Some("awk"));
+
+            if let Err(error) = res {
+                error.add_diagnostic_cached(
+                    &mut self.ast.diagnostics,
+                    AriadneSpan(file, error.span().unwrap_or_default()),
+                );
+            }
+        }
+
+        if self.ast.diagnostics.is_unrecoverable() {
+            Err(take(&mut self.ast.diagnostics))
+        } else {
+            Ok(&mut self.ast)
+        }
+    }
 }
 
 impl<'a> Ast<'a> {
@@ -973,8 +1031,25 @@ impl<'a> Ast<'a> {
 struct Preprocessor {}
 
 impl Preprocessor {
-    fn include_in<'a: 'b, 'b>(&mut self, _path: &'b [u8], _alloc: &'a Bump) -> &'a [u8] {
-        todo!()
+    fn read_to_arena<'a>(&self, path: impl AsRef<Path>, arena: &'a Bump) -> &'a [u8] {
+        let mut f = File::open(path).unwrap();
+        let mut buf = Vec::with_capacity_in(f.metadata().unwrap().len() as _, arena);
+        std::io::copy(&mut f, &mut buf).unwrap();
+        buf.into_bump_slice()
+    }
+}
+
+#[cfg(unix)]
+fn make_path(slice: &[u8]) -> Rc<Path> {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    Rc::from(Path::new(OsStr::from_bytes(slice)))
+}
+
+#[cfg(not(unix))]
+fn make_path(slice: &[u8]) -> Rc<Path> {
+    match String::from_utf8_lossy(slice) {
+        Cow::Borrowed(s) => Rc::from(Path::new(s)),
+        Cow::Owned(s) => Rc::from(PathBuf::from(s)),
     }
 }
 

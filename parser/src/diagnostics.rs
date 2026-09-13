@@ -285,6 +285,12 @@ impl ParsingError {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileCache(pub Option<Rc<Path>>);
 
+impl FileCache {
+    pub const fn new_file(f: Rc<Path>) -> Self {
+        Self(Some(f))
+    }
+}
+
 impl Display for FileCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
