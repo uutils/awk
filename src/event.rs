@@ -6,7 +6,7 @@
 use std::{
     convert::Infallible,
     fs::File,
-    io::{self, BufRead, BufReader, Read, Result, Write, empty, stdin, stdout},
+    io::{self, BufRead, BufReader, Read, Result, StdinLock, Write, stdin, stdout},
     path::Path,
     process::exit,
 };
@@ -106,15 +106,14 @@ impl<'a> AwkRt<'a> {
 
     pub fn rule_event_loop(&mut self) -> Result<()> {
         let range = self.bc.rules_code();
-        let mut reader = BufReader::new(Box::new(empty()) as Box<dyn Read>);
+        let mut reader = BufReader::new(ReadSource::None);
 
         while let Some(item) = self.queue.split_off_first() {
             let (path, res) = match item {
-                ArgQueueItem::File(path) => (
-                    Some(path.as_path()),
-                    File::open(path).map(|f| Box::new(f) as Box<dyn Read>),
-                ),
-                ArgQueueItem::Stdio => (None, Ok(Box::new(stdin().lock()) as Box<dyn Read>)),
+                ArgQueueItem::File(path) => {
+                    (Some(path.as_path()), File::open(path).map(ReadSource::File))
+                }
+                ArgQueueItem::Stdio => (None, Ok(ReadSource::Stdin(stdin().lock()))),
                 ArgQueueItem::Assignment(KeyValue { .. }) => {
                     // TODO assign variable
                     continue;
@@ -138,6 +137,7 @@ impl<'a> AwkRt<'a> {
                 }
             }
             self.end_file_event_loop()?;
+            *reader.get_mut() = ReadSource::None; // close file before opening next one
         }
         Ok(())
     }
@@ -148,6 +148,22 @@ impl<'a> AwkRt<'a> {
                 stdout().lock().write_all(buf).map(|()| IoResponse::Empty)
             }
             _ => todo!(),
+        }
+    }
+}
+
+enum ReadSource<'a> {
+    Stdin(StdinLock<'a>),
+    File(File),
+    None,
+}
+
+impl Read for ReadSource<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        match self {
+            Self::File(f) => f.read(buf),
+            Self::Stdin(f) => f.read(buf),
+            Self::None => Ok(0),
         }
     }
 }
