@@ -92,7 +92,7 @@ impl<'a> Parser<'a> {
         match &self.parse_top(&mut lex, true) {
             Ok(_) => Ok(&mut self.ast),
             Err(error) => {
-                let mut store = DiagnosticStore::new();
+                let mut store = take(&mut self.ast.diagnostics);
                 error.add_diagnostic(&mut store, file, source);
                 Err(store)
             }
