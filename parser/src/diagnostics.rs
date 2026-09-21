@@ -3,9 +3,19 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{error::Error, fmt::Display, path::Path, rc::Rc};
+use std::{
+    env::var_os,
+    error::Error,
+    fmt::Display,
+    io::{IsTerminal, stderr},
+    path::Path,
+    rc::Rc,
+    sync::LazyLock,
+};
 
-use ariadne::{Color, Label, Report, ReportBuilder, ReportKind, Source};
+static COLOR: LazyLock<bool> = LazyLock::new(|| stderr().is_terminal() || var_os("CI").is_some());
+
+use ariadne::{Color, Config, Label, Report, ReportBuilder, ReportKind, Source};
 use either::Either;
 use lexer::{LexingError, Span};
 use thiserror::Error;
@@ -33,8 +43,9 @@ pub trait Diagnostic: Error {
         self.add_diagnostic_cached(store, AriadneSpan(file, span));
     }
     fn add_diagnostic_cached(&self, store: &mut DiagnosticStore, span: AriadneSpan) {
-        let mut report =
-            Report::build(ReportKind::Error, span.clone()).with_message(self.message());
+        let mut report = Report::build(ReportKind::Error, span.clone())
+            .with_message(self.message())
+            .with_config(Config::new().with_color(*COLOR));
 
         self.add_labels(span, &mut report);
         self.add_help(&mut report);
