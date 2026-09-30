@@ -306,11 +306,11 @@ fn materialize_atom<'a>(atom: &GenAtom, arena: &'a Bump) -> Atom<'a> {
     }
 }
 
-fn materialize_var(index: u8, arena: &Bump) -> Variable {
+fn materialize_var(index: u8, arena: &Bump) -> Variable<'_> {
     Variable::User(ident(arena, index))
 }
 
-fn ident(arena: &Bump, index: u8) -> Identifier {
+fn ident(arena: &Bump, index: u8) -> Identifier<'_> {
     let literal = match index % 4 {
         0 => "a",
         1 => "b",
@@ -327,6 +327,6 @@ fn text_slice<'a>(arena: &'a Bump, content: &str) -> lexer::Slice<'a> {
     arena.alloc_str(content).as_bytes().into()
 }
 
-fn regex_slice(arena: &Bump, index: u8) -> lexer::Slice {
+fn regex_slice(arena: &Bump, index: u8) -> lexer::Slice<'_> {
     text_slice(arena, &format!("p{index}"))
 }
