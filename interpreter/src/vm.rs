@@ -54,6 +54,10 @@ pub struct Interpreter<'a> {
     registers: Registers<'a>,
     pub(crate) symbols: SymbolTable<'a>,
     pub(crate) record: Record,
+    /// Unconsumed input left after a regexp `RS` match; cleared on each new file.
+    rs_leftover: StdVec<u8>,
+    /// Cached regexp `RS` automaton (`pattern`, `regex`); invalidated on change.
+    rs_regex_cache: Option<(StdVec<u8>, minrx::Regex)>,
     consts: Consts<'a>,
     mode: ExecMode,
     frames: StdVec<CallFrame>,
@@ -114,6 +118,8 @@ impl<'a> Interpreter<'a> {
             registers: Registers(bumpalo::vec![in code.arena; Value::new_untyped(); n_regs + 1]),
             symbols: code.symbols,
             record: Record::new(),
+            rs_leftover: StdVec::new(),
+            rs_regex_cache: None,
             consts: code.consts,
             mode,
             frames: StdVec::new(),
