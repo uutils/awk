@@ -107,7 +107,14 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
         writeln!(out, "{table}")?;
     }
 
-    let intrp = Interpreter::new(ExecMode::Uu, cg, metadata);
+    // `--posix` / `--traditional` select ExecMode::Posix (RS first-char-only,
+    // FS="" whole-record field, stricter regex). Keep this mapping out of RS-only PRs.
+    let mode = if args.posix || args.traditional {
+        ExecMode::Posix
+    } else {
+        ExecMode::Uu
+    };
+    let intrp = Interpreter::new(mode, cg, metadata);
     AwkRt::new(intrp, bc, &args.read_queue, diagnostics).main_event_loop()?;
 
     Ok(())
