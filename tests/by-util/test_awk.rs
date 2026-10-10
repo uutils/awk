@@ -602,6 +602,117 @@ fn ascii_char_fs_field_split() {
         .stdout_is("foo  bar baz\n");
 }
 
+/// gawk manual "Record Splitting with Standard awk": `RS = "u"`.
+#[test]
+fn rs_single_char_splits_and_sets_rt() {
+    ucmd()
+        .arg(r#"BEGIN { RS = "u" } { print "[" $0 "] RT=[" RT "]" }"#)
+        .pipe_in("AmeliauAnthonyuBill")
+        .succeeds()
+        .stdout_is("[Amelia] RT=[u]\n[Anthony] RT=[u]\n[Bill] RT=[]\n");
+}
+
+/// gawk manual "Record Splitting with gawk": regexp `RS` and `RT`.
+#[test]
+fn rs_regex_manual_example_sets_rt() {
+    ucmd()
+        .arg(r#"BEGIN { RS = "\n|( *[[:upper:]]+ *)" } { print "Record =", $0,"and RT = [" RT "]" }"#)
+        .pipe_in("record 1 AAAA record 2 BBBB record 3\n")
+        .succeeds()
+        .stdout_is(
+            "Record = record 1 and RT = [ AAAA ]\n\
+             Record = record 2 and RT = [ BBBB ]\n\
+             Record = record 3 and RT = [\n\
+             ]\n",
+        );
+}
+
+/// gawk manual "Multiple-Line Records" / empty `RS`: blank-line separated addresses.
+#[test]
+fn rs_empty_blank_line_records_manual_example() {
+    ucmd()
+        .arg(r#"BEGIN { RS = "" ; FS = "\n" } { print "Name is:", $1; print "Address is:", $2; print "City and State are:", $3; print "" }"#)
+        .pipe_in(
+            "Jane Doe\n\
+             123 Main Street\n\
+             Anywhere, SE 12345-6789\n\
+             \n\
+             John Smith\n\
+             456 Tree-lined Avenue\n\
+             Smallville, MW 98765-4321\n",
+        )
+        .succeeds()
+        .stdout_is(
+            "Name is: Jane Doe\n\
+             Address is: 123 Main Street\n\
+             City and State are: Anywhere, SE 12345-6789\n\
+             \n\
+             Name is: John Smith\n\
+             Address is: 456 Tree-lined Avenue\n\
+             City and State are: Smallville, MW 98765-4321\n\
+             \n",
+        );
+}
+
+#[test]
+fn rs_empty_match_does_not_split_characters() {
+    ucmd()
+        .arg(r#"BEGIN { RS = "()" } { print "[" $0 "] RT=[" RT "]" }"#)
+        .pipe_in("abc")
+        .succeeds()
+        .stdout_is("[abc] RT=[]\n");
+}
+
+/// Mid-file switch from regexp `RS` to a single-char `RS` must still consume
+/// bytes left in `rs_leftover` (not re-read past them from the stream).
+#[test]
+fn rs_switch_to_char_consumes_leftover() {
+    ucmd()
+        .arg(
+            r#"BEGIN { RS = "XY" }
+               NR == 1 { print "[" $0 "]"; RS = "\n"; next }
+               { print "[" $0 "]" }"#,
+        )
+        .pipe_in("fooXYbar\nbaz\n")
+        .succeeds()
+        .stdout_is("[foo]\n[bar]\n[baz]\n");
+}
+
+/// `RS = "\n+"` with a separator that straddles the default `BufReader` buffer
+/// (8 KiB) must not emit an extra empty record.
+#[test]
+fn rs_regex_match_at_buffer_end_extends_before_split() {
+    let mut input = vec![b'x'; 8191];
+    input.extend_from_slice(b"\n\ny\n");
+    ucmd()
+        .arg(r#"BEGIN { RS = "\n+" } { print "[" $0 "] RTL=" length(RT) }"#)
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(format!("[{}] RTL=2\n[y] RTL=1\n", "x".repeat(8191)));
+}
+
+/// `RS = ""`: leading newlines are skipped; RT captures separator / trailing runs.
+#[test]
+fn rs_empty_rt_leading_several_and_trailing_newlines() {
+    ucmd()
+        .arg(r#"BEGIN { RS = "" } { print "[" $0 "] RTL=" length(RT) }"#)
+        .pipe_in("\n\na\n\n\nb\n")
+        .succeeds()
+        .stdout_is("[a] RTL=3\n[b] RTL=1\n");
+
+    ucmd()
+        .arg(r#"BEGIN { RS = "" } { print "[" $0 "] RTL=" length(RT) }"#)
+        .pipe_in("a\n\n\nb\n\n\nc\n")
+        .succeeds()
+        .stdout_is("[a] RTL=3\n[b] RTL=3\n[c] RTL=1\n");
+
+    ucmd()
+        .arg(r#"BEGIN { RS = "" } { print "[" $0 "] RTL=" length(RT) }"#)
+        .pipe_in("a\n\n\n")
+        .succeeds()
+        .stdout_is("[a] RTL=3\n");
+}
+
 #[test]
 fn return_stmnt_sets_typedness_eagerly() {
     ucmd()
