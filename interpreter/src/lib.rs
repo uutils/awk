@@ -34,6 +34,8 @@ pub enum InterpreterError {
     ScalarUseOfArrary(AriadneSpan),
     #[error("Attempted to use a scalar as an array value!")]
     ArrayUseOfScalar(AriadneSpan),
+    #[error("Invalid FIELDWIDTHS value!")]
+    InvalidFieldwidths(AriadneSpan),
     #[error("{1}")]
     Regex(AriadneSpan, RegexError),
 }
@@ -48,7 +50,8 @@ impl InterpreterError {
             | Self::UnknownIndFunction(span, _)
             | Self::RecursionDepth(span)
             | Self::ArityMismatch(span, _, _)
-            | Self::UnknownFunction(span) => self.add_diagnostic_cached(store, span.clone()),
+            | Self::UnknownFunction(span)
+            | Self::InvalidFieldwidths(span) => self.add_diagnostic_cached(store, span.clone()),
         }
     }
 }
@@ -66,7 +69,8 @@ impl Diagnostic for InterpreterError {
             | &Self::UnknownIndFunction(AriadneSpan(_, span), _)
             | &Self::RecursionDepth(AriadneSpan(_, span))
             | &Self::ArityMismatch(AriadneSpan(_, span), _, _)
-            | &Self::UnknownFunction(AriadneSpan(_, span)) => Some(span),
+            | &Self::UnknownFunction(AriadneSpan(_, span))
+            | &Self::InvalidFieldwidths(AriadneSpan(_, span)) => Some(span),
         }
     }
     fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {
@@ -106,6 +110,11 @@ impl Diagnostic for InterpreterError {
                 `a / b` --> `(+b != 0) ? (a / b) : +\"+nan\"`.\nNote the importance of the `+` \
                 operator, which forces values into numbers. Otherwise, some\nvalues of `b`, like \
                 an empty string, would still trigger this error. It also parses the \"+nan\"."
+            }
+            Self::InvalidFieldwidths(_) => {
+                "FIELDWIDTHS must be a blank-separated list of positive widths, optional \
+                `skip:width` pairs, and at most one trailing `*` / `skip:*`.\nZero, negative, \
+                non-integer, or misplaced `*` values are rejected (matching gawk)."
             }
             _ => return,
         };

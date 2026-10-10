@@ -185,7 +185,7 @@ impl<'a> Interpreter<'a> {
                         };
                         (new_val, observed)
                     })?;
-                    Place::new(arg, ty).write(self, new_val);
+                    Place::new(arg, ty).write(self, new_val, self.get_span(metadata))?;
                     self.write_reg(dest, observed);
                 }
                 Instruction::CopyS { dest, arg, ty } => {
@@ -310,7 +310,7 @@ impl<'a> Interpreter<'a> {
                     debug_assert!(matches!(ty_place, PlaceTy::UserVal | PlaceTy::BtInVal));
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
 
-                    Place::new(var, ty_place).write(self, val.clone());
+                    Place::new(var, ty_place).write(self, val.clone(), self.get_span(metadata))?;
                     self.write_reg(dest, val);
                 }
                 Instruction::StoreF { dest, src, arg, ty, tys } => {
@@ -478,22 +478,31 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Writes and triggers side-effects of built-in variables on write.
-    pub fn sync_btin_write(&mut self, sys: BuiltInVar, val: Value<'a>) {
+    pub fn sync_btin_write(
+        &mut self,
+        sys: BuiltInVar,
+        val: Value<'a>,
+        span: AriadneSpan,
+    ) -> Result<()> {
         // Apply side effects before writing the value
         match sys {
             BuiltInVar::Nf => {
                 // TODO: errors
                 let n = usize::try_from(val.to_int()).unwrap();
                 let _ = self.record.resize(n, &mut self.symbols, self.mode);
-                return; // auto-updated
+                return Ok(()); // auto-updated
             }
             BuiltInVar::Fs => self.record.enable_fs_splitting(&val, self.mode),
             BuiltInVar::Fpat => self.record.enable_fpat_splitting(),
-            BuiltInVar::Fieldwidths => self.record.enable_fieldwidths_splitting(),
+            BuiltInVar::Fieldwidths => self
+                .record
+                .enable_fieldwidths_splitting(&val)
+                .map_err(|()| InterpreterError::InvalidFieldwidths(span))?,
             BuiltInVar::Ofs => self.record.invalidate(),
             _ => {}
         }
         *self.symbols.get_btin_mut(sys) = val;
+        Ok(())
     }
 
     /// Convenience wrapper to add errors from context metadata.
@@ -821,11 +830,22 @@ impl Place {
     }
 
     #[inline(always)]
-    fn write<'a>(self, intrp: &mut Interpreter<'a>, val: Value<'a>) {
+    fn write<'a>(
+        self,
+        intrp: &mut Interpreter<'a>,
+        val: Value<'a>,
+        span: AriadneSpan,
+    ) -> Result<()> {
         match self.ty {
-            PlaceTy::Reg => *intrp.read_reg_mut(unsafe { self.arg.reg }) = val,
-            PlaceTy::UserVal => *intrp.symbols.user_mut(unsafe { self.arg.usr }) = val,
-            PlaceTy::BtInVal => intrp.sync_btin_write(unsafe { self.arg.sys }, val),
+            PlaceTy::Reg => {
+                *intrp.read_reg_mut(unsafe { self.arg.reg }) = val;
+                Ok(())
+            }
+            PlaceTy::UserVal => {
+                *intrp.symbols.user_mut(unsafe { self.arg.usr }) = val;
+                Ok(())
+            }
+            PlaceTy::BtInVal => intrp.sync_btin_write(unsafe { self.arg.sys }, val, span),
         }
     }
 }

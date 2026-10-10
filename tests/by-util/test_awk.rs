@@ -603,6 +603,149 @@ fn ascii_char_fs_field_split() {
 }
 
 #[test]
+fn fieldwidths_basic_split() {
+    ucmd()
+        .arg(r#"BEGIN { FIELDWIDTHS = "2 3 4"; $0 = "aabbbcccc"; print NF, $1, $2, $3 }"#)
+        .succeeds()
+        .stdout_is("3 aa bbb cccc\n");
+}
+
+#[test]
+fn fieldwidths_partial_and_short_records() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                FIELDWIDTHS = "2 3 4"
+                $0 = "aabbb"; print NF, $1, $2
+                $0 = "aab"; print NF, $1, $2
+                $0 = "aabbbccccddd"; print NF, $1, $2, $3
+            }"#,
+        )
+        .succeeds()
+        .stdout_is("2 aa bbb\n2 aa b\n3 aa bbb cccc\n");
+}
+
+#[test]
+fn fieldwidths_trailing_star() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                FIELDWIDTHS = "2 3 4 *"
+                $0 = "aabbbccccddd"; print NF, $1, $2, $3, $4
+                $0 = "aabbbcccc"; print NF, $1, $2, $3
+            }"#,
+        )
+        .succeeds()
+        .stdout_is("4 aa bbb cccc ddd\n3 aa bbb cccc\n");
+}
+
+/// gawk manual "Allowing trailing data": `FIELDWIDTHS = "2 2 *"`.
+#[test]
+fn fieldwidths_manual_trailing_star_example() {
+    ucmd()
+        .arg(r#"BEGIN { FIELDWIDTHS = "2 2 *"; $0 = "1234abcdefghi"; print NF, $1, $2, $3 }"#)
+        .succeeds()
+        .stdout_is("3 12 34 abcdefghi\n");
+}
+
+#[test]
+fn fieldwidths_skip_and_star() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                FIELDWIDTHS = "3:2 1:2 *"
+                $0 = "1234567890"
+                print NF, $1, $2, $3
+            }"#,
+        )
+        .succeeds()
+        .stdout_is("3 45 78 90\n");
+}
+
+/// gawk manual "Skipping intervening": multi-field `skip:width` list.
+#[test]
+fn fieldwidths_manual_skip_intervening_example() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                FIELDWIDTHS = "8 1:5 4:7 6 1:6 1:6 2:33"
+                $0 = "hzang    ttyV3     6:37pm    50                -csh"
+                print $1, $2, $4
+                $0 = "eklye    ttyV5     9:53pm            7      1  em thes.tex"
+                print $1, $2, $4
+            }"#,
+        )
+        .succeeds()
+        .stdout_is("hzang    ttyV3     50\neklye    ttyV5       \n");
+}
+
+/// gawk manual "Processing Fixed-Width Data": `FIELDWIDTHS = "9 6 10 6 7 7 35"`.
+/// Prints fields only (idle conversion uses `sub()`, which is not implemented yet).
+#[test]
+fn fieldwidths_manual_fixed_width_columns_example() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                FIELDWIDTHS = "9 6 10 6 7 7 35"
+                $0 = "hzang    ttyV3     6:37pm    50                -csh"
+                print "[" $1 "]", "[" $2 "]", "[" $4 "]"
+                $0 = "eklye    ttyV5     9:53pm            7      1  em thes.tex"
+                print "[" $1 "]", "[" $2 "]", "[" $4 "]"
+            }"#,
+        )
+        .succeeds()
+        .stdout_is("[hzang    ] [ttyV3 ] [    50]\n[eklye    ] [ttyV5 ] [      ]\n");
+}
+
+#[test]
+fn fieldwidths_skip_past_end_yields_empty_field() {
+    ucmd()
+        .arg(r#"BEGIN { FIELDWIDTHS = "5:2"; $0 = "ab"; print NF; print "[" $1 "]" }"#)
+        .succeeds()
+        .stdout_is("1\n[]\n");
+}
+
+/// gawk: a skip past EOF with trailing `*` still yields one empty field.
+#[test]
+fn fieldwidths_skip_star_past_end_yields_empty_field() {
+    ucmd()
+        .arg(r#"BEGIN { FIELDWIDTHS = "5:*"; $0 = "ab"; print NF; print "[" $1 "]" }"#)
+        .succeeds()
+        .stdout_is("1\n[]\n");
+}
+
+#[test]
+fn fieldwidths_invalid_spec_is_fatal() {
+    ucmd()
+        .arg(r#"BEGIN { FIELDWIDTHS = "2 -1"; print "alive" }"#)
+        .fails_with_code(1)
+        .stderr_contains("Invalid FIELDWIDTHS value");
+}
+
+#[test]
+fn fieldwidths_empty_disables_fs_fields() {
+    ucmd()
+        .arg(r#"BEGIN { FIELDWIDTHS = ""; $0 = "a b c"; print NF }"#)
+        .succeeds()
+        .stdout_is("0\n");
+}
+
+#[test]
+fn fieldwidths_overridden_by_fs() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                FIELDWIDTHS = "1 1 1"
+                FS = ":"
+                $0 = "a:b:c"
+                print NF, $1, $2, $3
+            }"#,
+        )
+        .succeeds()
+        .stdout_is("3 a b c\n");
+}
+
+#[test]
 fn return_stmnt_sets_typedness_eagerly() {
     ucmd()
         .arg("function f(x) { return a } BEGIN { a[f(a)] = 1; }")
