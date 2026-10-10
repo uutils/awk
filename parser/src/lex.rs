@@ -263,6 +263,7 @@ impl TokenExt for Token<'_> {
                 | Token::FpatVariable
                 | Token::FieldwidthsVariable
                 | Token::RsVariable
+                | Token::RtVariable
                 | Token::OfsVariable
                 | Token::OrsVariable
                 | Token::FilenameVariable

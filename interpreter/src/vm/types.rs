@@ -252,6 +252,33 @@ impl<'a> Value<'a> {
         self.0.matches_regex(&pattern.0, mode)
     }
 
+    /// Find the first non-empty match of this regex `Value` in `haystack`.
+    ///
+    /// Compiles and caches the automaton on `AwkRegex` (same path as
+    /// `matches_regex`). Returns `Ok(None)` if `self` is not a regex value.
+    pub fn find_nonempty_match(
+        &self,
+        haystack: &[u8],
+        mode: ExecMode,
+    ) -> Result<Option<std::ops::Range<usize>>, RegexError> {
+        let AwkValue::Regex(pattern) = &self.0 else {
+            return Ok(None);
+        };
+        let mut slot = pattern.automaton.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(regex::automaton(pattern, mode, false)?);
+        }
+        let re = slot.as_ref().expect("regex automaton just ensured");
+        for m in re.find_iter(haystack) {
+            let m = m?;
+            let range: std::ops::Range<usize> = m.range().into();
+            if !range.is_empty() {
+                return Ok(Some(range));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn array_len(&self) -> Option<usize> {
         self.0.array_len()
     }

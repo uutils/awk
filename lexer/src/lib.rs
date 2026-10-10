@@ -195,6 +195,8 @@ pub enum Token<'a> {
     FieldwidthsVariable,
     #[regex("(awk::)?RS", accept_operator)]
     RsVariable,
+    #[regex("(awk::)?RT", accept_operator)]
+    RtVariable,
     #[regex("(awk::)?OFS", accept_operator)]
     OfsVariable,
     #[regex("(awk::)?ORS", accept_operator)]
