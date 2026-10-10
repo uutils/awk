@@ -94,6 +94,7 @@ pub enum Variable<'a> {
     Fpat,
     Fieldwidths,
     Rs,
+    Rt,
     Ofs,
     Ors,
     Filename,
