@@ -111,6 +111,8 @@ pub struct Record {
     raw: Vec<u8>,
     fields: Option<Vec<Span>>,
     split_mode: SplitMode,
+    /// Parsed `FIELDWIDTHS` designators; filled on assignment, used per record.
+    fieldwidths: SmallVec<[FieldWidth; 8]>,
 }
 
 // TODO: add variants for overridden modes (GNU CSV ext) and/or to `ExecMode`.
@@ -347,9 +349,14 @@ impl Record {
         self.invalidate();
     }
 
-    pub fn enable_fieldwidths_splitting(&mut self) {
+    /// Enables FIELDWIDTHS mode after validating/parsing `val` once.
+    ///
+    /// Returns `Err(())` for an invalid spec (caller should fatal like gawk).
+    pub fn enable_fieldwidths_splitting(&mut self, val: &Value) -> Result<(), ()> {
+        self.fieldwidths = parse_fieldwidths(&val.to_bytes()).ok_or(())?;
         self.split_mode = SplitMode::Fieldwidths;
         self.invalidate();
+        Ok(())
     }
 
     /// Splits the fields if unsplit and grants access to the inner buffer of
@@ -373,12 +380,56 @@ impl Record {
                 SplitMode::Fpat => {
                     return self.fpat_regex_split(&symbols.fpat.to_bytes(), mode);
                 }
-                SplitMode::Fieldwidths => {
-                    let _fieldwidths = symbols.fieldwidths.to_bytes();
-                    todo!()
-                }
+                SplitMode::Fieldwidths => self.fieldwidths_split(),
             }
         })
+    }
+
+    /// Fixed-width splitting via `FIELDWIDTHS` (gawk extension).
+    ///
+    /// Uses the designators cached at assignment time. Counts are in **bytes**
+    /// (matching `LANG=C` gawk). A skip that reaches EOF still yields one empty
+    /// field for that designator (including a trailing `*`).
+    fn fieldwidths_split(&mut self) -> &mut Vec<Span> {
+        let specs = self.fieldwidths.clone();
+        let (raw, buf) = self.init_fields();
+        let len = raw.len();
+        let mut pos = 0usize;
+
+        for spec in specs {
+            if pos >= len {
+                break;
+            }
+
+            if spec.skip > 0 {
+                pos = pos.saturating_add(spec.skip as usize).min(len);
+            }
+
+            match spec.kind {
+                FieldWidthKind::Rest => {
+                    // Empty when skip already consumed the record (gawk: NF=1, `$1=""`).
+                    buf.push(Span::from(pos..len));
+                    break;
+                }
+                FieldWidthKind::Width(width) => {
+                    let width = width as usize;
+                    if pos >= len {
+                        // A leading skip consumed the rest of the record: still
+                        // materialize an empty field, then stop.
+                        buf.push(Span::from(pos..pos));
+                        break;
+                    }
+                    let end = pos.saturating_add(width).min(len);
+                    buf.push(Span::from(pos..end));
+                    let got = end - pos;
+                    pos = end;
+                    if got < width {
+                        break;
+                    }
+                }
+            }
+        }
+        buf
     }
 
     /// Initializes fields and assigns `$0`. Reuses existing buffer allocation.
@@ -670,6 +721,84 @@ const fn to_span(start: usize) -> Span {
     Span { start, end: start + 1 }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum FieldWidthKind {
+    Width(u32),
+    Rest,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FieldWidth {
+    skip: u32,
+    kind: FieldWidthKind,
+}
+
+/// Parses a `FIELDWIDTHS` value into skip/width designators.
+///
+/// Grammar: blank-separated tokens, each `width`, `skip:width`, `*`, or
+/// `skip:*`. `*` / `skip:*` may appear only as the final token. Returns `None`
+/// for invalid specs (negative/zero widths, misplaced `*`, junk, etc.).
+fn parse_fieldwidths(spec: &[u8]) -> Option<SmallVec<[FieldWidth; 8]>> {
+    let mut specs: SmallVec<[FieldWidth; 8]> = SmallVec::new();
+    for token in spec
+        .split(|&b| matches!(b, b' ' | b'\t'))
+        .filter(|t| !t.is_empty())
+    {
+        if specs
+            .last()
+            .is_some_and(|s| matches!(s.kind, FieldWidthKind::Rest))
+        {
+            return None;
+        }
+        specs.push(parse_fieldwidths_token(token)?);
+    }
+    Some(specs)
+}
+
+fn parse_fieldwidths_token(token: &[u8]) -> Option<FieldWidth> {
+    if token == b"*" {
+        return Some(FieldWidth { skip: 0, kind: FieldWidthKind::Rest });
+    }
+
+    if let Some(colon) = memchr::memchr(b':', token) {
+        let skip = parse_fieldwidths_u32(&token[..colon])?;
+        if skip == 0 {
+            return None;
+        }
+        let rest = &token[colon + 1..];
+        if rest == b"*" {
+            Some(FieldWidth { skip, kind: FieldWidthKind::Rest })
+        } else {
+            let width = parse_fieldwidths_u32(rest)?;
+            (width != 0).then_some(FieldWidth { skip, kind: FieldWidthKind::Width(width) })
+        }
+    } else {
+        let width = parse_fieldwidths_u32(token)?;
+        (width != 0).then_some(FieldWidth { skip: 0, kind: FieldWidthKind::Width(width) })
+    }
+}
+
+/// Parses a whole token as an optional-`+` unsigned integer (no trailing junk).
+fn parse_fieldwidths_u32(bytes: &[u8]) -> Option<u32> {
+    let mut i = 0;
+    if i < bytes.len() && bytes[i] == b'+' {
+        i += 1;
+    }
+    if i >= bytes.len() || !bytes[i].is_ascii_digit() {
+        return None;
+    }
+
+    let mut n = 0u32;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            return None;
+        }
+        n = n.checked_mul(10)?.checked_add(u32::from(bytes[i] - b'0'))?;
+        i += 1;
+    }
+    Some(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +857,46 @@ mod tests {
             Some(Value::new_string(b"b.txt".as_slice().into()))
         );
         assert_eq!(st.argv.array_len(), Some(3));
+    }
+
+    #[test]
+    fn parse_fieldwidths_basic_and_extensions() {
+        let specs = parse_fieldwidths(b"2 3 4").unwrap();
+        assert_eq!(specs.len(), 3);
+        assert!(matches!(
+            specs.as_slice(),
+            [
+                FieldWidth { skip: 0, kind: FieldWidthKind::Width(2) },
+                FieldWidth { skip: 0, kind: FieldWidthKind::Width(3) },
+                FieldWidth { skip: 0, kind: FieldWidthKind::Width(4) },
+            ]
+        ));
+
+        let specs = parse_fieldwidths(b"3:2 1:2 *").unwrap();
+        assert!(matches!(
+            specs.as_slice(),
+            [
+                FieldWidth { skip: 3, kind: FieldWidthKind::Width(2) },
+                FieldWidth { skip: 1, kind: FieldWidthKind::Width(2) },
+                FieldWidth { skip: 0, kind: FieldWidthKind::Rest },
+            ]
+        ));
+
+        let specs = parse_fieldwidths(b"2:*").unwrap();
+        assert!(matches!(
+            specs.as_slice(),
+            [FieldWidth { skip: 2, kind: FieldWidthKind::Rest }]
+        ));
+
+        assert!(parse_fieldwidths(b"").unwrap().is_empty());
+        assert!(parse_fieldwidths(b"  2  3  ").is_some());
+        assert!(parse_fieldwidths(b"+2 +3").is_some());
+
+        assert!(parse_fieldwidths(b"2 -1 2").is_none());
+        assert!(parse_fieldwidths(b"2 0 2").is_none());
+        assert!(parse_fieldwidths(b"0:2").is_none());
+        assert!(parse_fieldwidths(b"2 * 2").is_none());
+        assert!(parse_fieldwidths(b"2 x 2").is_none());
+        assert!(parse_fieldwidths(b"2.5 2").is_none());
     }
 }
