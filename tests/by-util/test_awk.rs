@@ -602,6 +602,35 @@ fn ascii_char_fs_field_split() {
         .stdout_is("foo  bar baz\n");
 }
 
+/// gawk `rscompat`: under `--traditional`, multi-character `RS` uses only the
+/// first character (not a regexp). Requires `ExecMode::Posix` from `-c`.
+#[test]
+fn traditional_rs_uses_first_character_only() {
+    ucmd()
+        .args(&["-c", r#"BEGIN { RS = "bar" } { print $1, $2 }"#])
+        .pipe_in("0foobar0faz\n1foobar1faz")
+        .succeeds()
+        .stdout_is("0foo \nar0faz 1foo\nar1faz \n");
+}
+
+#[test]
+fn posix_rs_uses_first_character_only() {
+    ucmd()
+        .args(&["-P", r#"BEGIN { RS = "bar" } { print $1, $2 }"#])
+        .pipe_in("0foobar0faz\n1foobar1faz")
+        .succeeds()
+        .stdout_is("0foo \nar0faz 1foo\nar1faz \n");
+}
+
+/// POSIX `FS = ""`: the whole record is `$1` (not per-character fields).
+#[test]
+fn posix_empty_fs_is_whole_record_field() {
+    ucmd()
+        .args(&["-P", r#"BEGIN { FS = ""; $0 = "abc"; print NF, $1 }"#])
+        .succeeds()
+        .stdout_is("1 abc\n");
+}
+
 #[test]
 fn return_stmnt_sets_typedness_eagerly() {
     ucmd()
