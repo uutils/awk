@@ -71,10 +71,15 @@ impl Interpreter<'_> {
     // TODO: consider caching the result of all this validation, so we can
     // directly dispatch to the correct functions and avoid extra writes to RT.
     // TODO: on Windows, we must strip `\r` depending on BINMODE.
-    pub fn read_record(&mut self, reader: impl BufRead) -> Result<bool> {
+    pub fn read_record(&mut self, mut reader: impl BufRead) -> Result<bool> {
+        // At EOF, keep NR, FNR and $0 of the last record for END
+        if reader.fill_buf()?.is_empty() {
+            return Ok(false);
+        }
+
         // Update vars
         // TODO: optimize and make more ergonomic
-        self.symbols.nr = &self.symbols.fnr + &Value::new_int(1);
+        self.symbols.nr = &self.symbols.nr + &Value::new_int(1);
         self.symbols.fnr = &self.symbols.fnr + &Value::new_int(1);
 
         let rs = self.symbols.rs.clone();

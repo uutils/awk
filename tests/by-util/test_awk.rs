@@ -899,3 +899,32 @@ fn bare_regex_in_expression_matches_record() {
         .succeeds()
         .stdout_is("y 2\n2\n");
 }
+
+#[test]
+fn end_sees_last_record() {
+    ucmd()
+        .arg(r"{ s += $2 } END { print NR, FNR, $0, s / NR }")
+        .pipe_in("a 1\nb 2\nc 6\n")
+        .succeeds()
+        .stdout_is("3 3 c 6 3\n");
+}
+
+#[test]
+fn end_only_program_reads_input() {
+    ucmd()
+        .arg("END { print NR, $1 }")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("2 b\n");
+}
+
+#[test]
+fn nr_counts_across_files() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("a", "x\ny\n");
+    ts.fixtures.write("b", "z\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["{ print NR, FNR }", "a", "b"])
+        .succeeds()
+        .stdout_is("1 1\n2 2\n3 1\n");
+}

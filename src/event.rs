@@ -106,7 +106,12 @@ impl<'a> AwkRt<'a> {
 
     pub fn rule_event_loop(&mut self) -> Result<()> {
         let range = self.bc.rules_code();
-        if range.is_empty() {
+        // Input is read unless the program has only BEGIN rules
+        if range.is_empty()
+            && self.bc.end_code().is_empty()
+            && self.bc.begin_file_code().is_empty()
+            && self.bc.end_file_code().is_empty()
+        {
             return Ok(());
         }
 
