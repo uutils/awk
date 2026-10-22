@@ -65,7 +65,6 @@ impl Interpreter<'_> {
         self.symbols.filename = Value::new_string(name.into());
         self.symbols.errno = Value::new_int(errno);
         self.symbols.fnr = Value::new_int(0);
-        self.record.clear();
     }
 
     // TODO: consider caching the result of all this validation, so we can

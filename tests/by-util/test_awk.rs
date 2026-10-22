@@ -919,6 +919,30 @@ fn end_only_program_reads_input() {
 }
 
 #[test]
+fn end_after_empty_file() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("a", "x y\nlast z\n");
+    ts.fixtures.write("empty", "");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["END { print NR, FNR, \"[\" $0 \"]\", NF }", "empty"])
+        .succeeds()
+        .stdout_is("0 0 [] 0\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["END { print NR, FNR, \"[\" $0 \"]\", NF }", "a", "empty"])
+        .succeeds()
+        .stdout_is("2 0 [last z] 2\n");
+}
+
+#[test]
+fn end_after_missing_trailing_newline() {
+    ucmd()
+        .arg(r#"END { print NR, FNR, "[" $0 "]", NF }"#)
+        .pipe_in("p\nq r")
+        .succeeds()
+        .stdout_is("2 2 [q r] 2\n");
+}
+
+#[test]
 fn nr_counts_across_files() {
     let ts = uutests::util::TestScenario::new("awk");
     ts.fixtures.write("a", "x\ny\n");
