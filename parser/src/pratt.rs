@@ -9,9 +9,9 @@ use lexer::{Span, Token};
 use crate::{
     ArrayPlace, IdentifierExt, Lexer, Parser, Result,
     ast::{
-        ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Expr, ExprNode,
-        Getline, Place, Redirection, Ternary, UnaryOperator, UnaryPlaceOperator, Variable,
-        WriteKind,
+        ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, BuiltinFunction,
+        Expr, ExprNode, Getline, Place, Redirection, Ternary, UnaryOperator, UnaryPlaceOperator,
+        Variable, WriteKind,
     },
     diagnostics::ParsingError,
     lex::{SpanExt, TokenExt},
@@ -358,6 +358,13 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     lex.span().since(anchor),
                 ))
             }
+        } else if next == Token::Length && !lex.peek_is(&Token::OpenParent) {
+            // POSIX: `length` without an argument list is `length($0)`.
+            Ok(Expr::node(
+                ExprNode::BuiltinCall(BuiltinFunction::Length, Vec::new_in(self.parser.arena)),
+                self.parser,
+                lex.span().since(anchor),
+            ))
         } else if let Some(builtin) = next.maps_to_builtin() {
             self.parser
                 .parse_function_call::<false>(lex, |args| ExprNode::BuiltinCall(builtin, args))
