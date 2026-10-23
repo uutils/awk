@@ -58,13 +58,23 @@ impl From<&[u8]> for FilePath {
 }
 
 impl Interpreter<'_> {
-    pub fn begin_file_prelude(&mut self, f: Option<&Path>, res: Option<&io::Error>) {
+    pub fn begin_file_prelude(
+        &mut self,
+        f: Option<&Path>,
+        res: Option<&io::Error>,
+        has_begin_file: bool,
+    ) {
         let name = f.map_or(b"-".as_slice(), |p| p.as_os_str().as_encoded_bytes());
         let errno = res.map_or(0, |e| e.raw_os_error().unwrap_or(-1) as _);
 
         self.symbols.filename = Value::new_string(name.into());
         self.symbols.errno = Value::new_int(errno);
         self.symbols.fnr = Value::new_int(0);
+        // Like gawk, BEGINFILE never sees the previous file's last record.
+        // Without BEGINFILE, $0 survives an empty last file for END.
+        if has_begin_file {
+            self.record.clear();
+        }
     }
 
     // TODO: consider caching the result of all this validation, so we can

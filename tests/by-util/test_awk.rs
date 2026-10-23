@@ -934,6 +934,27 @@ fn end_after_empty_file() {
 }
 
 #[test]
+fn beginfile_does_not_see_previous_record() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("a", "x y\nlast z\n");
+    ts.fixtures.write("b", "w\n");
+    ts.fixtures.write("empty", "");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["BEGINFILE { print FILENAME, \"[\" $0 \"]\", NF }", "a", "b"])
+        .succeeds()
+        .stdout_is("a [] 0\nb [] 0\n");
+    // gawk clears $0 for BEGINFILE, so END after an empty last file sees it empty
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&[
+            "BEGINFILE { n++ } END { print n, \"[\" $0 \"]\", NF }",
+            "a",
+            "empty",
+        ])
+        .succeeds()
+        .stdout_is("2 [] 0\n");
+}
+
+#[test]
 fn end_after_missing_trailing_newline() {
     ucmd()
         .arg(r#"END { print NR, FNR, "[" $0 "]", NF }"#)

@@ -79,8 +79,9 @@ impl<'a> AwkRt<'a> {
         path: Option<&Path>,
         res: Option<&io::Error>,
     ) -> Result<bool> {
-        self.intrp.begin_file_prelude(path, res);
-        match self.drive(self.bc.begin_file_code())? {
+        let code = self.bc.begin_file_code();
+        self.intrp.begin_file_prelude(path, res, !code.is_empty());
+        match self.drive(code)? {
             CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
