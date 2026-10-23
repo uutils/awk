@@ -56,6 +56,64 @@ enum AwkValue<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Display, From)]
 pub struct AwkNum(f64);
 
+/// The numeric value of a string, read the way awk reads it: leading blanks
+/// are skipped and the longest prefix that is a decimal number counts, so
+/// `" 12 "` is 12, `"3x"` is 3 and `"x"` is 0. Like gawk, `inf` and `nan`
+/// are only recognized with a sign and nothing else but blanks around them.
+fn str_to_num(s: &[u8]) -> f64 {
+    let is_blank = |b: &u8| matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r');
+    let s = &s[s.iter().take_while(|b| is_blank(b)).count()..];
+    let digits = |from: usize| {
+        s.get(from..)
+            .map_or(0, |t| t.iter().take_while(|b| b.is_ascii_digit()).count())
+    };
+
+    let mut end = usize::from(matches!(s.first(), Some(b'+' | b'-')));
+    let int = digits(end);
+    end += int;
+    let mut frac = 0;
+    if s.get(end) == Some(&b'.') {
+        frac = digits(end + 1);
+        end += 1 + frac;
+    }
+    if int + frac == 0 {
+        return signed_special(s, &is_blank).unwrap_or(0.);
+    }
+    if matches!(s.get(end), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(s.get(end + 1), Some(b'+' | b'-')));
+        let exp = digits(end + 1 + sign);
+        if exp > 0 {
+            end += 1 + sign + exp;
+        }
+    }
+    str::from_utf8(&s[..end])
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0.)
+}
+
+/// `+inf`, `-inf`, `+nan` or `-nan`, in any case, followed only by blanks.
+fn signed_special(s: &[u8], is_blank: &impl Fn(&u8) -> bool) -> Option<f64> {
+    let (sign, rest) = s.split_first()?;
+    let negative = match sign {
+        b'+' => false,
+        b'-' => true,
+        _ => return None,
+    };
+    let (word, tail) = rest.split_at_checked(3)?;
+    if !tail.iter().all(is_blank) {
+        return None;
+    }
+    let value = if word.eq_ignore_ascii_case(b"inf") {
+        f64::INFINITY
+    } else if word.eq_ignore_ascii_case(b"nan") {
+        f64::NAN
+    } else {
+        return None;
+    };
+    Some(if negative { -value } else { value })
+}
+
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AwkStr([u8]);
@@ -275,10 +333,7 @@ impl<'a> AwkValue<'a> {
             &Self::Float(AwkNum(f)) => f,
             &Self::Int(AwkInt(n)) => n as f64,
             &Self::Bool(AwkBool(b)) => b as usize as f64,
-            Self::String(s) => str::from_utf8(s)
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0.),
+            Self::String(s) => str_to_num(s),
             _ => 0.,
         }
     }
