@@ -183,47 +183,47 @@ pub enum Token<'a> {
     Lshift,
     #[token("rshift", |lex| parse_non_posix_keyword(lex, Token::Rshift))]
     Rshift,
-    #[regex("(awk::)?NR", accept_expression)]
+    #[regex("(awk::)?NR", accept_operator)]
     NrVariable,
-    #[regex("(awk::)?NF", accept_expression)]
+    #[regex("(awk::)?NF", accept_operator)]
     NfVariable,
-    #[regex("(awk::)?FS", accept_expression)]
+    #[regex("(awk::)?FS", accept_operator)]
     FsVariable,
-    #[regex("(awk::)?FPAT", accept_expression)]
+    #[regex("(awk::)?FPAT", accept_operator)]
     FpatVariable,
-    #[regex("(awk::)?FIELDWIDTHS", accept_expression)]
+    #[regex("(awk::)?FIELDWIDTHS", accept_operator)]
     FieldwidthsVariable,
-    #[regex("(awk::)?RS", accept_expression)]
+    #[regex("(awk::)?RS", accept_operator)]
     RsVariable,
-    #[regex("(awk::)?OFS", accept_expression)]
+    #[regex("(awk::)?OFS", accept_operator)]
     OfsVariable,
-    #[regex("(awk::)?ORS", accept_expression)]
+    #[regex("(awk::)?ORS", accept_operator)]
     OrsVariable,
-    #[regex("(awk::)?FILENAME", accept_expression)]
+    #[regex("(awk::)?FILENAME", accept_operator)]
     FilenameVariable,
-    #[regex("(awk::)?ARGC", accept_expression)]
+    #[regex("(awk::)?ARGC", accept_operator)]
     ArgcVariable,
-    #[regex("(awk::)?ARGV", accept_expression)]
+    #[regex("(awk::)?ARGV", accept_operator)]
     ArgvVariable,
-    #[regex("(awk::)?SUBSEP", accept_expression)]
+    #[regex("(awk::)?SUBSEP", accept_operator)]
     SubsepVariable,
-    #[regex("(awk::)?FNR", accept_expression)]
+    #[regex("(awk::)?FNR", accept_operator)]
     FnrVariable,
-    #[regex("(awk::)?ARGIND")]
+    #[regex("(awk::)?ARGIND", accept_operator)]
     ArgindVariable,
-    #[regex("(awk::)?OFMT", accept_expression)]
+    #[regex("(awk::)?OFMT", accept_operator)]
     OfmtVariable,
-    #[regex("(awk::)?RSTART", accept_expression)]
+    #[regex("(awk::)?RSTART", accept_operator)]
     RstartVariable,
-    #[regex("(awk::)?RLENGTH", accept_expression)]
+    #[regex("(awk::)?RLENGTH", accept_operator)]
     RlengthVariable,
-    #[regex("(awk::)?ENVIRON", accept_expression)]
+    #[regex("(awk::)?ENVIRON", accept_operator)]
     EnvironVariable,
-    #[regex("(awk::)?PROCINFO", accept_expression)]
+    #[regex("(awk::)?PROCINFO", accept_operator)]
     ProcinfoVariable,
-    #[regex("(awk::)?SYMTAB", accept_expression)]
+    #[regex("(awk::)?SYMTAB", accept_operator)]
     SymtabVariable,
-    #[regex("(awk::)?FUNCTAB", accept_expression)]
+    #[regex("(awk::)?FUNCTAB", accept_operator)]
     FunctabVariable,
     #[regex("(?&identifier)", Identifier::parse::<0>)]
     Identifier(Identifier<'a>),
