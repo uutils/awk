@@ -107,7 +107,7 @@ pub enum Token<'a> {
     #[token("function", accept_expression)]
     #[token("func", |lex| parse_non_posix_keyword(lex, Token::Function))]
     Function,
-    #[token("length", accept_expression)]
+    #[token("length", accept_operator)]
     Length,
     #[token("substr", accept_expression)]
     Substr,

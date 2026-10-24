@@ -899,3 +899,12 @@ fn bare_regex_in_expression_matches_record() {
         .succeeds()
         .stdout_is("y 2\n2\n");
 }
+
+#[test]
+fn length_without_parentheses_is_length_of_record() {
+    ucmd()
+        .arg("length > 2 { print length, length / 2 } BEGIN { print length }")
+        .pipe_in("ab\nabcd\nxyz\n")
+        .succeeds()
+        .stdout_only("0\n4 2\n3 1.5\n");
+}
