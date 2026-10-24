@@ -79,8 +79,9 @@ impl<'a> AwkRt<'a> {
         path: Option<&Path>,
         res: Option<&io::Error>,
     ) -> Result<bool> {
-        self.intrp.begin_file_prelude(path, res);
-        match self.drive(self.bc.begin_file_code())? {
+        let code = self.bc.begin_file_code();
+        self.intrp.begin_file_prelude(path, res, !code.is_empty());
+        match self.drive(code)? {
             CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
@@ -106,7 +107,12 @@ impl<'a> AwkRt<'a> {
 
     pub fn rule_event_loop(&mut self) -> Result<()> {
         let range = self.bc.rules_code();
-        if range.is_empty() {
+        // Input is read unless the program has only BEGIN rules
+        if range.is_empty()
+            && self.bc.end_code().is_empty()
+            && self.bc.begin_file_code().is_empty()
+            && self.bc.end_file_code().is_empty()
+        {
             return Ok(());
         }
 

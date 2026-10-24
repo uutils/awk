@@ -58,23 +58,37 @@ impl From<&[u8]> for FilePath {
 }
 
 impl Interpreter<'_> {
-    pub fn begin_file_prelude(&mut self, f: Option<&Path>, res: Option<&io::Error>) {
+    pub fn begin_file_prelude(
+        &mut self,
+        f: Option<&Path>,
+        res: Option<&io::Error>,
+        has_begin_file: bool,
+    ) {
         let name = f.map_or(b"-".as_slice(), |p| p.as_os_str().as_encoded_bytes());
         let errno = res.map_or(0, |e| e.raw_os_error().unwrap_or(-1) as _);
 
         self.symbols.filename = Value::new_string(name.into());
         self.symbols.errno = Value::new_int(errno);
         self.symbols.fnr = Value::new_int(0);
-        self.record.clear();
+        // Like gawk, BEGINFILE never sees the previous file's last record.
+        // Without BEGINFILE, $0 survives an empty last file for END.
+        if has_begin_file {
+            self.record.clear();
+        }
     }
 
     // TODO: consider caching the result of all this validation, so we can
     // directly dispatch to the correct functions and avoid extra writes to RT.
     // TODO: on Windows, we must strip `\r` depending on BINMODE.
-    pub fn read_record(&mut self, reader: impl BufRead) -> Result<bool> {
+    pub fn read_record(&mut self, mut reader: impl BufRead) -> Result<bool> {
+        // At EOF, keep NR, FNR and $0 of the last record for END
+        if reader.fill_buf()?.is_empty() {
+            return Ok(false);
+        }
+
         // Update vars
         // TODO: optimize and make more ergonomic
-        self.symbols.nr = &self.symbols.fnr + &Value::new_int(1);
+        self.symbols.nr = &self.symbols.nr + &Value::new_int(1);
         self.symbols.fnr = &self.symbols.fnr + &Value::new_int(1);
 
         let rs = self.symbols.rs.clone();
