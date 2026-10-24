@@ -60,7 +60,7 @@ pub struct AwkNum(f64);
 /// are skipped and the longest prefix that is a decimal number counts, so
 /// `" 12 "` is 12, `"3x"` is 3 and `"x"` is 0. Like gawk, `inf` and `nan`
 /// are only recognized with a sign and nothing else but blanks around them.
-fn str_to_num(s: &[u8]) -> f64 {
+pub(crate) fn str_to_num(s: &[u8]) -> f64 {
     let is_blank = |b: &u8| matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r');
     let s = &s[s.iter().take_while(|b| is_blank(b)).count()..];
     let digits = |from: usize| {
@@ -334,6 +334,8 @@ impl<'a> AwkValue<'a> {
             &Self::Int(AwkInt(n)) => n as f64,
             &Self::Bool(AwkBool(b)) => b as usize as f64,
             Self::String(s) => str_to_num(s),
+            Self::Str(s) => str_to_num(s),
+            Self::StrNum(s) => s.num.0,
             _ => 0.,
         }
     }

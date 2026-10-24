@@ -1052,3 +1052,18 @@ fn fields_with_blanks_around_numbers_sum() {
         .succeeds()
         .stdout_only("26\n");
 }
+
+#[test]
+fn strtonum_reads_the_leading_number() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                print strtonum("3x"), strtonum(" 12 "), strtonum("-3x"), strtonum(".5x"), strtonum("1e3x")
+                print strtonum("0x1Fz"), strtonum("0X1g"), strtonum("0x"), strtonum(" 0x10"), strtonum("+0x10")
+                print strtonum("017x"), strtonum("0778"), strtonum("0189"), strtonum("01.5"), strtonum("017e1")
+                print strtonum("x"), strtonum(""), strtonum("0"), strtonum("00"), strtonum("0xFFFFFFFF")
+            }"#,
+        )
+        .succeeds()
+        .stdout_only("3 12 -3 0.5 1000\n31 1 0 0 0\n15 778 189 1.5 170\n0 0 0 0 4294967295\n");
+}
