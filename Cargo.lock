@@ -1527,6 +1527,7 @@ dependencies = [
  "either",
  "interpreter",
  "lexer",
+ "libc",
  "memchr",
  "parser",
  "thiserror",
