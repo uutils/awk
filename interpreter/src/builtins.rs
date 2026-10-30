@@ -291,11 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn str_value_reads_the_leading_number() {
-        assert_eq!(Value::new_str(b" 3x").to_num(), 3.);
-    }
-
-    #[test]
     fn int_truncates_toward_zero() {
         with_intrp(|intrp| {
             assert_eq!(

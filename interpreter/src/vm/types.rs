@@ -766,3 +766,14 @@ impl<const N: usize> VecAdaptor<u8> for SmallVec<[u8; N]> {
         self.extend_from_slice(slice);
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::float_cmp)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn str_value_reads_the_leading_number() {
+        assert_eq!(Value::new_str(b" 3x").to_num(), 3.);
+    }
+}
