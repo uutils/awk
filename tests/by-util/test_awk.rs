@@ -1029,3 +1029,41 @@ fn uninitialized_value_compares_as_zero_with_a_number() {
         .succeeds()
         .stdout_only("1 1 1 1 1 0 1 1\n");
 }
+
+#[test]
+fn string_to_number_uses_leading_numeric_prefix() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                print "3x" + 0, " 12 " + 1, "1e5x" + 0, "-.5" + 0, "1.2.3" + 0
+                print "x" + 0, "1e" + 0, "1e+" + 0, "inf" + 0, "0x1A" + 0
+                print ("+inf" + 0 > 1e308), ("-INF" + 0 < -1e308), ("\v\f\r 7" + 0)
+            }"#,
+        )
+        .succeeds()
+        .stdout_only("3 13 100000 -0.5 1.2\n0 1 1 0 0\n1 1 7\n");
+}
+
+#[test]
+fn fields_with_blanks_around_numbers_sum() {
+    ucmd()
+        .arg(r#"BEGIN { FS = "," } { s += $2 } END { print s }"#)
+        .pipe_in("a, 12 \nb,  4\nc,10abc\n")
+        .succeeds()
+        .stdout_only("26\n");
+}
+
+#[test]
+fn strtonum_reads_the_leading_number() {
+    ucmd()
+        .arg(
+            r#"BEGIN {
+                print strtonum("3x"), strtonum(" 12 "), strtonum("-3x"), strtonum(".5x"), strtonum("1e3x")
+                print strtonum("0x1Fz"), strtonum("0X1g"), strtonum("0x"), strtonum(" 0x10"), strtonum("+0x10")
+                print strtonum("017x"), strtonum("0778"), strtonum("0189"), strtonum("01.5"), strtonum("017e1")
+                print strtonum("x"), strtonum(""), strtonum("0"), strtonum("00"), strtonum("0xFFFFFFFF")
+            }"#,
+        )
+        .succeeds()
+        .stdout_only("3 12 -3 0.5 1000\n31 1 0 0 0\n15 778 189 1.5 170\n0 0 0 0 4294967295\n");
+}

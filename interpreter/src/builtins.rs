@@ -17,7 +17,10 @@ use parser::{AriadneSpan, BuiltinFunction};
 
 use crate::{
     InterpreterError,
-    vm::{Interpreter, types::Value},
+    vm::{
+        Interpreter,
+        types::{Value, str_to_num},
+    },
 };
 
 use rc_vec::RcVec as Vec;
@@ -242,18 +245,27 @@ fn to_bits(v: &Value) -> u64 {
 
 fn strtonum(v: &Value) -> f64 {
     let bytes = value_bytes(v);
-    let Ok(s) = std::str::from_utf8(&bytes) else {
-        return 0.;
-    };
-    let s = s.trim_start();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        return u64::from_str_radix(hex, 16).map_or(0., |n| n as f64);
+    // As in gawk, a hex or octal prefix only counts at the very start; an 8,
+    // 9, `.` or exponent after the leading 0 makes it a decimal number.
+    match bytes.as_slice() {
+        [b'0', b'x' | b'X', rest @ ..] => rest
+            .iter()
+            .map_while(|&b| char::from(b).to_digit(16))
+            .fold(0., |n, d| n * 16. + f64::from(d)),
+        [b'0', rest @ ..] => {
+            let octal = rest
+                .iter()
+                .take_while(|b| (b'0'..=b'7').contains(*b))
+                .count();
+            match rest.get(octal) {
+                Some(b'8' | b'9' | b'.' | b'e' | b'E') => str_to_num(&bytes),
+                _ => rest[..octal]
+                    .iter()
+                    .fold(0., |n, &d| n * 8. + f64::from(d - b'0')),
+            }
+        }
+        _ => str_to_num(&bytes),
     }
-    if s.len() > 1 && s.starts_with('0') && s.bytes().all(|b| (b'0'..=b'7').contains(&b)) {
-        // Leading zero and only octal digits → octal, as in gawk `strtonum`.
-        return u64::from_str_radix(s, 8).map_or(0., |n| n as f64);
-    }
-    s.parse().unwrap_or(0.)
 }
 
 fn value_bytes(v: &Value) -> Vec<u8> {
