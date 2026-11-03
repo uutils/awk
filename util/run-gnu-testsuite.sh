@@ -154,6 +154,9 @@ if [[ ! -f "$RUST_AWK_DIR/Cargo.toml" ]]; then
     exit 1
 fi
 
+# gawk's expected outputs hold the plain error lines, never a drawn report.
+unset UUTILS_DIAG
+
 # Patch test suite
 export QUILT_PATCHES="${RUST_AWK_DIR}/util/gnu-patches/"
 cd "$GNU_AWK_DIR" || exit 1

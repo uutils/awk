@@ -3,6 +3,8 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
+use rstest::rstest;
+
 use crate::ucmd;
 
 #[test]
@@ -254,6 +256,7 @@ fn write_to_dev_full_does_not_panic() {
 fn chained_comparison_reports_help_text() {
     ucmd()
         .arg("BEGIN { p < q < r }")
+        .env("UUTILS_DIAG", "always")
         .run()
         .stderr_contains("Some operators cannot be chained");
 }
@@ -263,6 +266,7 @@ fn chained_comparison_reports_help_text() {
 fn duplicated_parameter_names_the_function() {
     ucmd()
         .arg("function shuffle(seed, seed) { } BEGIN { shuffle(1, 2) }")
+        .env("UUTILS_DIAG", "always")
         .run()
         .stderr_contains("Duplicated argument `awk::seed` to function `awk::shuffle`.");
 }
@@ -271,6 +275,7 @@ fn duplicated_parameter_names_the_function() {
 fn incomplete_ternary_reports_help_text() {
     ucmd()
         .arg("BEGIN { v = 1 ? 2 }")
+        .env("UUTILS_DIAG", "always")
         .run()
         .stderr_contains("Ternaries select between two expressions");
 }
@@ -279,8 +284,60 @@ fn incomplete_ternary_reports_help_text() {
 fn spaced_function_call_reports_the_space() {
     ucmd()
         .arg("function foo(x, y) { return x + y } BEGIN { scale (2, 2) }")
+        .env("UUTILS_DIAG", "always")
         .run()
         .stderr_contains("must not have a space between the name and the parenthesis");
+}
+
+// Captured stderr is not a terminal: syntax errors echo the line with a caret.
+#[test]
+fn syntax_error_is_plain_when_not_at_a_terminal() {
+    ucmd()
+        .arg("BEGIN { k = 1 }\nEND { w = (k }")
+        .run()
+        .no_stdout()
+        .stderr_is(
+            "awk: cmd. line:2: END { w = (k }\n\
+             awk: cmd. line:2:           ^ Missing closing parenthesis `(` in expression.\n",
+        );
+}
+
+#[test]
+fn runtime_error_is_a_plain_fatal_line() {
+    ucmd()
+        .arg("BEGIN { q = 9 % 0 }")
+        .fails_with_code(1)
+        .no_stdout()
+        .stderr_is("awk: cmd. line:1: fatal: Attempted to divide `9` by zero here!\n");
+}
+
+#[rstest]
+#[case::empty("")]
+#[case::never("never")]
+#[case::never_uppercase("NEVER")]
+#[case::unknown("sometimes")]
+fn diag_mode_keeps_the_plain_form(#[case] mode: &str) {
+    ucmd()
+        .arg("BEGIN { q = 9 % 0 }")
+        .env("UUTILS_DIAG", mode)
+        .fails_with_code(1)
+        .stderr_is("awk: cmd. line:1: fatal: Attempted to divide `9` by zero here!\n");
+}
+
+#[rstest]
+#[case::lowercase("always")]
+#[case::mixed_case("Always")]
+fn diag_mode_always_draws_the_report(#[case] mode: &str) {
+    let result = ucmd()
+        .arg("BEGIN { q = 9 % 0 }")
+        .env("UUTILS_DIAG", mode)
+        .fails_with_code(1);
+    let report = result.stderr_str();
+    assert!(report.starts_with("awk: cmd. line:1: fatal: Attempted to divide `9` by zero here!\n"));
+    assert!(report.contains(" 1 │ BEGIN { q = 9 % 0 }"));
+    assert!(report.contains("Division and modular arithmetic by zero"));
+    // Not a terminal, so no colors.
+    assert!(!report.contains('\u{1b}'));
 }
 
 #[test]

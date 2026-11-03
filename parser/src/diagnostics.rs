@@ -4,37 +4,38 @@
 // files that was distributed with this source code.
 
 use std::{
-    env::var_os,
+    borrow::Cow,
     error::Error,
     fmt::Display,
-    io::{IsTerminal, stderr},
+    io::{Write, stderr},
     path::Path,
     rc::Rc,
-    sync::LazyLock,
 };
 
-static COLOR: LazyLock<bool> = LazyLock::new(|| stderr().is_terminal() || var_os("CI").is_some());
-
-use ariadne::{Color, Config, Label, Report, ReportBuilder, ReportKind, Source};
 use either::Either;
 use lexer::{LexingError, Span};
+use memchr::{memchr, memchr_iter, memrchr};
 use thiserror::Error;
+use uucore::diagnostics::SourceLine;
+
+/// How an error reads when it is not drawn against its source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlainForm {
+    /// Echo the offending source line, with a caret under the error.
+    Caret,
+    /// A single `fatal:` line.
+    Fatal,
+}
 
 #[derive(Debug, Clone)]
 pub struct AriadneSpan(pub FileCache, pub Span);
 
 #[derive(Debug, Default)]
 pub struct DiagnosticStore {
-    storage: Vec<Report<'static, AriadneSpan>>,
-    cache: Cache,
+    messages: Vec<String>,
+    sources: Vec<(FileCache, Rc<[u8]>)>,
     unrecoverable: bool,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InnerSource(Rc<str>);
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Cache(Vec<(FileCache, Source<InnerSource>)>);
 
 pub trait Diagnostic: Error {
     fn add_diagnostic(&self, store: &mut DiagnosticStore, file: FileCache, source: &[u8]) {
@@ -43,21 +44,14 @@ pub trait Diagnostic: Error {
         self.add_diagnostic_cached(store, AriadneSpan(file, span));
     }
     fn add_diagnostic_cached(&self, store: &mut DiagnosticStore, span: AriadneSpan) {
-        let mut report = Report::build(ReportKind::Error, span.clone())
-            .with_message(self.message())
-            .with_config(Config::new().with_color(*COLOR));
-
-        self.add_labels(span, &mut report);
-        self.add_help(&mut report);
-
         store.unrecoverable |= self.is_unrecoverable();
-        store.push(report.finish());
+        let message = store.format(&span, &self.to_string(), self.plain_form(), self.help());
+        store.messages.push(message);
     }
     fn span(&self) -> Option<Span>;
-    fn message(&self) -> &'static str;
-    fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>);
-    fn add_help(&self, report: &mut ReportBuilder<AriadneSpan>);
+    fn help(&self) -> Option<Cow<'static, str>>;
     fn is_unrecoverable(&self) -> bool;
+    fn plain_form(&self) -> PlainForm;
 }
 
 impl DiagnosticStore {
@@ -66,32 +60,79 @@ impl DiagnosticStore {
     }
 
     pub fn cache(&mut self, file: FileCache, source: &[u8]) {
-        // Cache UTF-8 validated file source. Given we have one for each opened
-        // file (which are very few), it's much better to use a vector.
-        if !self.cache.0.iter().any(|(f, _)| *f == file) {
-            let cached = Source::from(InnerSource(Rc::from(&*String::from_utf8_lossy(source))));
-            self.cache.0.push((file, cached));
+        // One entry per opened file, and there are very few: a vector beats a map.
+        if !self.sources.iter().any(|(f, _)| *f == file) {
+            self.sources.push((file, Rc::from(source)));
         }
     }
 
-    pub fn push(&mut self, report: Report<'static, AriadneSpan>) {
-        self.storage.push(report);
+    /// `message`, located at `span`. Drawn against the offending line at a
+    /// terminal or as `UUTILS_DIAG` asks; otherwise the plain lines scripts
+    /// and test suites match on.
+    fn format(
+        &self,
+        AriadneSpan(file, span): &AriadneSpan,
+        message: &str,
+        form: PlainForm,
+        help: Option<Cow<'static, str>>,
+    ) -> String {
+        let program = uucore::util_name();
+        let location = file.to_string();
+        let message = match form {
+            PlainForm::Fatal => Cow::Owned(format!("fatal: {message}")),
+            PlainForm::Caret => Cow::Borrowed(message),
+        };
+        let Some(source) = self
+            .sources
+            .iter()
+            .find_map(|(f, source)| (f == file).then_some(source))
+        else {
+            return format!("{program}: {location}: {message}\n");
+        };
+
+        let start = span.start.min(source.len());
+        let line_start = memrchr(b'\n', &source[..start]).map_or(0, |i| i + 1);
+        let line_end = memchr(b'\n', &source[start..]).map_or(source.len(), |i| start + i);
+        let line_number = memchr_iter(b'\n', &source[..start]).count() + 1;
+        let line = String::from_utf8_lossy(&source[line_start..line_end]);
+        let prefix = format!("{program}: {location}:{line_number}:");
+
+        if uucore::diagnostics::enabled() {
+            // A span running past its first line is cut at the line's end.
+            let end = span.end.clamp(start, line_end);
+            let report = SourceLine::new(&location, line_number, &line).report(
+                start - line_start..end - line_start,
+                None,
+                help.as_deref(),
+            );
+            if let Some(report) = report {
+                return format!("{prefix} {message}\n{report}\n");
+            }
+        }
+
+        match form {
+            PlainForm::Fatal => format!("{prefix} {message}\n"),
+            PlainForm::Caret => {
+                // Keep tabs so the caret lines up with what the terminal shows.
+                let padding: String = String::from_utf8_lossy(&source[line_start..start])
+                    .chars()
+                    .map(|c| if c == '\t' { '\t' } else { ' ' })
+                    .collect();
+                format!("{prefix} {line}\n{prefix} {padding}^ {message}\n")
+            }
+        }
     }
 
     pub fn flush(&mut self) -> std::io::Result<()> {
-        for diag in &self.storage {
-            diag.eprint(&mut self.cache)?;
+        let mut stderr = stderr().lock();
+        for message in self.messages.drain(..) {
+            stderr.write_all(message.as_bytes())?;
         }
-        self.storage.clear();
         Ok(())
     }
 
     pub const fn is_unrecoverable(&self) -> bool {
         self.unrecoverable
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Report<'static, AriadneSpan>> {
-        self.storage.iter()
     }
 }
 
@@ -278,19 +319,6 @@ impl ParsingError {
             _ => None,
         }
     }
-    fn secondary(&self) -> Option<(&'static str, Span, i32)> {
-        match self {
-            Self::ExpectedIdentifier(_, Some(span)) => Some((
-                "Unexpected space.",
-                span.into_inner(),
-                2 * span.is_left() as i32,
-            )),
-            &Self::CommandDoubleCall(_, span) => {
-                Some(("Unexpected additional arguments.", span, 0))
-            }
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -306,7 +334,7 @@ impl Display for FileCache {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self.0 {
             Some(p) => write!(f, "{}", p.display()),
-            None => f.write_str("CLI"),
+            None => f.write_str("cmd. line"),
         }
     }
 }
@@ -316,77 +344,16 @@ impl Diagnostic for ParsingError {
         self.span()
     }
 
-    fn message(&self) -> &'static str {
-        "Syntax error"
-    }
-
-    fn add_labels(
-        &self,
-        AriadneSpan(file, span): AriadneSpan,
-        report: &mut ReportBuilder<AriadneSpan>,
-    ) {
-        report.add_label(
-            Label::new(AriadneSpan(file.clone(), span))
-                .with_message(self.to_string())
-                .with_color(Color::Red)
-                .with_order(1),
-        );
-
-        if let Some((str, span, order)) = self.secondary() {
-            report.add_label(
-                Label::new(AriadneSpan(file, span))
-                    .with_message(str)
-                    .with_color(Color::Yellow)
-                    .with_order(order),
-            );
-        }
-    }
-
-    fn add_help(&self, report: &mut ReportBuilder<AriadneSpan>) {
-        if let Some(str) = self.hint() {
-            report.set_help(str);
-        }
+    fn help(&self) -> Option<Cow<'static, str>> {
+        self.hint().map(Cow::Borrowed)
     }
 
     fn is_unrecoverable(&self) -> bool {
         true
     }
-}
 
-impl ariadne::Cache<FileCache> for Cache {
-    type Storage = InnerSource;
-
-    fn fetch(&mut self, id: &FileCache) -> Result<&Source<Self::Storage>, impl std::fmt::Debug> {
-        match self.0.iter().find_map(|(f, c)| (f == id).then_some(c)) {
-            Some(x) => Ok(x),
-            None => Err("Internal error while preparing diagnostics!"),
-        }
-    }
-
-    fn display<'b>(&self, id: &'b FileCache) -> Option<impl Display + 'b> {
-        Some(id)
-    }
-}
-
-impl ariadne::Span for AriadneSpan {
-    type SourceId = FileCache;
-
-    fn source(&self) -> &Self::SourceId {
-        &self.0
-    }
-
-    fn start(&self) -> usize {
-        self.1.start
-    }
-
-    fn end(&self) -> usize {
-        self.1.end
-    }
-}
-
-impl AsRef<str> for InnerSource {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
+    fn plain_form(&self) -> PlainForm {
+        PlainForm::Caret
     }
 }
 
