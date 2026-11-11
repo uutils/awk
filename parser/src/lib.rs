@@ -87,7 +87,7 @@ impl<'a> Parser<'a> {
         self.file.clone_from(&file);
         self.ast.diagnostics.cache(self.file.clone(), source);
         let mut lex = Lexer::new(source, self.arena);
-        match &self.parse_top(&mut lex, true) {
+        match self.parse_top(&mut lex, true) {
             Ok(_) => Ok(&mut self.ast),
             Err(error) => {
                 let mut store = take(&mut self.ast.diagnostics);
