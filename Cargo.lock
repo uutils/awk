@@ -31,12 +31,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "allocator-api2"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
-
-[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -166,7 +160,7 @@ version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 dependencies = [
- "allocator-api2 0.2.21",
+ "allocator-api2",
 ]
 
 [[package]]
@@ -540,7 +534,7 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2 0.2.21",
+ "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
 ]
@@ -551,7 +545,7 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
- "allocator-api2 0.2.21",
+ "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
 ]
@@ -577,7 +571,7 @@ name = "indexmap-allocator-api"
 version = "2.7.1"
 source = "git+https://github.com/Hans-Halverson/indexmap-allocator-api.git?rev=36852f985c01fb9f58f2d9e510655ca1dbb1f4d0#36852f985c01fb9f58f2d9e510655ca1dbb1f4d0"
 dependencies = [
- "allocator-api2 0.2.21",
+ "allocator-api2",
  "equivalent",
  "hashbrown 0.15.5",
 ]
@@ -587,7 +581,6 @@ name = "interpreter"
 version = "0.1.0"
 dependencies = [
  "ahash",
- "allocator-api2 0.4.0",
  "ariadne",
  "atoi",
  "bumpalo",
@@ -890,7 +883,6 @@ name = "parser"
 version = "0.1.0"
 dependencies = [
  "ahash",
- "allocator-api2 0.4.0",
  "ariadne",
  "bumpalo",
  "derive_more",
@@ -899,7 +891,6 @@ dependencies = [
  "lexer",
  "memchr",
  "proptest",
- "smallvec",
  "thiserror",
 ]
 

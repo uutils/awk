@@ -10,7 +10,6 @@ memchr.workspace = true
 thiserror.workspace = true
 parser.workspace = true
 bumpalo.workspace = true
-allocator-api2.workspace = true
 hashbrown.workspace = true
 ahash.workspace = true
 ariadne.workspace = true
