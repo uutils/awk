@@ -31,8 +31,10 @@ allocator-api2 = "0.4.0"
 ahash = "0.8.12"
 derive_more = { version = "2.1.1", features = ["full"] }
 regex = "1.12.3"
-ariadne = "0.6.0"
 atoi = "3.1.0"
+rstest = "0.28.0"
+# `diagnostics::SourceLine` is not released yet.
+uucore = { git = "https://github.com/uutils/coreutils", rev = "505a1af1cda4e6fa52ba4abb16c0b1d74de22388", features = ["diagnostics"] }
 
 [dependencies]
 lexer.workspace = true
@@ -49,6 +51,7 @@ comfy-table = "8.0.0"
 
 [dev-dependencies]
 ctor = "1.0"
+rstest.workspace = true
 uutests = "0.12"
 
 [profile.release]

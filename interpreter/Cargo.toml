@@ -13,7 +13,6 @@ bumpalo.workspace = true
 allocator-api2.workspace = true
 hashbrown.workspace = true
 ahash.workspace = true
-ariadne.workspace = true
 smallvec.workspace = true
 atoi.workspace = true
 minrx = "0.3.3"

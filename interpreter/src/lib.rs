@@ -9,13 +9,12 @@ mod vm;
 
 use std::borrow::Cow;
 
-use ariadne::{Color, Label, ReportBuilder};
 pub use ir::{
     Instruction,
     lower::{Bytecode, CodeGen},
 };
 use minrx::RegexError;
-use parser::{AriadneSpan, Diagnostic, DiagnosticStore, Span};
+use parser::{AriadneSpan, Diagnostic, DiagnosticStore, PlainForm, Span};
 pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, Signal, io};
 
 #[derive(Debug, thiserror::Error)]
@@ -57,9 +56,6 @@ impl InterpreterError {
 }
 
 impl Diagnostic for InterpreterError {
-    fn message(&self) -> &'static str {
-        "Execution error"
-    }
     fn span(&self) -> Option<Span> {
         match self {
             &Self::Regex(AriadneSpan(_, span), _)
@@ -73,36 +69,32 @@ impl Diagnostic for InterpreterError {
             | &Self::InvalidFieldwidths(AriadneSpan(_, span)) => Some(span),
         }
     }
-    fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {
-        report.add_label(
-            Label::new(span)
-                .with_message(self.to_string())
-                .with_color(Color::Red)
-                .with_order(1),
-        );
-    }
-    fn add_help(&self, report: &mut ReportBuilder<AriadneSpan>) {
+    fn help(&self) -> Option<Cow<'static, str>> {
         let note = match self {
             Self::UnknownFunction(_) => {
                 "This code called an undefined function. Although functions are statically \
                 defined,\nthis error is emitted at runtime and may only occur on rarely executed \
                 code paths."
             }
-            &Self::ArityMismatch(_, expected, given) => &format!(
-                "This function accepts up to {expected} arguments, but {given} were provided."
-            ),
+            &Self::ArityMismatch(_, expected, given) => {
+                return Some(Cow::Owned(format!(
+                    "This function accepts up to {expected} arguments, but {given} were provided."
+                )));
+            }
             Self::RecursionDepth(_) => {
                 "The maximum stack depth is 4096. If you find this too limiting, please open an \
                 issue so we can help!\nCurrently, GNU AWK does not provide an user-configurable \
                 limit, but we are considering supporting this."
             }
-            Self::UnknownIndFunction(_, name) => &format!(
-                "This code tried to call the unknown function `{name}` indirectly. Likely, this \
+            Self::UnknownIndFunction(_, name) => {
+                return Some(Cow::Owned(format!(
+                    "This code tried to call the unknown function `{name}` indirectly. Likely, this \
                 means one of\ntwo things: either the function was undefined, or you probably \
                 forgot to include its\nnamespace if it was not defied in the \"awk\" default one. \
                 It is a foot-gun that indirect\ncalls ignore the current namespace, always using \
                 the default one if not present."
-            ),
+                )));
+            }
             Self::DivByZeroAttempted(_, _) => {
                 "Division and modular arithmetic by zero is always fatal in AWK. To avoid this, \
                 you can use an\nif statement or a ternary expression. You may optionally introduce \
@@ -116,12 +108,15 @@ impl Diagnostic for InterpreterError {
                 `skip:width` pairs, and at most one trailing `*` / `skip:*`.\nZero, negative, \
                 non-integer, or misplaced `*` values are rejected (matching gawk)."
             }
-            _ => return,
+            _ => return None,
         };
-        report.set_help(note);
+        Some(Cow::Borrowed(note))
     }
     fn is_unrecoverable(&self) -> bool {
         true
+    }
+    fn plain_form(&self) -> PlainForm {
+        PlainForm::Fatal
     }
 }
 

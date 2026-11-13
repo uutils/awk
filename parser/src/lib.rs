@@ -29,7 +29,7 @@ use lexer::Token;
 
 pub use crate::{
     ast::*,
-    diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError},
+    diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError, PlainForm},
     lex::{Lexer, SpanExt},
 };
 use crate::{lex::TokenExt, pratt::Pratt};

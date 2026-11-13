@@ -33,6 +33,34 @@ uutils AWK aims to work on as many platforms as possible, to be able to use the 
 utils on Linux, macOS, *BSD, Windows, WASI and other platforms. This ensures, for example,
 that scripts can be easily transferred between platforms.
 
+## Error messages
+
+When standard error is a terminal, syntax and runtime errors are drawn against
+the line they point at, with a hint where it helps:
+
+```
+awk: cmd. line:1: Can't chain non-associative operators.
+   ╭─[ cmd. line:1:15 ]
+   │
+ 1 │ BEGIN { p < q < r }
+   │               ─
+   │
+   │ Help: Some operators cannot be chained because doing so could lead to logical errors. ...
+───╯
+```
+
+Otherwise (scripts, pipes, test suites), awk prints the plain GNU-style lines:
+
+```
+awk: cmd. line:1: BEGIN { print ( }
+awk: cmd. line:1:                 ^ Malformed expression: is not valid data
+```
+
+`UUTILS_DIAG` overrides the terminal check: `always` draws the report even when
+stderr is a file or a pipe, `never` keeps the plain lines at a terminal. Any other
+value leaves the terminal check in charge. Colors are only used at a terminal and
+follow [`NO_COLOR`](https://no-color.org).
+
 ## Requirements
 
 - Rust (`cargo`, `rustc`)

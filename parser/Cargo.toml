@@ -15,7 +15,7 @@ hashbrown.workspace = true
 allocator-api2.workspace = true
 ahash.workspace = true
 derive_more.workspace = true
-ariadne.workspace = true
+uucore.workspace = true
 
 [dev-dependencies]
 proptest = "1.6.0"
