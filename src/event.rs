@@ -55,7 +55,6 @@ impl<'a> AwkRt<'a> {
                     self.diagnostics.flush()?;
                     if self.diagnostics.is_unrecoverable() {
                         self.end_event_loop(1)?;
-                        continue;
                     }
                     continue;
                 }
