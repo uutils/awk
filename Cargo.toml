@@ -117,11 +117,13 @@ useless_let_if_seq = "warn"
 
 # Shut up
 cargo_common_metadata = "allow"
+duplicated_attributes = "allow"
 fn_params_excessive_bools = "allow"
 format_push_string = "allow"
 ignored_unit_patterns = "allow"
 inline_always = "allow"
 items_after_statements = "allow"
+map_unwrap_or = "allow"
 match_same_arms = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
