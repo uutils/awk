@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
-    - uses: dtolnay/rust-toolchain@1.96.1
+    - uses: dtolnay/rust-toolchain@1.100.0
       with:
         targets: wasm32-wasip1
     - name: install wasi-sdk
