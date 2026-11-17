@@ -36,6 +36,8 @@ pub enum InterpreterError {
     ArrayUseOfScalar(AriadneSpan),
     #[error("Invalid FIELDWIDTHS value!")]
     InvalidFieldwidths(AriadneSpan),
+    #[error("NF set to negative value `{1}`!")]
+    NegativeNf(AriadneSpan, i32),
     #[error("{1}")]
     Regex(AriadneSpan, RegexError),
 }
@@ -51,7 +53,8 @@ impl InterpreterError {
             | Self::RecursionDepth(span)
             | Self::ArityMismatch(span, _, _)
             | Self::UnknownFunction(span)
-            | Self::InvalidFieldwidths(span) => self.add_diagnostic_cached(store, span.clone()),
+            | Self::InvalidFieldwidths(span)
+            | Self::NegativeNf(span, _) => self.add_diagnostic_cached(store, span.clone()),
         }
     }
 }
@@ -70,7 +73,8 @@ impl Diagnostic for InterpreterError {
             | &Self::RecursionDepth(AriadneSpan(_, span))
             | &Self::ArityMismatch(AriadneSpan(_, span), _, _)
             | &Self::UnknownFunction(AriadneSpan(_, span))
-            | &Self::InvalidFieldwidths(AriadneSpan(_, span)) => Some(span),
+            | &Self::InvalidFieldwidths(AriadneSpan(_, span))
+            | &Self::NegativeNf(AriadneSpan(_, span), _) => Some(span),
         }
     }
     fn add_labels(&self, span: AriadneSpan, report: &mut ReportBuilder<AriadneSpan>) {
@@ -115,6 +119,11 @@ impl Diagnostic for InterpreterError {
                 "FIELDWIDTHS must be a blank-separated list of positive widths, optional \
                 `skip:width` pairs, and at most one trailing `*` / `skip:*`.\nZero, negative, \
                 non-integer, or misplaced `*` values are rejected (matching gawk)."
+            }
+            Self::NegativeNf(_, _) => {
+                "NF is the number of fields in the current record, so it cannot be negative. \
+                Assigning a smaller\nnon-negative value truncates the record, and assigning 0 \
+                empties it (matching gawk)."
             }
             _ => return,
         };

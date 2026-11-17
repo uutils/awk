@@ -1067,3 +1067,57 @@ fn strtonum_reads_the_leading_number() {
         .succeeds()
         .stdout_only("3 12 -3 0.5 1000\n31 1 0 0 0\n15 778 189 1.5 170\n0 0 0 0 4294967295\n");
 }
+
+#[test]
+fn negative_nf_is_fatal() {
+    ucmd()
+        .arg("{ NF -= 4 }")
+        .pipe_in("x y\n")
+        .fails_with_code(1)
+        .stderr_contains("NF set to negative value `-2`");
+}
+
+#[test]
+fn negative_nf_assignment_is_fatal() {
+    ucmd()
+        .arg(r#"{ NF = -1; print "alive" }"#)
+        .pipe_in("a b c\n")
+        .fails_with_code(1)
+        .stdout_is("")
+        .stderr_contains("NF set to negative value `-1`");
+}
+
+#[test]
+fn negative_nf_in_begin_is_fatal() {
+    ucmd()
+        .arg("BEGIN { NF = -3 }")
+        .fails_with_code(1)
+        .stderr_contains("NF set to negative value `-3`");
+}
+
+#[test]
+fn negative_nf_from_string_is_fatal() {
+    ucmd()
+        .arg(r#"{ NF = "-5" }"#)
+        .pipe_in("a\n")
+        .fails_with_code(1)
+        .stderr_contains("NF set to negative value `-5`");
+}
+
+#[test]
+fn zero_and_fractional_nf_are_not_negative() {
+    ucmd()
+        .arg(r#"{ NF = -0.5; print NF "[" $0 "]"; $0 = "a b"; NF = 0; print NF "[" $0 "]" }"#)
+        .pipe_in("a b c\n")
+        .succeeds()
+        .stdout_is("0[]\n0[]\n");
+}
+
+#[test]
+fn smaller_nf_still_truncates() {
+    ucmd()
+        .arg("{ NF = 2; print; print NF }")
+        .pipe_in("a b c\n")
+        .succeeds()
+        .stdout_is("a b\n2\n");
+}
