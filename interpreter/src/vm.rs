@@ -487,8 +487,8 @@ impl<'a> Interpreter<'a> {
         // Apply side effects before writing the value
         match sys {
             BuiltInVar::Nf => {
-                // TODO: errors
-                let n = usize::try_from(val.to_int()).unwrap();
+                let nf = val.to_int();
+                let n = usize::try_from(nf).map_err(|_| InterpreterError::NegativeNf(span, nf))?;
                 let _ = self.record.resize(n, &mut self.symbols, self.mode);
                 return Ok(()); // auto-updated
             }
