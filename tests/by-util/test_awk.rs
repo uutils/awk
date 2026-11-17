@@ -1070,38 +1070,21 @@ fn strtonum_reads_the_leading_number() {
 
 #[test]
 fn negative_nf_is_fatal() {
-    ucmd()
-        .arg("{ NF -= 4 }")
-        .pipe_in("x y\n")
-        .fails_with_code(1)
-        .stderr_contains("NF set to negative value `-2`");
-}
-
-#[test]
-fn negative_nf_assignment_is_fatal() {
-    ucmd()
-        .arg(r#"{ NF = -1; print "alive" }"#)
-        .pipe_in("a b c\n")
-        .fails_with_code(1)
-        .stdout_is("")
-        .stderr_contains("NF set to negative value `-1`");
-}
-
-#[test]
-fn negative_nf_in_begin_is_fatal() {
-    ucmd()
-        .arg("BEGIN { NF = -3 }")
-        .fails_with_code(1)
-        .stderr_contains("NF set to negative value `-3`");
-}
-
-#[test]
-fn negative_nf_from_string_is_fatal() {
-    ucmd()
-        .arg(r#"{ NF = "-5" }"#)
-        .pipe_in("a\n")
-        .fails_with_code(1)
-        .stderr_contains("NF set to negative value `-5`");
+    // (program, input, reported value)
+    let cases = [
+        ("{ NF -= 4 }", "x y\n", "-2"),
+        (r#"{ NF = -1; print "alive" }"#, "a b c\n", "-1"),
+        ("BEGIN { NF = -3 }", "", "-3"),
+        (r#"{ NF = "-5" }"#, "a\n", "-5"),
+    ];
+    for (program, input, value) in cases {
+        ucmd()
+            .arg(program)
+            .pipe_in(input)
+            .fails_with_code(1)
+            .stdout_is("")
+            .stderr_contains(format!("NF set to negative value `{value}`"));
+    }
 }
 
 #[test]
