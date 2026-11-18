@@ -487,6 +487,9 @@ impl<'a> Interpreter<'a> {
         // Apply side effects before writing the value
         match sys {
             BuiltInVar::Nf => {
+                // TODO: this can also fail on overflow: `to_int` saturates, so
+                // `NF = 1e20` silently becomes `i32::MAX`. Report it as an error
+                // too once errors here are more comprehensive.
                 let nf = val.to_int();
                 let n = usize::try_from(nf).map_err(|_| InterpreterError::NegativeNf(span, nf))?;
                 let _ = self.record.resize(n, &mut self.symbols, self.mode);
