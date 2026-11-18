@@ -60,18 +60,21 @@ impl From<&[u8]> for FilePath {
 impl Interpreter<'_> {
     /// sets the built-in variables about the new file and handles errors from the I/O layer
     /// appropriately. Note that the VM is sans-io, so such logic lives separated here.
+    ///
+    /// Returns whether `res` is an open error that is fatal unless BEGINFILE skips the file.
+    #[must_use = "A fatal open error must stop the program"]
     pub fn begin_file_prelude(
         &mut self,
         f: Option<&Path>,
         res: Option<&io::Error>,
         has_begin_file: bool,
-    ) {
+    ) -> bool {
         // If path is none, this is stdin (filename `-`).
         let name = f.map_or(b"-".as_slice(), |p| p.as_os_str().as_encoded_bytes());
         let errno = res.map_or(0, |e| e.raw_os_error().unwrap_or(-1) as _);
 
-        // TODO: Handle errors according to `PROCINFO` and propagate them up the
-        // call stack to the I/O layer.
+        // TODO: an open error isn't fatal when `PROCINFO` marks input as non-fatal.
+        let open_error_is_fatal = res.is_some();
         self.symbols.filename = Value::new_string(name.into());
         self.symbols.errno = Value::new_int(errno);
         self.symbols.fnr = Value::new_int(0);
@@ -80,6 +83,7 @@ impl Interpreter<'_> {
         if has_begin_file {
             self.record.clear();
         }
+        open_error_is_fatal
     }
 
     // TODO: consider caching the result of all this validation, so we can

@@ -19,7 +19,7 @@ use parser::DiagnosticStore;
 
 use crate::{
     cli::{ArgQueueItem, KeyValue},
-    utils::AWK_FATAL_CODE,
+    utils::{AWK_FATAL_CODE, exit_fatal, strip_os_error},
 };
 
 pub struct AwkRt<'a> {
@@ -84,9 +84,18 @@ impl<'a> AwkRt<'a> {
         res: Option<&io::Error>,
     ) -> Result<bool> {
         let code = self.bc.begin_file_code();
-        self.intrp.begin_file_prelude(path, res, !code.is_empty());
+        let open_error_is_fatal = self.intrp.begin_file_prelude(path, res, !code.is_empty());
         match self.drive(code)? {
-            CtrlSig::End => Ok(false),
+            // Like gawk, a file BEGINFILE didn't skip must open, or it's fatal.
+            CtrlSig::End => match res {
+                Some(err) if open_error_is_fatal => exit_fatal(format_args!(
+                    "cannot open file `{}' for reading: {}",
+                    path.unwrap_or(Path::new("-")).display(),
+                    strip_os_error(err)
+                )),
+                Some(_) => Ok(true),
+                None => Ok(false),
+            },
             CtrlSig::NextFile => Ok(true),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
             CtrlSig::Next => unreachable!(),
