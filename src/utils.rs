@@ -4,9 +4,11 @@
 // files that was distributed with this source code.
 
 use std::{
+    borrow::Cow,
     fmt::{Debug, Display},
     io::{self, Write},
     panic::{UnwindSafe, catch_unwind, set_hook, take_hook},
+    path::Path,
     process::exit,
 };
 
@@ -72,11 +74,19 @@ pub fn exit_fatal(msg: impl Display) -> ! {
     exit(AWK_FATAL_CODE)
 }
 
-/// `io::Error` text without the " (os error N)" suffix Rust appends.
-pub fn strip_os_error(err: &io::Error) -> String {
-    let msg = err.to_string();
-    match msg.split_once(" (os error ") {
-        Some((text, _)) => text.to_owned(),
-        None => msg,
+/// Errors that stop awk with gawk's fatal status.
+#[derive(Debug, thiserror::Error)]
+pub enum FatalError<'a> {
+    #[error("cannot open file `{}' for reading: {}", .path.display(), gnu_reason(.err))]
+    CannotOpen { path: &'a Path, err: &'a io::Error },
+}
+
+/// GNU's wording for the common I/O errors, which Rust words differently.
+fn gnu_reason(err: &io::Error) -> Cow<'static, str> {
+    match err.kind() {
+        io::ErrorKind::NotFound => "No such file or directory".into(),
+        io::ErrorKind::PermissionDenied => "Permission denied".into(),
+        io::ErrorKind::IsADirectory => "Is a directory".into(),
+        _ => err.to_string().into(),
     }
 }
