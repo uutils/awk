@@ -968,7 +968,9 @@ fn missing_input_file_is_fatal() {
     ucmd()
         .args(&["END { print \"after\" }", "absent-input.txt"])
         .fails_with_code(2)
-        .stderr_contains("cannot open file `absent-input.txt' for reading")
+        .stderr_contains(
+            "cannot open file `absent-input.txt' for reading: No such file or directory",
+        )
         .no_stdout();
 }
 
