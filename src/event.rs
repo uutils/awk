@@ -17,7 +17,10 @@ use interpreter::{
 };
 use parser::DiagnosticStore;
 
-use crate::cli::{ArgQueueItem, KeyValue};
+use crate::{
+    cli::{ArgQueueItem, KeyValue},
+    utils::AWK_FATAL_CODE,
+};
 
 pub struct AwkRt<'a> {
     intrp: Interpreter<'a>,
@@ -54,7 +57,7 @@ impl<'a> AwkRt<'a> {
                     err.emit_diagnostic(&mut self.diagnostics);
                     self.diagnostics.flush()?;
                     if self.diagnostics.is_unrecoverable() {
-                        self.end_event_loop(1)?;
+                        self.end_event_loop(AWK_FATAL_CODE)?;
                     }
                     continue;
                 }

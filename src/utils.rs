@@ -13,6 +13,9 @@ use std::{
 type ExitCode = i32;
 
 const AWK_PANIC_CODE: ExitCode = 2;
+/// Exit status of a fatal error raised while running the program, as in gawk.
+/// Errors before the program runs exit with [`EXIT_FAILURE`] instead.
+pub const AWK_FATAL_CODE: ExitCode = 2;
 const EXIT_FAILURE: ExitCode = 1;
 const EXIT_SUCCESS: ExitCode = 0;
 

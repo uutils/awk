@@ -747,7 +747,7 @@ fn fieldwidths_skip_star_past_end_yields_empty_field() {
 fn fieldwidths_invalid_spec_is_fatal() {
     ucmd()
         .arg(r#"BEGIN { FIELDWIDTHS = "2 -1"; print "alive" }"#)
-        .fails_with_code(1)
+        .fails_with_code(2)
         .stderr_contains("Invalid FIELDWIDTHS value");
 }
 
@@ -778,18 +778,18 @@ fn fieldwidths_overridden_by_fs() {
 fn return_stmnt_sets_typedness_eagerly() {
     ucmd()
         .arg("function f(x) { return a } BEGIN { a[f(a)] = 1; }")
-        .fails_with_code(1);
+        .fails_with_code(2);
 }
 
 #[test]
 fn stmnt_conditions_set_typedness_eagerly() {
     ucmd()
         .arg("BEGIN { a[1] = 1; if(a) print; }")
-        .fails_with_code(1);
+        .fails_with_code(2);
 
     ucmd()
         .arg("BEGIN { a[1] = 1; while(a) break; }")
-        .fails_with_code(1);
+        .fails_with_code(2);
 }
 
 #[test]
@@ -1081,7 +1081,7 @@ fn negative_nf_is_fatal() {
         ucmd()
             .arg(program)
             .pipe_in(input)
-            .fails_with_code(1)
+            .fails_with_code(2)
             .stdout_is("")
             .stderr_contains(format!("NF set to negative value `{value}`"));
     }
@@ -1103,4 +1103,41 @@ fn smaller_nf_still_truncates() {
         .pipe_in("a b c\n")
         .succeeds()
         .stdout_is("a b\n2\n");
+}
+
+#[test]
+fn runtime_errors_exit_with_two() {
+    // Fatal errors raised while running the program exit with 2, like gawk.
+    // (program, stderr)
+    let cases = [
+        ("BEGIN { print 1 / 0 }", "divide"),
+        ("BEGIN { print 1 % 0 }", "divide"),
+        ("BEGIN { x[1] = 1; print x }", "array as a scalar"),
+        ("BEGIN { x = 1; x[1] = 2 }", "scalar as an array"),
+        ("BEGIN { f() }", "undefined function"),
+        (
+            "function f(a) { return a } BEGIN { f(1, 2) }",
+            "too many arguments",
+        ),
+        (
+            r#"BEGIN { FIELDWIDTHS = "x" }"#,
+            "Invalid FIELDWIDTHS value",
+        ),
+        ("BEGIN { NF = -1 }", "NF set to negative value"),
+    ];
+    for (program, stderr) in cases {
+        ucmd()
+            .arg(program)
+            .fails_with_code(2)
+            .stderr_contains(stderr);
+    }
+}
+
+#[test]
+fn runtime_error_in_a_rule_exits_with_two() {
+    ucmd()
+        .arg("{ print $1 / 0 }")
+        .pipe_in("1\n")
+        .fails_with_code(2)
+        .stdout_is("");
 }
