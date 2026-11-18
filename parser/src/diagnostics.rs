@@ -177,6 +177,8 @@ pub enum ParsingError {
     NextInForbiddenCtx(Span),
     #[error("`nextfile` is forbidden in BEGIN, END, and ENDFILE rules!")]
     NextFileInForbiddenCtx(Span),
+    #[error("cannot open source file `{}' for reading: {}", .1, .2)]
+    CannotOpenSource(Span, String, String),
 }
 
 impl ParsingError {
@@ -226,6 +228,7 @@ impl ParsingError {
             | &Self::ReturnOutsideFunction(span)
             | &Self::CommandDoubleCall(span, _)
             | &Self::NextInForbiddenCtx(span)
+            | &Self::CannotOpenSource(span, ..)
             | &Self::NextFileInForbiddenCtx(span) => Some(span),
         }
     }

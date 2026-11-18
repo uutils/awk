@@ -25,11 +25,7 @@ use memchr::memchr;
 pub struct Args {
     #[arg(required_unless_present_any = ["file", "source"])]
     pub code: Option<OsString>,
-    #[arg(
-        trailing_var_arg = true,
-        allow_hyphen_values = true,
-        default_value = "-"
-    )]
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub read_queue: Vec<ArgQueueItem>,
     #[arg(short = 'f', long)]
     pub file: Vec<PathBuf>,
@@ -108,6 +104,18 @@ pub enum ArgQueueItem {
     File(PathBuf),
     Assignment(KeyValue),
     Stdio,
+}
+
+impl ArgQueueItem {
+    pub fn from_operand(value: &OsStr) -> Self {
+        if value == OsStr::new("-") {
+            Self::Stdio
+        } else if let Ok(key_val) = KeyValue::parse_from(value) {
+            Self::Assignment(key_val)
+        } else {
+            Self::File(PathBuf::from(value))
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -199,13 +207,7 @@ impl TypedValueParser for ArgQueueItemFactory {
         _arg: Option<&clap::Arg>,
         value: &OsStr,
     ) -> Result<Self::Value, Error> {
-        if value == OsStr::new("-") {
-            Ok(ArgQueueItem::Stdio)
-        } else if let Ok(key_val) = KeyValue::parse_from(value) {
-            Ok(ArgQueueItem::Assignment(key_val))
-        } else {
-            Ok(ArgQueueItem::File(PathBuf::from(value)))
-        }
+        Ok(ArgQueueItem::from_operand(value))
     }
 }
 
