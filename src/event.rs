@@ -72,6 +72,8 @@ impl<'a> AwkRt<'a> {
         }
     }
 
+    /// Called by [`Self::rule_event_loop`] each time a file or stdin is processed. This is
+    /// important since the VM must set some variables and handle I/O errors logic.
     #[must_use = "Handle file skipping"]
     pub fn begin_file_event_loop(
         &mut self,
@@ -104,6 +106,7 @@ impl<'a> AwkRt<'a> {
         }
     }
 
+    /// Executes the user's regular rules. Will consume the arguments queue and dispatch as needed.
     pub fn rule_event_loop(&mut self) -> Result<()> {
         let range = self.bc.rules_code();
         // Input is read unless the program has only BEGIN rules
