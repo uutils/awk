@@ -65,3 +65,18 @@ pub fn exit_err(err: Option<impl Display + Debug>) -> ! {
     }
     exit(EXIT_FAILURE)
 }
+
+/// Prints a fatal error and exits with 2, gawk's status for fatal errors.
+pub fn exit_fatal(msg: impl Display) -> ! {
+    let _ = writeln!(io::stderr(), "awk: fatal: {msg}");
+    exit(AWK_FATAL_CODE)
+}
+
+/// `io::Error` text without the " (os error N)" suffix Rust appends.
+pub fn strip_os_error(err: &io::Error) -> String {
+    let msg = err.to_string();
+    match msg.split_once(" (os error ") {
+        Some((text, _)) => text.to_owned(),
+        None => msg,
+    }
+}
