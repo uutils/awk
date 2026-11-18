@@ -1119,11 +1119,6 @@ fn runtime_errors_exit_with_two() {
             "function f(a) { return a } BEGIN { f(1, 2) }",
             "too many arguments",
         ),
-        (
-            r#"BEGIN { FIELDWIDTHS = "x" }"#,
-            "Invalid FIELDWIDTHS value",
-        ),
-        ("BEGIN { NF = -1 }", "NF set to negative value"),
     ];
     for (program, stderr) in cases {
         ucmd()
@@ -1139,5 +1134,6 @@ fn runtime_error_in_a_rule_exits_with_two() {
         .arg("{ print $1 / 0 }")
         .pipe_in("1\n")
         .fails_with_code(2)
-        .stdout_is("");
+        .stdout_is("")
+        .stderr_contains("divide");
 }

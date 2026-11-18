@@ -12,9 +12,9 @@ use std::{
 
 type ExitCode = i32;
 
-const AWK_PANIC_CODE: ExitCode = 2;
-/// Exit status of a fatal error raised while running the program, as in gawk.
-/// Errors before the program runs exit with [`EXIT_FAILURE`] instead.
+/// Exit status of a fatal error raised while running the program, and of a
+/// panic, as in gawk. Errors before the program runs exit with
+/// [`EXIT_FAILURE`] instead.
 pub const AWK_FATAL_CODE: ExitCode = 2;
 const EXIT_FAILURE: ExitCode = 1;
 const EXIT_SUCCESS: ExitCode = 0;
@@ -24,7 +24,7 @@ fn install_abort_hook() {
 
     set_hook(Box::new(move |info| {
         run_hook(info);
-        exit(AWK_PANIC_CODE);
+        exit(AWK_FATAL_CODE);
     }));
 }
 
@@ -42,7 +42,7 @@ pub fn ensure_consistent_panic<T>(f: impl UnwindSafe + FnOnce() -> T) -> T {
         // does and exit with our custom exit code. The panic msg is printed.
         match catch_unwind(f) {
             Ok(x) => x,
-            Err(_) => exit(AWK_PANIC_CODE),
+            Err(_) => exit(AWK_FATAL_CODE),
         }
     }
 }
