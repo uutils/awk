@@ -84,16 +84,15 @@ impl<'a> AwkRt<'a> {
         res: Option<&io::Error>,
     ) -> Result<bool> {
         let code = self.bc.begin_file_code();
-        let open_error_is_fatal = self.intrp.begin_file_prelude(path, res, !code.is_empty());
+        self.intrp.begin_file_prelude(path, res, !code.is_empty());
         match self.drive(code)? {
             // Like gawk, a file BEGINFILE didn't skip must open, or it's fatal.
             CtrlSig::End => match res {
-                Some(err) if open_error_is_fatal => exit_fatal(format_args!(
+                Some(err) => exit_fatal(format_args!(
                     "cannot open file `{}' for reading: {}",
                     path.unwrap_or(Path::new("-")).display(),
                     strip_os_error(err)
                 )),
-                Some(_) => Ok(true),
                 None => Ok(false),
             },
             CtrlSig::NextFile => Ok(true),
