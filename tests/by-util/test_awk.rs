@@ -964,6 +964,44 @@ fn beginfile_does_not_see_previous_record() {
 }
 
 #[test]
+fn missing_input_file_is_fatal() {
+    ucmd()
+        .args(&["END { print \"after\" }", "absent-input.txt"])
+        .fails_with_code(2)
+        .stderr_contains("cannot open file `absent-input.txt' for reading")
+        .no_stdout();
+}
+
+#[test]
+fn missing_input_file_stops_after_earlier_files() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("present.txt", "one\ntwo\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&[
+            "{ print } END { print \"after\" }",
+            "present.txt",
+            "absent-input.txt",
+        ])
+        .fails_with_code(2)
+        .stdout_is("one\ntwo\n")
+        .stderr_contains("absent-input.txt");
+}
+
+#[test]
+fn beginfile_nextfile_skips_missing_input_file() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("present.txt", "one\ntwo\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&[
+            "BEGINFILE { if (FILENAME == \"absent-input.txt\") nextfile } END { print NR }",
+            "absent-input.txt",
+            "present.txt",
+        ])
+        .succeeds()
+        .stdout_is("2\n");
+}
+
+#[test]
 fn end_after_missing_trailing_newline() {
     ucmd()
         .arg(r#"END { print NR, FNR, "[" $0 "]", NF }"#)
