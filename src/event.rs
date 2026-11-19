@@ -46,7 +46,7 @@ impl<'a> AwkRt<'a> {
         // the VM does not handle, as well as runtime errors like div by zero.
         self.begin_event_loop()?;
         self.rule_event_loop()?;
-        self.end_event_loop(0)?
+        self.end_event_loop(None)?
     }
 
     /// Runs `code` to completion, dispatching I/O signals from the VM.
@@ -60,7 +60,7 @@ impl<'a> AwkRt<'a> {
                     err.emit_diagnostic(&mut self.diagnostics);
                     self.diagnostics.flush()?;
                     if self.diagnostics.is_unrecoverable() {
-                        self.end_event_loop(AWK_FATAL_CODE)?;
+                        self.end_event_loop(Some(AWK_FATAL_CODE))?;
                     }
                     continue;
                 }
@@ -73,7 +73,7 @@ impl<'a> AwkRt<'a> {
     pub fn begin_event_loop(&mut self) -> Result<()> {
         match self.drive(self.bc.begin_code())? {
             CtrlSig::End => Ok(()),
-            CtrlSig::Exit(code) => self.end_event_loop(code.unwrap_or(0)).map(|_| ()),
+            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
             CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
         }
     }
@@ -93,7 +93,7 @@ impl<'a> AwkRt<'a> {
             CtrlSig::End if let Err(e) = opened => Err(e.kind().into()),
             CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
-            CtrlSig::Exit(code) => self.end_event_loop(code.unwrap_or(0)).map(|_| false),
+            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
             CtrlSig::Next => unreachable!(),
         }
     }
@@ -101,16 +101,17 @@ impl<'a> AwkRt<'a> {
     pub fn end_file_event_loop(&mut self) -> Result<()> {
         match self.drive(self.bc.end_file_code())? {
             CtrlSig::End => Ok(()),
-            CtrlSig::Exit(code) => self.end_event_loop(code.unwrap_or(0)).map(|_| ()),
+            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
             CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
         }
     }
 
-    pub fn end_event_loop(&mut self, code: i32) -> Result<Infallible> {
+    /// Runs the END rules and exits. `code` is the status of an earlier `exit`, if any; a bare
+    /// `exit` in END keeps it, and with neither the status is 0.
+    pub fn end_event_loop(&mut self, code: Option<i32>) -> Result<Infallible> {
         match self.drive(self.bc.end_code())? {
-            // A bare `exit` keeps the status of an earlier one.
-            CtrlSig::Exit(end_code) => exit(end_code.unwrap_or(code)),
-            CtrlSig::End => exit(code),
+            CtrlSig::Exit(end_code) => exit(end_code.or(code).unwrap_or(0)),
+            CtrlSig::End => exit(code.unwrap_or(0)),
             CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
         }
     }
@@ -154,9 +155,7 @@ impl<'a> AwkRt<'a> {
                 match self.drive(range.clone())? {
                     CtrlSig::End | CtrlSig::Next => {} // read next record & run rules
                     CtrlSig::NextFile => break,        // clean-up & read next file
-                    CtrlSig::Exit(code) => {
-                        return self.end_event_loop(code.unwrap_or(0)).map(|_| ());
-                    }
+                    CtrlSig::Exit(code) => return self.end_event_loop(code).map(|_| ()),
                 }
             }
             self.end_file_event_loop()?;
