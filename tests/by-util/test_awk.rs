@@ -31,6 +31,30 @@ fn bare_exit_in_end_keeps_status() {
 }
 
 #[test]
+fn crlf_program() {
+    ucmd()
+        .arg("BEGIN {\r\n  print \"crlf\"\r\n}\r\n")
+        .succeeds()
+        .stdout_only("crlf\n");
+}
+
+#[test]
+fn bare_carriage_return_is_white_space() {
+    ucmd()
+        .arg("BEGIN {\r\n  print \"foo\"\r\" bar\"}\r\n")
+        .succeeds()
+        .stdout_only("foo bar\n");
+}
+
+#[test]
+fn escaped_newline_with_carriage_return() {
+    ucmd()
+        .arg("BEGIN {\r\n  print \"foo\"\\\r\n\" bar\"}\r\n")
+        .succeeds()
+        .stdout_only("foo bar\n");
+}
+
+#[test]
 fn no_args_fails_code_one() {
     ucmd().fails_with_code(1);
 }

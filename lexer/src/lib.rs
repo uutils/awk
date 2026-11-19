@@ -34,7 +34,7 @@ pub type Span = Range<usize>;
 #[logos(skip("#", skip_line))]
 #[logos(extras = Extra)]
 #[logos(subpattern identifier = r"[a-zA-Z_][a-zA-Z0-9_]*")]
-#[logos(subpattern ignore = r"(?:[ \t]|(\\\n))+")]
+#[logos(subpattern ignore = r"(?:[ \t\r]|(\\\r?\n))+")]
 #[logos(subpattern ignore_with_nl = r"(?:(?&ignore)|\n)*")]
 #[logos(subpattern order = r"([eE][+-]?\d+)")]
 #[logos(error(LexingError, callback = |lex| LexingError::unexpected(lex)))]

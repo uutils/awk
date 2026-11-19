@@ -93,6 +93,23 @@ fn lexer_test_collapsible_delimiters() {
 }
 
 #[test]
+fn lexer_test_carriage_returns_are_ignored() {
+    let arena = Bump::new();
+    let lf = |src: &'static [u8]| lex(src, &arena, false, false);
+    // CRLF line endings
+    assert_eq!(
+        lf(b"BEGIN {\r\n  x = 1\r\n}\r\n"),
+        lf(b"BEGIN {\n  x = 1\n}\n")
+    );
+    // a bare carriage return is white space, anywhere between tokens
+    assert_eq!(lf(b"x\r=\r1\r"), lf(b"x = 1"));
+    assert_eq!(lf(b"\"foo\"\r\" bar\""), lf(b"\"foo\" \" bar\""));
+    // an escaped newline may be preceded by a carriage return
+    assert_eq!(lf(b"1 +\\\r\n2"), lf(b"1 +\\\n2"));
+    assert_eq!(lf(b"1 +\\\r\n2"), lf(b"1 + 2"));
+}
+
+#[test]
 fn lexer_test_multiline() {
     let arena = Bump::new();
     let str = b"\"apple\\\n orange\", /lemon\\\n fruit/";
