@@ -352,8 +352,7 @@ impl<'a> CodeGen<'a> {
             }
             Statement::Exit(None, metadata) => {
                 self.with_metadata(*metadata, |this| {
-                    let (arg, ty) = TypedArg::new_imm(0).into_arg();
-                    this.emit(Instruction::Exit { arg, ty });
+                    this.emit(Instruction::ExitKeep);
                 });
             }
             Statement::Return(Some(expr), metadata) => {
