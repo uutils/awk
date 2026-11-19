@@ -1173,3 +1173,39 @@ fn runtime_error_in_a_rule_exits_with_two() {
         .stdout_is("")
         .stderr_contains("divide");
 }
+
+#[test]
+fn syntax_error_exits_one() {
+    for program in [
+        "BEGIN { x = ( }",
+        "BEGIN { print ( }",
+        "BEGIN {",
+        "{ print $ }",
+    ] {
+        ucmd()
+            .arg(program)
+            .fails_with_code(1)
+            .no_stdout()
+            .stderr_contains("Syntax error");
+    }
+}
+
+#[test]
+fn syntax_error_in_a_program_file_exits_one() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("bad.awk", "BEGIN { x = ( }\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["-f", "bad.awk"])
+        .fails_with_code(1)
+        .no_stdout()
+        .stderr_contains("Syntax error");
+}
+
+#[test]
+fn syntax_error_does_not_run_the_program() {
+    // The program must not start, so nothing is printed and no input is read.
+    ucmd()
+        .arg(r#"BEGIN { print "started" } END { x = ( }"#)
+        .fails_with_code(1)
+        .no_stdout();
+}
