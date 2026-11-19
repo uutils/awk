@@ -16,8 +16,8 @@ type ExitCode = i32;
 /// panic, as in gawk. Errors before the program runs exit with
 /// [`EXIT_FAILURE`] instead.
 pub const AWK_FATAL_CODE: ExitCode = 2;
-const EXIT_FAILURE: ExitCode = 1;
-const EXIT_SUCCESS: ExitCode = 0;
+pub const EXIT_FAILURE: ExitCode = 1;
+pub const EXIT_SUCCESS: ExitCode = 0;
 
 fn install_abort_hook() {
     let run_hook = take_hook();
@@ -53,15 +53,15 @@ pub fn exit_with(res: Result<Option<impl Into<ExitCode>>, impl Display + Debug>)
     let code = match res {
         Ok(Some(x)) => x.into(),
         Ok(None) => EXIT_SUCCESS,
-        Err(e) => exit_err(Some(e)),
+        Err(e) => exit_err(Some(e), EXIT_FAILURE),
     };
 
     exit(code)
 }
 
-pub fn exit_err(err: Option<impl Display + Debug>) -> ! {
+pub fn exit_err(err: Option<impl Display + Debug>, code: i32) -> ! {
     if let Some(err) = err {
         let _ = writeln!(io::stderr(), "{err}");
     }
-    exit(EXIT_FAILURE)
+    exit(code)
 }

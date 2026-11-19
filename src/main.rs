@@ -25,12 +25,12 @@ use parser::{FileCache, Parser};
 use crate::{
     cli::{Args, KeyValue},
     event::AwkRt,
-    utils::{ensure_consistent_panic, exit_err},
+    utils::{AWK_FATAL_CODE, EXIT_FAILURE, ensure_consistent_panic, exit_err},
 };
 
 fn main() {
     if let Err(e) = ensure_consistent_panic(uu_main) {
-        exit_err(Some(e))
+        exit_err(Some(e), EXIT_FAILURE)
     }
 }
 
@@ -39,7 +39,7 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
         Ok(args) => args,
         Err(msg) => {
             msg.print()?;
-            exit_err(Option::<&str>::None)
+            exit_err(Option::<&str>::None, EXIT_FAILURE)
         }
     };
 
@@ -115,7 +115,11 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
         ExecMode::Uu
     };
     let intrp = Interpreter::new(mode, cg, metadata);
-    AwkRt::new(intrp, bc, &args.read_queue, diagnostics).main_event_loop()?;
+    let res = AwkRt::new(intrp, bc, &args.read_queue, diagnostics).main_event_loop();
+
+    if let Err(err) = res {
+        exit_err(Some(err), AWK_FATAL_CODE);
+    }
 
     Ok(())
 }
