@@ -19,7 +19,7 @@ use parser::DiagnosticStore;
 
 use crate::{
     cli::{ArgQueueItem, KeyValue},
-    utils::{AWK_FATAL_CODE, exit_fatal},
+    utils::AWK_FATAL_CODE,
 };
 
 pub struct AwkRt<'a> {
@@ -42,8 +42,11 @@ impl<'a> AwkRt<'a> {
     }
 
     pub fn main_event_loop(&mut self) -> Result<()> {
-        let res = self.begin_event_loop().and_then(|_| self.rule_event_loop());
-        self.end_event_loop(0).and(res)
+        // Only fatal errors are `?` up the call stack. These include I/O errors
+        // the VM does not handle, as well as runtime errors like div by zero.
+        self.begin_event_loop()?;
+        self.rule_event_loop()?;
+        self.end_event_loop(0)?
     }
 
     /// Runs `code` to completion, dispatching I/O signals from the VM.
@@ -87,13 +90,8 @@ impl<'a> AwkRt<'a> {
         let opened = self.intrp.begin_file_prelude(path, res, !code.is_empty());
         match self.drive(code)? {
             // Like gawk, BEGINFILE may skip a file that didn't open; if it doesn't, that's fatal.
-            CtrlSig::End => {
-                if let Err(err) = opened {
-                    let path = path.unwrap_or(Path::new("-")).display();
-                    exit_fatal(format_args!("cannot open file `{path}' for reading: {err}"));
-                }
-                Ok(false)
-            }
+            CtrlSig::End if let Err(e) = opened => Err(e.kind().into()),
+            CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
             CtrlSig::Next => unreachable!(),
