@@ -16,6 +16,21 @@ fn empty_program_succeeds() {
 // }
 
 #[test]
+fn bare_exit_in_end_keeps_status() {
+    ucmd()
+        .arg("{ exit 5 } END { exit }")
+        .pipe_in("line\n")
+        .fails_with_code(5);
+    ucmd()
+        .arg("BEGIN { exit 3 } END { exit }")
+        .fails_with_code(3);
+    ucmd()
+        .arg("BEGIN { exit 3 } END { exit 4 }")
+        .fails_with_code(4);
+    ucmd().arg("BEGIN { exit } END { exit }").succeeds();
+}
+
+#[test]
 fn no_args_fails_code_one() {
     ucmd().fails_with_code(1);
 }

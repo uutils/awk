@@ -101,6 +101,8 @@ pub enum Instruction {
 
     // Traps
     Exit { arg: Arg, ty: ArgTy },
+    // `exit` without a status: keeps the status of an earlier `exit`.
+    ExitKeep,
     Return { arg: Arg, ty: ArgTy },
     ReturnUnassigned,
     Next,
@@ -464,7 +466,7 @@ impl Display for Instruction {
             Self::UserCall { dest, start, end, name } => {
                 write!(f, "{op} {dest}, {name}, {start}..{end}")
             }
-            Self::Next | Self::NextFile | Self::ReturnUnassigned => {
+            Self::Next | Self::NextFile | Self::ReturnUnassigned | Self::ExitKeep => {
                 write!(f, "{op}")
             }
             Self::GetlineInput { dest, lhs, tyl } => {
@@ -529,7 +531,7 @@ impl Instruction {
             Self::Return { .. } => "retval",
             Self::ReturnUnassigned => "ret",
             Self::Branch { .. } => "brif",
-            Self::Exit { .. } => "exit",
+            Self::Exit { .. } | Self::ExitKeep => "exit",
             Self::Next => "next",
             Self::NextFile => "nextf",
             Self::GetlineInput { .. } => "gli",

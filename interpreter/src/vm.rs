@@ -78,7 +78,8 @@ pub enum CtrlSig {
     End,
     Next,
     NextFile,
-    Exit(i32),
+    /// `None` for an `exit` without a status.
+    Exit(Option<i32>),
 }
 
 #[derive(Debug)]
@@ -415,8 +416,9 @@ impl<'a> Interpreter<'a> {
                 }
                 Instruction::Exit { arg, ty } => {
                     let val = self.get_val(arg, ty, metadata, Value::to_int)?;
-                    return Ok(Signal::Terminal(CtrlSig::Exit(val)));
+                    return Ok(Signal::Terminal(CtrlSig::Exit(Some(val))));
                 }
+                Instruction::ExitKeep => return Ok(Signal::Terminal(CtrlSig::Exit(None))),
                 Instruction::Return { arg, ty } => {
                     let val = self.get_val(arg, ty, metadata, Value::clone)?;
                     self.ret(val);

@@ -73,7 +73,7 @@ impl<'a> AwkRt<'a> {
     pub fn begin_event_loop(&mut self) -> Result<()> {
         match self.drive(self.bc.begin_code())? {
             CtrlSig::End => Ok(()),
-            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
+            CtrlSig::Exit(code) => self.end_event_loop(code.unwrap_or(0)).map(|_| ()),
             CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
         }
     }
@@ -93,7 +93,7 @@ impl<'a> AwkRt<'a> {
             CtrlSig::End if let Err(e) = opened => Err(e.kind().into()),
             CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
-            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
+            CtrlSig::Exit(code) => self.end_event_loop(code.unwrap_or(0)).map(|_| false),
             CtrlSig::Next => unreachable!(),
         }
     }
@@ -101,14 +101,15 @@ impl<'a> AwkRt<'a> {
     pub fn end_file_event_loop(&mut self) -> Result<()> {
         match self.drive(self.bc.end_file_code())? {
             CtrlSig::End => Ok(()),
-            CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
+            CtrlSig::Exit(code) => self.end_event_loop(code.unwrap_or(0)).map(|_| ()),
             CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
         }
     }
 
     pub fn end_event_loop(&mut self, code: i32) -> Result<Infallible> {
         match self.drive(self.bc.end_code())? {
-            CtrlSig::Exit(code) => exit(code),
+            // A bare `exit` keeps the status of an earlier one.
+            CtrlSig::Exit(end_code) => exit(end_code.unwrap_or(code)),
             CtrlSig::End => exit(code),
             CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
         }
@@ -153,7 +154,9 @@ impl<'a> AwkRt<'a> {
                 match self.drive(range.clone())? {
                     CtrlSig::End | CtrlSig::Next => {} // read next record & run rules
                     CtrlSig::NextFile => break,        // clean-up & read next file
-                    CtrlSig::Exit(code) => return self.end_event_loop(code).map(|_| ()),
+                    CtrlSig::Exit(code) => {
+                        return self.end_event_loop(code.unwrap_or(0)).map(|_| ());
+                    }
                 }
             }
             self.end_file_event_loop()?;
