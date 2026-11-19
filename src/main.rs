@@ -57,7 +57,9 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
             Ok(ast) => ast,
             Err(mut diagnostics) => {
                 diagnostics.flush()?;
-                return Ok(());
+                // The program did not parse: exit with 1, as errors before
+                // the program runs do.
+                exit_err(Option::<&str>::None)
             }
         };
         ast.diagnostics.flush()?;
