@@ -7,7 +7,8 @@ mod utils;
 
 use std::{
     fmt::{self, Display},
-    mem::replace,
+    mem::{DropGuard, replace},
+    ops::{Deref, DerefMut},
     vec::Vec as StdVec,
 };
 
@@ -119,16 +120,15 @@ impl<'a> CodeGen<'a> {
         if let Some(actions) = actions {
             self.lower_body(actions);
         } else {
-            self.scoped_reg(|this, reg| {
-                let (arg, ty) = TypedArg::new_imm(0).into_arg();
-                this.emit(Instruction::LoadF { dest: reg, arg, ty });
+            let (mut this, reg) = self.alloc_reg();
+            let (arg, ty) = TypedArg::new_imm(0).into_arg();
+            this.emit(Instruction::LoadF { dest: reg, arg, ty });
 
-                this.emit(Instruction::OutputCall {
-                    start: reg,
-                    end: Reg(reg.0 + 1),
-                    cmd: Command::Print,
-                    redir: None,
-                });
+            this.emit(Instruction::OutputCall {
+                start: reg,
+                end: Reg(reg.0 + 1),
+                cmd: Command::Print,
+                redir: None,
             });
         }
     }
@@ -188,197 +188,166 @@ impl<'a> CodeGen<'a> {
     fn lower_statement(&mut self, stmnt: &Statement) {
         match stmnt {
             Statement::If { condition, then_body, else_body, metadata } => {
-                self.with_metadata(*metadata, |this| {
-                    let state = this.regs.clone();
-                    let (if_label, ()) =
-                        this.emit_branch(condition, |this| this.lower_body(then_body));
+                let this = &mut *self.with_metadata(*metadata);
+                let state = this.regs.clone();
+                let (if_label, ()) = this.emit_branch(condition, |this| this.lower_body(then_body));
 
-                    if let Some(else_body) = else_body {
-                        this.bc.nth(if_label).push_end_label();
-                        this.emit_jump(|this| {
-                            state.scope(this, |this| this.lower_body(else_body));
-                        });
-                    }
-                });
+                if let Some(else_body) = else_body {
+                    this.bc.nth(if_label).push_end_label();
+                    this.emit_jump(|this| {
+                        state.scope(this, |this| this.lower_body(else_body));
+                    });
+                }
             }
             Statement::While { condition, then_body, metadata } => {
-                self.with_metadata(*metadata, |this| {
-                    let cond_label = this.following_instr(0);
-                    this.emit_branch(condition, |this| {
-                        // Wrap loop-back so `break` jumps past the entire loop.
-                        this.with_break_scope(|this| {
-                            this.with_continue_label(cond_label, |this| {
-                                this.lower_body(then_body);
-                            });
-                            this.emit(Instruction::Jump { to: cond_label });
-                        });
-                    });
+                let this = &mut *self.with_metadata(*metadata);
+                let cond_label = this.following_instr(0);
+                this.emit_branch(condition, |this| {
+                    // Wrap loop-back so `break` jumps past the entire loop.
+                    let this = &mut *this.with_break();
+
+                    this.with_continue_label(cond_label).lower_body(then_body);
+                    this.emit(Instruction::Jump { to: cond_label });
                 });
             }
             Statement::DoWhile { then_body, condition, metadata } => {
-                self.with_metadata(*metadata, |this| {
-                    // Layout so the continue target (condition) is known before the body:
-                    //   jmp body
-                    // continue:
-                    //   cond; brif body, end
-                    // body:
-                    //   ...; jmp continue
-                    this.with_break_scope(|this| {
-                        let (branch, continue_label) = this.emit_jump(|this| {
-                            let continue_label = this.following_instr(0);
-                            this.scoped_reg(|this, cond_reg| {
-                                this.lower_expr_into(condition, cond_reg);
-                                let then_label = this.following_instr(1);
-                                let branch = this.emit(Instruction::br(cond_reg, then_label));
-                                (branch, continue_label)
-                            })
-                        });
-
-                        this.with_continue_label(continue_label, |this| {
-                            this.lower_body(then_body);
-                        });
-                        this.emit(Instruction::Jump { to: continue_label });
-
-                        let end_label = this.following_instr(0);
-                        this.bc.nth(branch).set_label(end_label);
-                    });
+                let this = &mut *self.with_metadata(*metadata);
+                // Layout so the continue target (condition) is known before the body:
+                //   jmp body
+                // continue:
+                //   cond; brif body, end
+                // body:
+                //   ...; jmp continue
+                let this = &mut *this.with_break();
+                let (branch, continue_label) = this.emit_jump(|this| {
+                    let continue_label = this.following_instr(0);
+                    let (mut this, cond_reg) = this.alloc_reg();
+                    this.lower_expr_into(condition, cond_reg);
+                    let then_label = this.following_instr(1);
+                    let branch = this.emit(Instruction::br(cond_reg, then_label));
+                    (branch, continue_label)
                 });
+
+                this.with_continue_label(continue_label)
+                    .lower_body(then_body);
+                this.emit(Instruction::Jump { to: continue_label });
+
+                let end_label = this.following_instr(0);
+                this.bc.nth(branch).set_label(end_label);
             }
             Statement::For { init, condition, update, body, metadata } => {
-                self.with_metadata(*metadata, |this| {
-                    if let Some(SimpleStatement::Expression(expr, metadata)) = init {
-                        this.with_metadata(*metadata, |this| this.lower_expr(expr).free(this));
+                let this = &mut *self.with_metadata(*metadata);
+                if let Some(SimpleStatement::Expression(expr, metadata)) = init {
+                    let this = &mut *this.with_metadata(*metadata);
+                    this.lower_expr(expr).free(this);
+                }
+
+                // Layout so continue jumps to the update clause (gawk/POSIX):
+                //   init; jmp cond
+                // continue: update
+                // cond: brif body / end; body; jmp continue
+                let continue_label = this.emit_jump(|this| {
+                    let continue_label = this.following_instr(0);
+                    if let Some(SimpleStatement::Expression(expr, metadata)) = update {
+                        let this = &mut *this.with_metadata(*metadata);
+                        this.lower_expr(expr).free(this);
                     }
-
-                    // Layout so continue jumps to the update clause (gawk/POSIX):
-                    //   init; jmp cond
-                    // continue: update
-                    // cond: brif body / end; body; jmp continue
-                    let continue_label = this.emit_jump(|this| {
-                        let continue_label = this.following_instr(0);
-                        if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                            this.with_metadata(*metadata, |this| {
-                                this.lower_expr(expr).free(this);
-                            });
-                        }
-                        continue_label
-                    });
-
-                    let lower_for_body = |this: &mut Self| {
-                        this.with_break_scope(|this| {
-                            this.with_continue_label(continue_label, |this| {
-                                this.lower_body(body);
-                            });
-                            this.emit(Instruction::Jump { to: continue_label });
-                        });
-                    };
-
-                    match condition {
-                        Some(condition) => {
-                            this.emit_branch(condition, lower_for_body);
-                        }
-                        None => lower_for_body(this),
-                    }
+                    continue_label
                 });
+
+                let lower_for_body = |this: &mut Self| {
+                    let this = &mut *this.with_break();
+
+                    this.with_continue_label(continue_label).lower_body(body);
+                    this.emit(Instruction::Jump { to: continue_label });
+                };
+
+                match condition {
+                    Some(condition) => {
+                        this.emit_branch(condition, lower_for_body);
+                    }
+                    None => lower_for_body(this),
+                }
             }
             Statement::Simple(SimpleStatement::Expression(expr, metadata)) => {
-                self.with_metadata(*metadata, |this| {
-                    this.lower_expr(expr).free(this);
-                });
+                let this = &mut *self.with_metadata(*metadata);
+                this.lower_expr(expr).free(this);
             }
             Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
-                self.with_metadata(*metadata, |this| {
-                    let (range, redir) =
-                        this.alloc_reg_range_patched::<false, _>(RtType::Scalar, args, |this| {
-                            redirection.as_ref().map(|(r, expr)| {
-                                this.scoped_reg(|this, redir_reg| {
-                                    this.lower_expr_into(expr, redir_reg);
-                                });
-                                *r
-                            })
-                        });
-                    let (start, end) = range.as_range();
-                    this.emit(Instruction::OutputCall { start, end, cmd: *name, redir });
-                    this.regs.free_many(range);
-                });
+                let this = &mut *self.with_metadata(*metadata);
+                let (range, redir) =
+                    this.alloc_reg_range_patched::<false, _>(RtType::Scalar, args, |this| {
+                        redirection.as_ref().map(|(r, expr)| {
+                            let (mut this, redir_reg) = this.alloc_reg();
+                            this.lower_expr_into(expr, redir_reg);
+                            *r
+                        })
+                    });
+                let (start, end) = range.as_range();
+                this.emit(Instruction::OutputCall { start, end, cmd: *name, redir });
+                this.regs.free_many(range);
             }
             Statement::Simple(SimpleStatement::DeleteElement(place, metadata)) => {
-                self.with_metadata(*metadata, |this| {
-                    this.load_array_place(place, |this, arg, ty, (start, end)| {
-                        this.emit(Instruction::DeleteP { arg, ty, start, end });
-                    });
+                let this = &mut *self.with_metadata(*metadata);
+                this.load_array_place(place, |this, arg, ty, (start, end)| {
+                    this.emit(Instruction::DeleteP { arg, ty, start, end });
                 });
             }
             Statement::Simple(SimpleStatement::Delete(var, metadata)) => {
-                self.with_metadata(*metadata, |this| {
-                    let (arg, ty) = TypedPlace::new_var(this, var).into_place();
-                    this.emit(Instruction::DeleteA { arg, ty });
-                });
+                let this = &mut *self.with_metadata(*metadata);
+                let (arg, ty) = TypedPlace::new_var(this, var).into_place();
+                this.emit(Instruction::DeleteA { arg, ty });
             }
             Statement::Switch { scrutinee, branches, default, metadata } => {
-                self.with_metadata(*metadata, |this| {
-                    this.lower_switch(scrutinee, branches, default.as_ref());
-                });
+                self.with_metadata(*metadata)
+                    .lower_switch(scrutinee, branches, default.as_ref());
             }
             Statement::ForEach { .. } => todo!(),
             Statement::Break(metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    // Parser rejects `break` outside a loop or switch (#75).
-                    let jump = this.emit(Instruction::Jump { to: Label(0) });
-                    match this.break_exits.as_mut() {
-                        Some(exits) => exits.push(jump),
-                        None => unreachable!("break outside loop or switch"),
-                    }
-                });
+                let this = &mut *self.with_metadata(*metadata);
+                // Parser rejects `break` outside a loop or switch (#75).
+                let jump = this.emit(Instruction::Jump { to: Label(0) });
+                match this.break_exits.as_mut() {
+                    Some(exits) => exits.push(jump),
+                    None => unreachable!("break outside loop or switch"),
+                }
             }
             Statement::Continue(metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    // Parser rejects `continue` outside a loop (#75).
-                    let Some(to) = this.continue_label else {
-                        unreachable!("continue outside loop");
-                    };
-                    this.emit(Instruction::Jump { to });
-                });
+                let this = &mut *self.with_metadata(*metadata);
+                // Parser rejects `continue` outside a loop (#75).
+                let Some(to) = this.continue_label else {
+                    unreachable!("continue outside loop");
+                };
+                this.emit(Instruction::Jump { to });
             }
             Statement::Exit(Some(expr), metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    this.scoped_reg(|this, dest| {
-                        this.lower_expr_into(expr, dest);
+                let this = &mut *self.with_metadata(*metadata);
+                let (mut this, dest) = this.alloc_reg();
+                this.lower_expr_into(expr, dest);
 
-                        let (arg, ty) = TypedArg::new_reg(dest).into_arg();
-                        this.emit(Instruction::Exit { arg, ty });
-                    });
-                });
+                let (arg, ty) = TypedArg::new_reg(dest).into_arg();
+                this.emit(Instruction::Exit { arg, ty });
             }
             Statement::Exit(None, metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    this.emit(Instruction::ExitKeep);
-                });
+                self.with_metadata(*metadata).emit(Instruction::ExitKeep);
             }
             Statement::Return(Some(expr), metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    this.scoped_reg(|this, dest| {
-                        this.lower_expr_into(expr, dest);
+                let this = &mut *self.with_metadata(*metadata);
+                let (mut this, dest) = this.alloc_reg();
+                this.lower_expr_into(expr, dest);
 
-                        let (arg, ty) = TypedArg::new_reg(dest).into_arg();
-                        this.emit(Instruction::Return { arg, ty });
-                    });
-                });
+                let (arg, ty) = TypedArg::new_reg(dest).into_arg();
+                this.emit(Instruction::Return { arg, ty });
             }
             Statement::Return(None, metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    this.emit(Instruction::ReturnUnassigned);
-                });
+                self.with_metadata(*metadata)
+                    .emit(Instruction::ReturnUnassigned);
             }
             Statement::Next(metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    this.emit(Instruction::Next);
-                });
+                self.with_metadata(*metadata).emit(Instruction::Next);
             }
             Statement::NextFile(metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    this.emit(Instruction::NextFile);
-                });
+                self.with_metadata(*metadata).emit(Instruction::NextFile);
             }
         }
     }
@@ -405,7 +374,8 @@ impl<'a> CodeGen<'a> {
         let mut default_label = None;
 
         // One break scope for all cases so `break` skips fall-through (gawk/C).
-        self.with_break_scope(|this| {
+        {
+            let this = &mut *self.with_break();
             for (i, (_, body)) in branches.iter().enumerate().take(default_pos) {
                 case_labels[i] = Label(this.bc.len());
                 this.lower_body(body);
@@ -420,7 +390,7 @@ impl<'a> CodeGen<'a> {
                 case_labels[i] = Label(this.bc.len());
                 this.lower_body(body);
             }
-        });
+        }
 
         let end_switch = self.following_instr(0);
 
@@ -467,9 +437,7 @@ impl<'a> CodeGen<'a> {
 
     fn lower_expr(&mut self, expr: &Expr) -> Operand {
         match expr {
-            Expr::Leaf(atom, metadata) => {
-                self.with_metadata(*metadata, |this| this.lower_atom(atom))
-            }
+            Expr::Leaf(atom, metadata) => self.with_metadata(*metadata).lower_atom(atom),
             Expr::Node(_, _) => {
                 let dest = self.regs.alloc();
                 self.lower_expr_into(expr, *dest);
@@ -538,184 +506,177 @@ impl<'a> CodeGen<'a> {
     fn lower_expr_into(&mut self, expr: &Expr, dest: Reg) {
         match expr {
             Expr::Leaf(atom, metadata) => {
-                self.with_metadata(*metadata, |this| this.lower_atom_into(atom, dest));
+                self.with_metadata(*metadata).lower_atom_into(atom, dest);
             }
             Expr::Node(node, metadata) => {
-                self.with_metadata(*metadata, |this| {
-                    match node.as_ref() {
-                        ExprNode::UnaryOperation(op, expr) => {
-                            let src = this.lower_expr(expr);
-                            this.emit(Instruction::from_unary(*op, dest, src.to_arg()));
-                            src.free(this);
-                        }
-                        ExprNode::BinaryOperation(op, lhs, rhs) => match op {
-                            BinaryOperator::And => this.lower_and_into(lhs, rhs, dest),
-                            BinaryOperator::Or => this.lower_or_into(lhs, rhs, dest),
-                            BinaryOperator::Concat => this.lower_cats_into(lhs, rhs, dest),
-                            _ => this.lower_binop_general(*op, lhs, rhs, dest),
-                        },
-                        ExprNode::Ternary(condition, true_then, false_then) => {
-                            let (if_label, state) = this.emit_branch(condition, |this| {
-                                let state = this.regs.clone();
-                                this.lower_expr_into(true_then, dest);
-                                state
-                            });
-                            this.bc.nth(if_label).push_end_label();
-                            this.emit_jump(|this| {
-                                state.scope(this, |this| this.lower_expr_into(false_then, dest));
-                            });
-                        }
-                        ExprNode::BinaryPlaceOperation(op, place, expr) => {
-                            let val = this.lower_expr(expr);
+                let this = &mut *self.with_metadata(*metadata);
+                match node.as_ref() {
+                    ExprNode::UnaryOperation(op, expr) => {
+                        let src = this.lower_expr(expr);
+                        this.emit(Instruction::from_unary(*op, dest, src.to_arg()));
+                        src.free(this);
+                    }
+                    ExprNode::BinaryOperation(op, lhs, rhs) => match op {
+                        BinaryOperator::And => this.lower_and_into(lhs, rhs, dest),
+                        BinaryOperator::Or => this.lower_or_into(lhs, rhs, dest),
+                        BinaryOperator::Concat => this.lower_cats_into(lhs, rhs, dest),
+                        _ => this.lower_binop_general(*op, lhs, rhs, dest),
+                    },
+                    ExprNode::Ternary(condition, true_then, false_then) => {
+                        let (if_label, state) = this.emit_branch(condition, |this| {
+                            let state = this.regs.clone();
+                            this.lower_expr_into(true_then, dest);
+                            state
+                        });
+                        this.bc.nth(if_label).push_end_label();
+                        this.emit_jump(|this| {
+                            state.scope(this, |this| this.lower_expr_into(false_then, dest));
+                        });
+                    }
+                    ExprNode::BinaryPlaceOperation(op, place, expr) => {
+                        let val = this.lower_expr(expr);
 
-                            let Some(bin_op) = lower_assign_ops(*op) else {
-                                this.store_place(place, dest, val.to_arg());
-                                val.free(this);
-                                return;
-                            };
-
-                            this.with_resolved_place(place, |this, resolved| {
-                                this.scoped_reg(|this, lhs_reg| {
-                                    let lhs = this.load_resolved(resolved, place, lhs_reg).into();
-                                    let rhs = val.to_arg();
-                                    let arg = TypedArg::new_reg(dest);
-
-                                    this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
-                                    this.store_resolved(resolved, place, dest, arg);
-                                });
-                            });
+                        let Some(bin_op) = lower_assign_ops(*op) else {
+                            this.store_place(place, dest, val.to_arg());
                             val.free(this);
-                        }
-                        // Use optimized path for variables and records. Cannot
-                        // be used for arrays because the stores aren't trivial.
-                        ExprNode::UnaryPlaceOperation(op, place)
-                            if matches!(place, Place::Variable(_)) =>
-                        {
-                            let (arg, ty) = this.load_place(dest, place).into_place();
-                            match op {
-                                UnaryPlaceOperator::IncrementL => {
-                                    this.emit(Instruction::IncrementPre { dest, arg, ty });
-                                }
-                                UnaryPlaceOperator::IncrementR => {
-                                    this.emit(Instruction::IncrementPost { dest, arg, ty });
-                                }
-                                UnaryPlaceOperator::DecrementL => {
-                                    this.emit(Instruction::DecrementPre { dest, arg, ty });
-                                }
-                                UnaryPlaceOperator::DecrementR => {
-                                    this.emit(Instruction::DecrementPost { dest, arg, ty });
-                                }
+                            return;
+                        };
+
+                        this.with_resolved_place(place, |this, resolved| {
+                            let (mut this, lhs_reg) = this.alloc_reg();
+                            let lhs = this.load_resolved(resolved, place, lhs_reg).into();
+                            let rhs = val.to_arg();
+                            let arg = TypedArg::new_reg(dest);
+
+                            this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
+                            this.store_resolved(resolved, place, dest, arg);
+                        });
+                        val.free(this);
+                    }
+                    // Use optimized path for variables and records. Cannot
+                    // be used for arrays because the stores aren't trivial.
+                    ExprNode::UnaryPlaceOperation(op, place)
+                        if matches!(place, Place::Variable(_)) =>
+                    {
+                        let (arg, ty) = this.load_place(dest, place).into_place();
+                        match op {
+                            UnaryPlaceOperator::IncrementL => {
+                                this.emit(Instruction::IncrementPre { dest, arg, ty });
                             }
-                        }
-                        // Unoptimized path for values in arrays.
-                        ExprNode::UnaryPlaceOperation(op, place) => {
-                            this.with_resolved_place(place, |this, resolved| {
-                                let lhs = this.load_resolved(resolved, place, dest).into();
-                                let (zero, one) = (TypedArg::new_imm(0), TypedArg::new_imm(1));
-                                let add = BinaryOperator::Add;
-                                let bn = unary_place_to_binop(*op);
-
-                                match op {
-                                    UnaryPlaceOperator::IncrementL
-                                    | UnaryPlaceOperator::DecrementL => {
-                                        let arg = TypedArg::new_reg(dest);
-                                        this.emit(Instruction::from_binary(bn, dest, lhs, one));
-                                        this.store_resolved(resolved, place, dest, arg);
-                                    }
-                                    UnaryPlaceOperator::IncrementR
-                                    | UnaryPlaceOperator::DecrementR => {
-                                        this.emit(Instruction::from_binary(add, dest, lhs, zero));
-                                        this.scoped_reg(|this, tmp| {
-                                            let arg = TypedArg::new_reg(tmp);
-                                            this.emit(Instruction::from_binary(bn, tmp, lhs, one));
-                                            this.store_resolved(resolved, place, tmp, arg);
-                                        });
-                                    }
-                                }
-                            });
-                        }
-                        ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
-                        ExprNode::ArrayIndex(place) => {
-                            this.load_chained_index(dest, place);
-                        }
-                        ExprNode::InArray(array, test) => {
-                            let (lhs, tyl) = if array.1.is_empty() {
-                                // Elide copies
-                                TypedPlace::new_var(this, &array.0).into_place()
-                            } else {
-                                // Copy to-be-tested array into a register.
-                                this.resolve_array_place(dest, array, |this, arg, ty, range| {
-                                    let (start, end) = range;
-                                    let instr = Instruction::IndexA { dest, arg, start, end, ty };
-                                    this.emit(instr);
-                                });
-                                TypedPlace::new_reg(dest).into_place()
-                            };
-
-                            if let [test] = test.as_slice() {
-                                // One-dimensional test.
-                                let test = this.lower_expr(test);
-                                let (rhs, tyr) = test.to_arg().into_arg();
-
-                                this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
-                                test.free(this);
-                            } else {
-                                // Lower multi-dimensional test
-                                let (arg, ty) = (lhs, tyl);
-                                this.scoped_reg_range(RtType::Scalar, test, |this, range| {
-                                    let (start, end) = range;
-                                    this.emit(Instruction::InA { dest, arg, start, end, ty });
-                                });
+                            UnaryPlaceOperator::IncrementR => {
+                                this.emit(Instruction::IncrementPost { dest, arg, ty });
                             }
-                        }
-                        ExprNode::FunctionCall(name, args) => {
-                            let name = this.symbols.get_user_fun(name, self.arena);
-                            let range = this.gen_call_convention(RtType::Any, args);
-                            let (start, end) = range.as_range();
-                            this.emit(Instruction::UserCall { dest, start, end, name });
-                            this.regs.free_many(range);
-                        }
-                        &ExprNode::BuiltinCall(fun, ref args) => {
-                            // Bypass regular variable look-ups on type-info funs.
-                            this.scoped_reg_range(fun, args, |this, (start, end)| {
-                                this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
-                            });
-                        }
-                        ExprNode::IndirectCall(var, args) => {
-                            let range = this.gen_call_convention(RtType::Any, args);
-                            let (start, end) = range.as_range();
-                            let (name, ty) = TypedPlace::new_var(this, var).into_arg();
-                            this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
-                            this.regs.free_many(range);
-                        }
-                        ExprNode::Getline(Getline::FromInput(place)) => {
-                            this.emit_getline(dest, place.as_ref(), |lhs, tyl| {
-                                Instruction::GetlineInput { dest, lhs, tyl }
-                            });
-                        }
-                        ExprNode::Getline(Getline::FromFile(place, file)) => {
-                            this.lower_expr_into(file, dest);
-                            let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
-                            let instr =
-                                |lhs, tyl| Instruction::GetlineFile { dest, lhs, rhs, tyl, tyr };
-                            this.emit_getline(dest, place.as_ref(), instr);
-                        }
-                        ExprNode::Getline(Getline::PipeOut(place, pipe)) => {
-                            this.lower_expr_into(pipe, dest);
-                            let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
-                            let instr =
-                                |lhs, tyl| Instruction::GetlinePipe { dest, lhs, rhs, tyl, tyr };
-                            this.emit_getline(dest, place.as_ref(), instr);
-                        }
-                        ExprNode::Getline(Getline::CoprocessOut(place, coprocess)) => {
-                            this.lower_expr_into(coprocess, dest);
-                            let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
-                            let instr =
-                                |lhs, tyl| Instruction::GetlineCoproc { dest, lhs, rhs, tyl, tyr };
-                            this.emit_getline(dest, place.as_ref(), instr);
+                            UnaryPlaceOperator::DecrementL => {
+                                this.emit(Instruction::DecrementPre { dest, arg, ty });
+                            }
+                            UnaryPlaceOperator::DecrementR => {
+                                this.emit(Instruction::DecrementPost { dest, arg, ty });
+                            }
                         }
                     }
-                });
+                    // Unoptimized path for values in arrays.
+                    ExprNode::UnaryPlaceOperation(op, place) => {
+                        this.with_resolved_place(place, |this, resolved| {
+                            let lhs = this.load_resolved(resolved, place, dest).into();
+                            let (zero, one) = (TypedArg::new_imm(0), TypedArg::new_imm(1));
+                            let add = BinaryOperator::Add;
+                            let bn = unary_place_to_binop(*op);
+
+                            match op {
+                                UnaryPlaceOperator::IncrementL | UnaryPlaceOperator::DecrementL => {
+                                    let arg = TypedArg::new_reg(dest);
+                                    this.emit(Instruction::from_binary(bn, dest, lhs, one));
+                                    this.store_resolved(resolved, place, dest, arg);
+                                }
+                                UnaryPlaceOperator::IncrementR | UnaryPlaceOperator::DecrementR => {
+                                    this.emit(Instruction::from_binary(add, dest, lhs, zero));
+                                    let (mut this, tmp) = this.alloc_reg();
+                                    let arg = TypedArg::new_reg(tmp);
+                                    this.emit(Instruction::from_binary(bn, tmp, lhs, one));
+                                    this.store_resolved(resolved, place, tmp, arg);
+                                }
+                            }
+                        });
+                    }
+                    ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
+                    ExprNode::ArrayIndex(place) => {
+                        this.load_chained_index(dest, place);
+                    }
+                    ExprNode::InArray(array, test) => {
+                        let (lhs, tyl) = if array.1.is_empty() {
+                            // Elide copies
+                            TypedPlace::new_var(this, &array.0).into_place()
+                        } else {
+                            // Copy to-be-tested array into a register.
+                            this.resolve_array_place(dest, array, |this, arg, ty, range| {
+                                let (start, end) = range;
+                                let instr = Instruction::IndexA { dest, arg, start, end, ty };
+                                this.emit(instr);
+                            });
+                            TypedPlace::new_reg(dest).into_place()
+                        };
+
+                        if let [test] = test.as_slice() {
+                            // One-dimensional test.
+                            let test = this.lower_expr(test);
+                            let (rhs, tyr) = test.to_arg().into_arg();
+
+                            this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
+                            test.free(this);
+                        } else {
+                            // Lower multi-dimensional test
+                            let (arg, ty) = (lhs, tyl);
+                            let (mut this, range) = this.alloc_reg_range(RtType::Scalar, test);
+                            let (start, end) = range;
+                            this.emit(Instruction::InA { dest, arg, start, end, ty });
+                        }
+                    }
+                    ExprNode::FunctionCall(name, args) => {
+                        let name = this.symbols.get_user_fun(name, this.arena);
+                        let range = this.gen_call_convention(RtType::Any, args);
+                        let (start, end) = range.as_range();
+                        this.emit(Instruction::UserCall { dest, start, end, name });
+                        this.regs.free_many(range);
+                    }
+                    &ExprNode::BuiltinCall(fun, ref args) => {
+                        // Bypass regular variable look-ups on type-info funs.
+                        let (mut this, (start, end)) = this.alloc_reg_range(fun, args);
+                        this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
+                    }
+                    ExprNode::IndirectCall(var, args) => {
+                        let range = this.gen_call_convention(RtType::Any, args);
+                        let (start, end) = range.as_range();
+                        let (name, ty) = TypedPlace::new_var(this, var).into_arg();
+                        this.emit(Instruction::IndirectCall { dest, start, end, name, ty });
+                        this.regs.free_many(range);
+                    }
+                    ExprNode::Getline(Getline::FromInput(place)) => {
+                        this.emit_getline(dest, place.as_ref(), |lhs, tyl| {
+                            Instruction::GetlineInput { dest, lhs, tyl }
+                        });
+                    }
+                    ExprNode::Getline(Getline::FromFile(place, file)) => {
+                        this.lower_expr_into(file, dest);
+                        let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
+                        let instr =
+                            |lhs, tyl| Instruction::GetlineFile { dest, lhs, rhs, tyl, tyr };
+                        this.emit_getline(dest, place.as_ref(), instr);
+                    }
+                    ExprNode::Getline(Getline::PipeOut(place, pipe)) => {
+                        this.lower_expr_into(pipe, dest);
+                        let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
+                        let instr =
+                            |lhs, tyl| Instruction::GetlinePipe { dest, lhs, rhs, tyl, tyr };
+                        this.emit_getline(dest, place.as_ref(), instr);
+                    }
+                    ExprNode::Getline(Getline::CoprocessOut(place, coprocess)) => {
+                        this.lower_expr_into(coprocess, dest);
+                        let (rhs, tyr) = TypedArg::new_reg(dest).into_arg();
+                        let instr =
+                            |lhs, tyl| Instruction::GetlineCoproc { dest, lhs, rhs, tyl, tyr };
+                        this.emit_getline(dest, place.as_ref(), instr);
+                    }
+                }
             }
         }
     }
@@ -729,10 +690,11 @@ impl<'a> CodeGen<'a> {
         f: impl FnOnce(&mut Self, ResolvedPlace) -> T,
     ) -> T {
         match place {
-            Place::Record(expr) => self.scoped_reg(|this, reg| {
+            Place::Record(expr) => {
+                let (mut this, reg) = self.alloc_reg();
                 this.lower_expr_into(expr, reg);
-                f(this, ResolvedPlace::Record(reg))
-            }),
+                f(&mut this, ResolvedPlace::Record(reg))
+            }
             Place::Variable(_) => f(self, ResolvedPlace::Variable),
             Place::Array(place) => self.load_array_place(place, |this, arg, ty, range| {
                 f(this, ResolvedPlace::Index { arg, ty, range })
@@ -849,12 +811,12 @@ impl<'a> CodeGen<'a> {
 
         // This is an empty loop for non array-of-arrays.
         for index in indices {
-            self.scoped_reg_range(RtType::Scalar, index, |this, (start, end)| {
-                this.emit(Instruction::IndexA { dest, arg, start, end, ty });
-                (arg, ty) = TypedPlace::new_reg(dest).into_place();
-            });
+            let (mut this, (start, end)) = self.alloc_reg_range(RtType::Scalar, index);
+            this.emit(Instruction::IndexA { dest, arg, start, end, ty });
+            (arg, ty) = TypedPlace::new_reg(dest).into_place();
         }
-        self.scoped_reg_range(RtType::Scalar, last, |this, range| f(this, arg, ty, range))
+        let (mut this, range) = self.alloc_reg_range(RtType::Scalar, last);
+        f(&mut this, arg, ty, range)
     }
 
     /// Directly loads simple arrays, and allocates a register to load arrays
@@ -866,9 +828,11 @@ impl<'a> CodeGen<'a> {
     ) -> T {
         if let [index] = &indices[..] {
             let (arg, ty) = TypedPlace::new_var(self, var).into_place();
-            return self.scoped_reg_range(RtType::Scalar, index, |this, rg| f(this, arg, ty, rg));
+            let (mut this, range) = self.alloc_reg_range(RtType::Scalar, index);
+            return f(&mut this, arg, ty, range);
         }
-        self.scoped_reg(|this, tmp| this.resolve_array_place(tmp, place, f))
+        let (mut this, tmp) = self.alloc_reg();
+        this.resolve_array_place(tmp, place, f)
     }
 
     fn lower_binop_general(&mut self, op: BinaryOperator, lhs: &Expr, rhs: &Expr, dest: Reg) {
@@ -886,10 +850,9 @@ impl<'a> CodeGen<'a> {
 
     fn lower_and_into(&mut self, lhs: &Expr, rhs: &Expr, dest: Reg) {
         let (if_label, ()) = self.emit_branch(lhs, |this| {
-            this.scoped_reg(|this, rhs_reg| {
-                this.lower_expr_into(rhs, rhs_reg);
-                this.truthify(dest, rhs_reg);
-            });
+            let (mut this, rhs_reg) = this.alloc_reg();
+            this.lower_expr_into(rhs, rhs_reg);
+            this.truthify(dest, rhs_reg);
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
@@ -905,10 +868,9 @@ impl<'a> CodeGen<'a> {
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
-            this.scoped_reg(|this, rhs_reg| {
-                this.lower_expr_into(rhs, rhs_reg);
-                this.truthify(dest, rhs_reg);
-            });
+            let (mut this, rhs_reg) = this.alloc_reg();
+            this.lower_expr_into(rhs, rhs_reg);
+            this.truthify(dest, rhs_reg);
         });
     }
 
@@ -968,10 +930,9 @@ impl<'a> CodeGen<'a> {
         condition_expr: &Expr,
         cb: impl FnOnce(&mut Self) -> T,
     ) -> (Label, T) {
-        self.scoped_reg(|this, condition| {
-            this.lower_expr_into(condition_expr, condition);
-            this.emit_branch_reg(condition, cb)
-        })
+        let (mut this, condition) = self.alloc_reg();
+        this.lower_expr_into(condition_expr, condition);
+        this.emit_branch_reg(condition, cb)
     }
 
     fn emit_jump<T>(&mut self, cb: impl FnOnce(&mut Self) -> T) -> T {
@@ -982,18 +943,19 @@ impl<'a> CodeGen<'a> {
         res
     }
 
-    fn scoped_reg_range<T>(
+    /// Allocates a register range for `args`, returning a guard that frees it
+    /// when dropped, alongside the range itself. The guard derefs to `Self`,
+    /// so `let (mut this, range) = ..;` keeps lowering.
+    fn alloc_reg_range(
         &mut self,
         typeck: impl CallConv,
         args: &[Expr],
-        f: impl FnOnce(&mut Self, (Reg, Reg)) -> T,
-    ) -> T {
-        let r = self
+    ) -> (impl DerefMut<Target = Self>, (Reg, Reg)) {
+        let range = self
             .alloc_reg_range_patched::<false, _>(typeck, args, |_| {})
             .0;
-        let ret = f(self, r.as_range());
-        self.regs.free_many(r);
-        ret
+        let rg = range.as_range();
+        (Scope::new(self, move |this| this.regs.free_many(range)), rg)
     }
 
     fn gen_call_convention(&mut self, typeck: impl CallConv, args: &[Expr]) -> LinearRegRange {
@@ -1068,19 +1030,17 @@ impl<'a> CodeGen<'a> {
         // effects still trigger. We do this by using `ResolvedPlace` and
         // branching on `dest`.
         self.with_resolved_place(place, |this, resolved| {
-            this.scoped_reg(|this, read| {
-                let (arg, ty) = TypedPlace::new_reg(read).into_place();
-                this.emit(f(arg, ty));
+            let (mut this, read) = this.alloc_reg();
+            let (arg, ty) = TypedPlace::new_reg(read).into_place();
+            this.emit(f(arg, ty));
 
-                this.scoped_reg(|this, did_read| {
-                    let (lhs, tyl) = TypedArg::new_reg(dest).into_arg();
-                    let (rhs, tyr) = TypedArg::new_imm(0).into_arg();
-                    this.emit(Instruction::Gt { dest: did_read, lhs, rhs, tyl, tyr });
+            let (mut this, did_read) = this.alloc_reg();
+            let (lhs, tyl) = TypedArg::new_reg(dest).into_arg();
+            let (rhs, tyr) = TypedArg::new_imm(0).into_arg();
+            this.emit(Instruction::Gt { dest: did_read, lhs, rhs, tyl, tyr });
 
-                    this.emit_branch_reg(did_read, |this| {
-                        this.store_resolved(resolved, place, read, TypedArg::new_reg(read));
-                    });
-                });
+            this.emit_branch_reg(did_read, |this| {
+                this.store_resolved(resolved, place, read, TypedArg::new_reg(read));
             });
         });
     }
@@ -1099,34 +1059,32 @@ impl<'a> CodeGen<'a> {
         replace(&mut self.bc, Bytecode::with_capacity_in(0, self.arena))
     }
 
-    fn with_metadata<R>(&mut self, metadata: MetaId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let old = self.current_metadata;
-        self.current_metadata = metadata;
-        let ret = f(self);
-        self.current_metadata = old;
-        ret
+    /// Sets the current metadata until the returned guard is dropped.
+    fn with_metadata(&mut self, metadata: MetaId) -> impl DerefMut<Target = Self> {
+        let old = replace(&mut self.current_metadata, metadata);
+        Scope::new(self, move |this| this.current_metadata = old)
     }
 
-    /// Run `f` as the body of a loop/`switch`, patching `break` jumps to the end.
-    fn with_break_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// Momentarily overrides [`Self::break_exits`], so each `break` statement for the loop is
+    /// recorded. Once this is dropped, they are patched to jump to the latest instruction.
+    fn with_break(&mut self) -> impl DerefMut<Target = Self> {
         let prev = self.break_exits.replace(SmallVec::new());
-        let ret = f(self);
-        let end = self.following_instr(0);
-        if let Some(exits) = self.break_exits.take() {
-            for jump in exits {
-                self.bc.nth(jump).set_label(end);
+        Scope::new(self, move |this| {
+            let end = this.following_instr(0);
+            if let Some(exits) = this.break_exits.take() {
+                for jump in exits {
+                    this.bc.nth(jump).set_label(end);
+                }
             }
-        }
-        self.break_exits = prev;
-        ret
+            this.break_exits = prev;
+        })
     }
 
-    /// Set the continue target for the duration of `f`, restoring the previous value after.
-    fn with_continue_label<R>(&mut self, label: Label, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// Momentarily overrides [`Self::continue_label`], where continue
+    /// statements jump, for the duration of the returned guard.
+    fn with_continue_label(&mut self, label: Label) -> impl DerefMut<Target = Self> {
         let prev = self.continue_label.replace(label);
-        let ret = f(self);
-        self.continue_label = prev;
-        ret
+        Scope::new(self, move |this| this.continue_label = prev)
     }
 
     fn get_local_arg(&self, sym: UserNonLocal) -> Option<Reg> {
@@ -1136,12 +1094,11 @@ impl<'a> CodeGen<'a> {
             .find_map(|(i, &nl)| (nl == sym).then_some(Reg(i as RegWidth)))
     }
 
-    /// Allocates a register and frees it at the end of the scope.
-    pub fn scoped_reg<T>(&mut self, f: impl FnOnce(&mut Self, Reg) -> T) -> T {
+    /// Allocates a register that is freed when the returned self guard is dropped.
+    pub fn alloc_reg(&mut self) -> (impl DerefMut<Target = Self>, Reg) {
         let reg = self.regs.alloc();
-        let ret = f(self, *reg);
-        self.regs.free(reg);
-        ret
+        let id = *reg;
+        (Scope::new(self, move |this| this.regs.free(reg)), id)
     }
 }
 
@@ -1257,5 +1214,30 @@ impl Display for Bytecode<'_> {
             write!(f, "{i:0n$}: {e}")?;
         }
         write!(f, "}}")
+    }
+}
+
+/// [`DropGuard`] shim so we don't have to double-derefence, only removes syntactic noise.
+#[repr(transparent)]
+#[must_use = "dropping the guard immediately cleans up"]
+struct Scope<'s, T, F: FnOnce(&'s mut T)>(DropGuard<&'s mut T, F>);
+
+impl<'s, T, F: FnOnce(&'s mut T)> Scope<'s, T, F> {
+    fn new(inner: &'s mut T, clean_up: F) -> Self {
+        Self(DropGuard::new(inner, clean_up))
+    }
+}
+
+impl<'s, T, F: FnOnce(&'s mut T)> Deref for Scope<'s, T, F> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        *self.0
+    }
+}
+
+impl<'s, T, F: FnOnce(&'s mut T)> DerefMut for Scope<'s, T, F> {
+    fn deref_mut(&mut self) -> &mut T {
+        *self.0
     }
 }
