@@ -236,8 +236,8 @@ impl<'a> CodeGen<'a> {
             }
             Statement::For { init, condition, update, body, metadata } => {
                 let this = &mut *self.with_metadata(*metadata);
-                if let Some(SimpleStatement::Expression(expr, metadata)) = init {
-                    this.with_metadata(*metadata).lower_expr(expr);
+                if let Some(stmnt) = init {
+                    this.lower_simple_statement(stmnt);
                 }
 
                 // Layout so continue jumps to the update clause (gawk/POSIX):
@@ -246,8 +246,8 @@ impl<'a> CodeGen<'a> {
                 // cond: brif body / end; body; jmp continue
                 let continue_label = this.emit_jump(|this| {
                     let continue_label = this.following_instr(0);
-                    if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                        this.with_metadata(*metadata).lower_expr(expr);
+                    if let Some(stmnt) = update {
+                        this.lower_simple_statement(stmnt);
                     }
                     continue_label
                 });
@@ -266,34 +266,7 @@ impl<'a> CodeGen<'a> {
                     None => lower_for_body(this),
                 }
             }
-            Statement::Simple(SimpleStatement::Expression(expr, metadata)) => {
-                self.with_metadata(*metadata).lower_expr(expr);
-            }
-            Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
-                let this = &mut *self.with_metadata(*metadata);
-                let (range, redir) =
-                    this.alloc_reg_range_patched::<false, _>(RtType::Scalar, args, |this| {
-                        redirection.as_ref().map(|(r, expr)| {
-                            let (mut this, redir_reg) = this.alloc_reg();
-                            this.lower_expr_into(expr, redir_reg);
-                            *r
-                        })
-                    });
-                let (start, end) = range.as_range();
-                this.emit(Instruction::OutputCall { start, end, cmd: *name, redir });
-                this.regs.free_many(range);
-            }
-            Statement::Simple(SimpleStatement::DeleteElement(place, metadata)) => {
-                let this = &mut *self.with_metadata(*metadata);
-                this.load_array_place(place, |this, arg, ty, (start, end)| {
-                    this.emit(Instruction::DeleteP { arg, ty, start, end });
-                });
-            }
-            Statement::Simple(SimpleStatement::Delete(var, metadata)) => {
-                let this = &mut *self.with_metadata(*metadata);
-                let (arg, ty) = TypedPlace::new_var(this, var).into_place();
-                this.emit(Instruction::DeleteA { arg, ty });
-            }
+            Statement::Simple(stmnt) => self.lower_simple_statement(stmnt),
             Statement::Switch { scrutinee, branches, default, metadata } => {
                 self.with_metadata(*metadata)
                     .lower_switch(scrutinee, branches, default.as_ref());
@@ -344,6 +317,39 @@ impl<'a> CodeGen<'a> {
             }
             Statement::NextFile(metadata) => {
                 self.with_metadata(*metadata).emit(Instruction::NextFile);
+            }
+        }
+    }
+
+    fn lower_simple_statement(&mut self, stmnt: &SimpleStatement) {
+        match stmnt {
+            SimpleStatement::Expression(expr, metadata) => {
+                self.with_metadata(*metadata).lower_expr(expr);
+            }
+            SimpleStatement::Command { name, args, redirection, metadata } => {
+                let this = &mut *self.with_metadata(*metadata);
+                let (range, redir) =
+                    this.alloc_reg_range_patched::<false, _>(RtType::Scalar, args, |this| {
+                        redirection.as_ref().map(|(r, expr)| {
+                            let (mut this, redir_reg) = this.alloc_reg();
+                            this.lower_expr_into(expr, redir_reg);
+                            *r
+                        })
+                    });
+                let (start, end) = range.as_range();
+                this.emit(Instruction::OutputCall { start, end, cmd: *name, redir });
+                this.regs.free_many(range);
+            }
+            SimpleStatement::DeleteElement(place, metadata) => {
+                let this = &mut *self.with_metadata(*metadata);
+                this.load_array_place(place, |this, arg, ty, (start, end)| {
+                    this.emit(Instruction::DeleteP { arg, ty, start, end });
+                });
+            }
+            SimpleStatement::Delete(var, metadata) => {
+                let this = &mut *self.with_metadata(*metadata);
+                let (arg, ty) = TypedPlace::new_var(this, var).into_place();
+                this.emit(Instruction::DeleteA { arg, ty });
             }
         }
     }
