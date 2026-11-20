@@ -1248,3 +1248,23 @@ fn syntax_error_does_not_run_the_program() {
         .fails_with_code(1)
         .no_stdout();
 }
+
+#[test]
+fn variables_not_clobbered_by_side_effects() {
+    ucmd()
+        .arg("BEGIN { x = 1; print x + f() } function f() { x = 10; return 1 }")
+        .succeeds()
+        .stdout_is("2\n");
+    ucmd()
+        .arg("BEGIN { x = 1; print (x < f()) } function f() { x = 10; return 5 }")
+        .succeeds()
+        .stdout_is("1\n");
+    ucmd()
+        .arg(r#"BEGIN { x = "a"; print x g() } function g() { x = "z"; return "b" }"#)
+        .succeeds()
+        .stdout_is("ab\n");
+    ucmd()
+        .arg("BEGIN { x = 1; print x + (x = 5) }")
+        .succeeds()
+        .stdout_is("6\n");
+}
