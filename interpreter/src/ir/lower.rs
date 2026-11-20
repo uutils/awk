@@ -524,8 +524,8 @@ impl<'a> CodeGen<'a> {
                         _ => this.lower_binop_general(*op, lhs, rhs, dest),
                     },
                     ExprNode::Ternary(condition, true_then, false_then) => {
+                        let state = this.regs.clone();
                         let (if_label, state) = this.emit_branch(condition, |this| {
-                            let state = this.regs.clone();
                             this.lower_expr_into(true_then, dest);
                             state
                         });
