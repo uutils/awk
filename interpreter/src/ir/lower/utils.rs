@@ -181,6 +181,7 @@ impl RegAlloc {
 
     /// Marks a range of registers as freed.
     fn free_n(&mut self, start: Reg, len: RegWidth) {
+        debug_assert!(start.0 + len <= self.reg_pointer);
         if start.0 + len == self.reg_pointer {
             self.reg_pointer = start.0;
             if let Some(&(s, l)) = self.ranges.last()
@@ -290,7 +291,9 @@ impl Deref for LinearReg {
 #[cfg(debug_assertions)]
 impl Drop for LinearReg {
     fn drop(&mut self) {
-        debug_assert!(false, "Leaked register {}!", self.0);
+        if !std::thread::panicking() {
+            debug_assert!(false, "Leaked register {}!", self.0);
+        }
     }
 }
 
