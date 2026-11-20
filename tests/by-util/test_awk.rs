@@ -1242,7 +1242,7 @@ fn syntax_error_in_a_program_file_exits_one() {
 
 #[test]
 fn syntax_error_does_not_run_the_program() {
-    // The program must not start, so nothing is printed and no input is read.
+    // The program must not start, so nothing is printed.
     ucmd()
         .arg(r#"BEGIN { print "started" } END { x = ( }"#)
         .fails_with_code(1)
