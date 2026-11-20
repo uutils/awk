@@ -5,7 +5,7 @@
 
 use std::{iter::repeat, mem::forget, ops::Deref};
 
-use parser::{BuiltinFunction, Identifier, Variable};
+use parser::{BuiltinFunction, Expr, ExprNode, Identifier, Variable};
 use smallvec::SmallVec;
 
 use crate::{
@@ -401,4 +401,52 @@ impl CallConv for RtType {
     fn convention(self, _argc: RegWidth) -> impl Iterator<Item = Self> {
         repeat(self)
     }
+}
+
+const CLOBBER_MAX_SCAN_BUDGET: u32 = 24;
+
+/// Returns if the expression might change the value of a variable, invalidating a previously loaded
+/// value in a register.
+pub fn may_clobber_vars(expr: &Expr) -> bool {
+    let mut budget = CLOBBER_MAX_SCAN_BUDGET;
+    clobbers(expr, &mut budget)
+}
+
+/// This runs in linear time, so it is _fine_. I'm not amused we're doing static analysis here, but
+/// we don't really have a better option that doesn't involve _more_ static analysis.
+fn clobbers(expr: &Expr, budget: &mut u32) -> bool {
+    if *budget == 0 {
+        return true;
+    }
+    *budget -= 1;
+
+    let Expr::Node(node, _) = expr else {
+        return false;
+    };
+
+    match node.as_ref() {
+        ExprNode::UnaryOperation(_, e) | ExprNode::Parenthesized(e) => clobbers(e, budget),
+        ExprNode::BinaryOperation(_, l, r) => clobbers(l, budget) || clobbers(r, budget),
+        ExprNode::Ternary(c, t, f) => {
+            clobbers(c, budget) || clobbers(t, budget) || clobbers(f, budget)
+        }
+        ExprNode::ArrayIndex(place) => any_clobbers(place.1.iter().flatten(), budget),
+        ExprNode::InArray(array, index) => {
+            any_clobbers(array.1.iter().flatten(), budget) || any_clobbers(index, budget)
+        }
+        ExprNode::BuiltinCall(function, args) => {
+            matches!(
+                function,
+                BuiltinFunction::Sub
+                    | BuiltinFunction::Gsub
+                    | BuiltinFunction::Match
+                    | BuiltinFunction::Close
+            ) || any_clobbers(args, budget)
+        }
+        _ => true,
+    }
+}
+
+fn any_clobbers<'a: 'b, 'b>(it: impl IntoIterator<Item = &'b Expr<'a>>, budget: &mut u32) -> bool {
+    it.into_iter().any(|e| clobbers(e, budget))
 }

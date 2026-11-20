@@ -26,6 +26,7 @@ use crate::{
         Arg, ConstNonLocal, Instruction, IxWidth, Label, PlaceTy, Reg, RegWidth, UserNonLocal,
         lower::utils::{
             CallConv, LinearRegRange, RegAlloc, ResolvedPlace, RtType, TypedArg, TypedPlace,
+            may_clobber_vars,
         },
     },
     vm::{Consts, Function, SymbolTable, types::Value},
@@ -430,8 +431,26 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_expr(&mut self, expr: &Expr) -> (impl DerefMut<Target = Self>, TypedArg) {
-        self.alloc_operand(|this, dest| match expr {
-            Expr::Leaf(atom, metadata) => this.with_metadata(*metadata).lower_atom_arg(atom, dest),
+        self.lower_expr_stable(expr, false)
+    }
+
+    /// Lowers an expression, keeping a node's leaf variable in a scratch register to prevent
+    /// clobbing if `snapshot` is set.
+    fn lower_expr_stable(
+        &mut self,
+        expr: &Expr,
+        snapshot: bool,
+    ) -> (impl DerefMut<Target = Self>, TypedArg) {
+        self.alloc_operand(move |this, dest| match expr {
+            Expr::Leaf(atom, metadata) => {
+                let mut this = this.with_metadata(*metadata);
+                if snapshot && matches!(atom, Atom::Variable(_)) {
+                    this.lower_atom_into(atom, dest);
+                    TypedArg::new_reg(dest)
+                } else {
+                    this.lower_atom_arg(atom, dest)
+                }
+            }
             Expr::Node(_, _) => {
                 this.lower_expr_into(expr, dest);
                 TypedArg::new_reg(dest)
@@ -832,7 +851,8 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_binop_general(&mut self, op: BinaryOperator, lhs: &Expr, rhs: &Expr, dest: Reg) {
-        let (mut this, lhs) = self.lower_expr(lhs);
+        let needs_copy = matches!(lhs, Expr::Leaf(Atom::Variable(_), _)) && may_clobber_vars(rhs);
+        let (mut this, lhs) = self.lower_expr_stable(lhs, needs_copy);
         let (mut this, rhs) = this.lower_expr(rhs);
         this.emit(Instruction::from_binary(op, dest, lhs, rhs));
     }
