@@ -25,8 +25,7 @@ use crate::{
     ir::{
         Arg, ConstNonLocal, Instruction, IxWidth, Label, PlaceTy, Reg, RegWidth, UserNonLocal,
         lower::utils::{
-            CallConv, LinearRegRange, Operand, RegAlloc, ResolvedPlace, RtType, TypedArg,
-            TypedPlace,
+            CallConv, LinearRegRange, RegAlloc, ResolvedPlace, RtType, TypedArg, TypedPlace,
         },
     },
     vm::{Consts, Function, SymbolTable, types::Value},
@@ -238,8 +237,7 @@ impl<'a> CodeGen<'a> {
             Statement::For { init, condition, update, body, metadata } => {
                 let this = &mut *self.with_metadata(*metadata);
                 if let Some(SimpleStatement::Expression(expr, metadata)) = init {
-                    let this = &mut *this.with_metadata(*metadata);
-                    this.lower_expr(expr).free(this);
+                    this.with_metadata(*metadata).lower_expr(expr);
                 }
 
                 // Layout so continue jumps to the update clause (gawk/POSIX):
@@ -249,8 +247,7 @@ impl<'a> CodeGen<'a> {
                 let continue_label = this.emit_jump(|this| {
                     let continue_label = this.following_instr(0);
                     if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                        let this = &mut *this.with_metadata(*metadata);
-                        this.lower_expr(expr).free(this);
+                        this.with_metadata(*metadata).lower_expr(expr);
                     }
                     continue_label
                 });
@@ -270,8 +267,7 @@ impl<'a> CodeGen<'a> {
                 }
             }
             Statement::Simple(SimpleStatement::Expression(expr, metadata)) => {
-                let this = &mut *self.with_metadata(*metadata);
-                this.lower_expr(expr).free(this);
+                self.with_metadata(*metadata).lower_expr(expr);
             }
             Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
                 let this = &mut *self.with_metadata(*metadata);
@@ -420,10 +416,9 @@ impl<'a> CodeGen<'a> {
                 self.emit(Instruction::Matches { dest: cmp, lhs, rhs, tyl, tyr });
             }
             atom => {
-                let case_val = self.lower_atom(atom);
-                let (rhs, tyr) = case_val.to_arg().into_arg();
-                self.emit(Instruction::Eq { dest: cmp, lhs, rhs, tyl, tyr });
-                case_val.free(self);
+                let (mut this, case_val) = self.lower_atom(atom);
+                let (rhs, tyr) = case_val.into_arg();
+                this.emit(Instruction::Eq { dest: cmp, lhs, rhs, tyl, tyr });
             }
         }
 
@@ -435,34 +430,42 @@ impl<'a> CodeGen<'a> {
         (br_label, case_ix)
     }
 
-    fn lower_expr(&mut self, expr: &Expr) -> Operand {
-        match expr {
-            Expr::Leaf(atom, metadata) => self.with_metadata(*metadata).lower_atom(atom),
+    fn lower_expr(&mut self, expr: &Expr) -> (impl DerefMut<Target = Self>, TypedArg) {
+        self.alloc_operand(|this, dest| match expr {
+            Expr::Leaf(atom, metadata) => this.with_metadata(*metadata).lower_atom_arg(atom, dest),
             Expr::Node(_, _) => {
-                let dest = self.regs.alloc();
-                self.lower_expr_into(expr, *dest);
-                Operand::Reg(dest)
+                this.lower_expr_into(expr, dest);
+                TypedArg::new_reg(dest)
             }
-        }
+        })
     }
 
-    fn lower_atom(&mut self, atom: &Atom) -> Operand {
+    fn lower_atom(&mut self, atom: &Atom) -> (impl DerefMut<Target = Self>, TypedArg) {
+        self.alloc_operand(|this, dest| this.lower_atom_arg(atom, dest))
+    }
+
+    /// Handles allocation and deallocation of registers for placing operands.
+    fn alloc_operand(
+        &mut self,
+        f: impl FnOnce(&mut Self, Reg) -> TypedArg,
+    ) -> (impl DerefMut<Target = Self>, TypedArg) {
         let dest = self.regs.alloc();
-        match self.lower_atom_arg(atom, *dest) {
-            arg if let Some(reg) = arg.as_reg() => {
-                if reg == *dest {
-                    Operand::Reg(dest)
-                } else {
-                    // If the atom is a function local, we get its register instead.
-                    self.regs.free(dest);
-                    Operand::Imm(TypedArg::new_reg(reg))
-                }
+        let arg = f(self, *dest);
+
+        let scratch = *dest;
+        let owned = if arg.as_reg().is_some_and(|reg| reg == scratch) {
+            Some(dest)
+        } else {
+            self.regs.free(dest);
+            None
+        };
+
+        let guard = Scope::new(self, move |this| {
+            if let Some(dest) = owned {
+                this.regs.free(dest);
             }
-            imm => {
-                self.regs.free(dest);
-                Operand::Imm(imm)
-            }
-        }
+        });
+        (guard, arg)
     }
 
     fn lower_atom_arg(&mut self, atom: &Atom, dest: Reg) -> TypedArg {
@@ -512,9 +515,8 @@ impl<'a> CodeGen<'a> {
                 let this = &mut *self.with_metadata(*metadata);
                 match node.as_ref() {
                     ExprNode::UnaryOperation(op, expr) => {
-                        let src = this.lower_expr(expr);
-                        this.emit(Instruction::from_unary(*op, dest, src.to_arg()));
-                        src.free(this);
+                        let (mut this, src) = this.lower_expr(expr);
+                        this.emit(Instruction::from_unary(*op, dest, src));
                     }
                     ExprNode::BinaryOperation(op, lhs, rhs) => match op {
                         BinaryOperator::And => this.lower_and_into(lhs, rhs, dest),
@@ -534,24 +536,21 @@ impl<'a> CodeGen<'a> {
                         });
                     }
                     ExprNode::BinaryPlaceOperation(op, place, expr) => {
-                        let val = this.lower_expr(expr);
+                        let (mut this, val) = this.lower_expr(expr);
 
                         let Some(bin_op) = lower_assign_ops(*op) else {
-                            this.store_place(place, dest, val.to_arg());
-                            val.free(this);
+                            this.store_place(place, dest, val);
                             return;
                         };
 
                         this.with_resolved_place(place, |this, resolved| {
                             let (mut this, lhs_reg) = this.alloc_reg();
                             let lhs = this.load_resolved(resolved, place, lhs_reg).into();
-                            let rhs = val.to_arg();
                             let arg = TypedArg::new_reg(dest);
 
-                            this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
+                            this.emit(Instruction::from_binary(bin_op, dest, lhs, val));
                             this.store_resolved(resolved, place, dest, arg);
                         });
-                        val.free(this);
                     }
                     // Use optimized path for variables and records. Cannot
                     // be used for arrays because the stores aren't trivial.
@@ -618,11 +617,10 @@ impl<'a> CodeGen<'a> {
 
                         if let [test] = test.as_slice() {
                             // One-dimensional test.
-                            let test = this.lower_expr(test);
-                            let (rhs, tyr) = test.to_arg().into_arg();
+                            let (mut this, test) = this.lower_expr(test);
+                            let (rhs, tyr) = test.into_arg();
 
                             this.emit(Instruction::In { dest, lhs, rhs, tyr, tyl });
-                            test.free(this);
                         } else {
                             // Lower multi-dimensional test
                             let (arg, ty) = (lhs, tyl);
@@ -751,10 +749,9 @@ impl<'a> CodeGen<'a> {
         let (arg, ty) = src.into_arg();
         match place {
             Place::Record(expr) => {
-                let rec = self.lower_expr(expr);
-                let (src, tys) = rec.to_arg().into_arg();
-                self.emit(Instruction::StoreF { dest, src, tys, arg, ty });
-                rec.free(self);
+                let (mut this, rec) = self.lower_expr(expr);
+                let (src, tys) = rec.into_arg();
+                this.emit(Instruction::StoreF { dest, src, tys, arg, ty });
             }
             Place::Variable(Variable::User(ident)) => {
                 let t_arg = TypedPlace::new_user(self, ident);
@@ -836,16 +833,9 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_binop_general(&mut self, op: BinaryOperator, lhs: &Expr, rhs: &Expr, dest: Reg) {
-        let lhs = self.lower_expr(lhs);
-        let rhs = self.lower_expr(rhs);
-        self.emit(Instruction::from_binary(
-            op,
-            dest,
-            lhs.to_arg(),
-            rhs.to_arg(),
-        ));
-        rhs.free(self);
-        lhs.free(self);
+        let (mut this, lhs) = self.lower_expr(lhs);
+        let (mut this, rhs) = this.lower_expr(rhs);
+        this.emit(Instruction::from_binary(op, dest, lhs, rhs));
     }
 
     fn lower_and_into(&mut self, lhs: &Expr, rhs: &Expr, dest: Reg) {

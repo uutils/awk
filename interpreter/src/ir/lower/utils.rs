@@ -43,32 +43,11 @@ pub enum ResolvedPlace {
     Index { arg: Arg, ty: PlaceTy, range: (Reg, Reg) },
 }
 
-#[must_use]
-pub enum Operand {
-    Imm(TypedArg),  // carries data inline
-    Reg(LinearReg), // needs to be freed
-}
-
 impl LinearReg {
     pub const fn into_inner(self) -> Reg {
         let inner = self.0;
         forget(self);
         inner
-    }
-}
-
-impl Operand {
-    pub fn to_arg(&self) -> TypedArg {
-        match self {
-            &Self::Imm(imm) => imm,
-            Self::Reg(reg) => TypedArg::new_reg(reg),
-        }
-    }
-
-    pub fn free(self, code: &mut CodeGen) {
-        if let Self::Reg(reg) = self {
-            code.regs.free(reg);
-        }
     }
 }
 
