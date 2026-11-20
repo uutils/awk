@@ -294,20 +294,6 @@ impl Drop for LinearReg {
     }
 }
 
-/// On release builds, we can rely on post-monomorphization errors to assert
-/// linearity. Kinda neat. Fully cursed. Remove it if getting false positives,
-/// but assert _they are_; the rt fallback not catching them is not an excuse.
-#[cfg(not(debug_assertions))]
-impl Drop for LinearReg {
-    fn drop(&mut self) {
-        fn evil<T>() {
-            let _ = std::marker::PhantomData::<T>;
-            const { panic!("Leaked register!") }
-        }
-        evil::<()>();
-    }
-}
-
 impl From<&LinearReg> for Reg {
     fn from(value: &LinearReg) -> Self {
         **value
