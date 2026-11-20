@@ -3,12 +3,11 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-//! This module contains the bytecode description, designed to be compact
-//! for cache efficiency and isomorphic w.r.t Cranelift IR. Also, our bytecode
-//! _is_ our IR; we lower the AST into it and can execute it right away, or do
-//! an optimization or JIT pass. We don't do the hack Lua 5's VM does of
-//! emitting bytecode without an intermediate AST because AWK contextual
-//! shenanigans; _even_ if it was possible, good luck maintaining that.
+//! This module contains the bytecode description, designed to be compact for cache efficiency and
+//! isomorphic w.r.t Cranelift IR. Also, our bytecode _is_ our IR; we lower the AST into it and can
+//! execute it right away, or do an optimization or JIT pass. AWK can't be properly parsed in a
+//! single-pass compiler due to function name resolution, so we do two passes and merge the latter
+//! (and other checks) during lowering.
 
 pub mod lower;
 #[cfg(test)]
@@ -22,22 +21,41 @@ use std::{
 use derive_more::{Debug, Display};
 use parser::{BuiltinFunction, Command, Identifier, Redirection, Variable};
 
+/// The bit width (size) of a register offset. That is, `2^RegWidth - 1` is the amount of
+/// addressable registers in our VM. We do the regular hack of having a separate per-call offset so
+/// we never run out of registers. (As usual, this does mean a call frame must need less than 255
+/// registers (at the moment), but good luck triggering that in real code.)
 pub type RegWidth = u8;
+
+/// The bit width (size) of an index into a VM buffer. That is, `2^IxWidth - 1` is the amount of
+/// addressable VM instructions and user resources of each kind. You'd run out of memory before this
+/// is a problem; we may get away with halving it to [`u16`], but that's a bit scarier.
 pub type IxWidth = u32;
 
+/// Newtype for user variables. This has the safety invariant that it is a valid index into the
+/// symbol table's buffer it was generated for, as symbols ought not to be deleted. However, we are
+/// not bypassing bounds checks right now (we will in the future with stronger safety guarantees).
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct UserNonLocal(pub IxWidth);
 
+/// Newtype for user constants that do not fit in registers (can't be placed as an instruction's
+/// immediate). This has the safety invariant that it is a valid index into the constants table's
+/// buffer it was generated for, as constants ought not to be deleted. However, we are not bypassing
+/// bounds checks at the moment (we will in the future with stronger safety guarantees).
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct ConstNonLocal(pub IxWidth);
 
+/// Newtype for a valid VM register. Internally, this is just its relative offset in its call frame.
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
 #[display("r{}", self.0)]
 #[repr(transparent)]
 pub struct Reg(pub RegWidth);
 
+/// Newtype for a label (offset) into some instructions. In principle, these should be valid,
+/// operationally correct offsets once IR has been fully emitted. But, the VM will halt or panic at
+/// invalid ones at the moment, and I (Guillem) am fearful to do otherwise.
 #[derive(Clone, Copy, Display, Debug)]
 #[repr(transparent)]
 pub struct Label(pub IxWidth);
@@ -109,23 +127,21 @@ pub enum Instruction {
     NextFile,
 }
 
-/// Keeps the size bounded to reduce cache pressure. They can actually be halved
-/// to an [`u64`]; this requires setting `imm`s and [`IxWidth`] to [`u16`], and
-/// doing some fancy tricks with the `Store`s. However, this constrains a lot
-/// more our active development, and if your hardware prefetcher is particularly
-/// smart (like in my case), makes almost no difference LOL. So, might be done
-/// in the future, but *only* if it won't meaningfully hurt instruction decode.
+/// Keeps the size bounded to reduce cache pressure. They can actually be halved to an [`u64`];
+/// this requires setting `imm`s and [`IxWidth`] to [`u16`], and doing some fancy tricks with the
+/// `Store`s. However, this constrains a lot more our active development, and if your hardware
+/// prefetcher is particularly smart (like in my case), makes almost no difference LOL. So, might be
+/// done in the future, but *only* if it won't meaningfully hurt instruction decode.
 //
-/// Other VM folks will point and laugh at our 16-bytes instrs, though, but our
-/// performance bottlenecks hardly lie here; AWK code is generally very small.
+/// Other VM folks will point and laugh at our 16-bytes instrs, though, but our performance
+/// bottlenecks hardly lie here; AWK code is generally very small.
 const _: () = const { assert!(size_of::<Instruction>() <= size_of::<u128>()) };
 
-/// And you might ask, why are we doing a tagged union instead of an enum?
-/// It's actually quite trivial, but a bit unfortunate. The problem is that the
-/// packing in [`Instruction`] is otherwise not ideal; because the compiler has
-/// to ensure we can _always_ take a reference to one of the fields, it can't
-/// split the discriminants to pack it tightly, and we end up with big payloads
-/// full of padding. Might be solved in the future with move-only fields.
+/// And you might ask, why are we doing a tagged union instead of an enum? It's actually quite
+/// trivial, but a bit unfortunate. The problem is that the packing in [`Instruction`] is otherwise
+/// not ideal; because the compiler has to ensure we can _always_ take a reference to one of the
+/// fields, it can't split the discriminants to pack it tightly, and we end up with big payloads
+/// full of padding. Might be solved in the future with move-only fields. I hope.
 #[derive(Clone, Copy)]
 pub union Arg {
     pub reg: Reg,
@@ -159,6 +175,7 @@ pub enum PlaceTy {
     BtInVal = ArgTy::BtInVal as u8,
 }
 
+/// Sanity check.
 const _: () = {
     assert!(size_of::<PlaceTy>() == size_of::<ArgTy>());
     assert!(align_of::<PlaceTy>() == align_of::<ArgTy>());
@@ -170,6 +187,7 @@ const fn var_n(variable: Variable) -> u32 {
     unsafe { std::ptr::read((&raw const variable).cast()) }
 }
 
+/// A list of built-in variables that have a static place into the symbol table.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
 #[display(rename_all = "UPPERCASE")]
