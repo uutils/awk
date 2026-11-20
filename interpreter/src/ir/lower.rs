@@ -136,16 +136,9 @@ impl<'a> CodeGen<'a> {
         for (name, AstFunction { args, body }) in functions {
             let start = self.bc.len();
             let (arity, hwm_regs) = self.lower_fun_body(args, body);
-
-            if !matches!(
-                self.bc.code.last(),
-                Some(Instruction::Return { .. } | Instruction::ReturnUnassigned)
-            ) {
-                self.emit(Instruction::ReturnUnassigned);
-            }
+            self.emit(Instruction::ReturnUnassigned);
 
             let code = CodeRange(start..self.bc.len());
-
             self.symbols
                 .register_user_fun(name, Function { arity, hwm_regs, code }, self.arena);
         }
