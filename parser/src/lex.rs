@@ -10,7 +10,7 @@ use lexer::{Identifier, LexingError, Slice, Span, SpannedIter, Token};
 
 use super::Result;
 use crate::{
-    ParsingError,
+    ParsingError, PlacingFunction,
     ast::{BuiltinFunction, Command, SpecialPattern},
 };
 
@@ -220,6 +220,7 @@ pub trait TokenExt {
     fn is_pattern_start(&self) -> bool;
     fn maps_to_command(&self) -> Option<Command>;
     fn maps_to_builtin(&self) -> Option<BuiltinFunction>;
+    fn maps_to_placing_call(&self) -> Option<PlacingFunction>;
     fn maps_to_special_pat(&self) -> Option<SpecialPattern>;
     fn is_stmnt_end(&self) -> bool;
     fn is_stmnt_or_block_end(&self) -> bool;
@@ -332,6 +333,13 @@ impl TokenExt for Token<'_> {
             Token::Compl => Some(BuiltinFunction::Compl),
             Token::Lshift => Some(BuiltinFunction::Lshift),
             Token::Rshift => Some(BuiltinFunction::Rshift),
+            _ => None,
+        }
+    }
+    fn maps_to_placing_call(&self) -> Option<PlacingFunction> {
+        match self {
+            Self::Sub => Some(PlacingFunction::Sub),
+            Self::Gensub => Some(PlacingFunction::Gsub),
             _ => None,
         }
     }

@@ -365,6 +365,22 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 self.parser,
                 lex.span().since(anchor),
             ))
+        } else if let Some(placing) = next.maps_to_placing_call() {
+            // attempt to parse the last argument as a place, elsewhere fall
+            // back to regular built-in functions.
+            self.parser.parse_function_call::<false>(lex, |mut args| {
+                let Some(target) = args.pop() else {
+                    return ExprNode::BuiltinCall(placing.into(), args);
+                };
+                // dummy span since we don't use the error.
+                match Place::lower_from(target, Span::from(0..0)) {
+                    Ok(place) => ExprNode::PlacingCall(placing, args, place),
+                    Err((arg, _)) => {
+                        args.push(arg);
+                        ExprNode::BuiltinCall(placing.into(), args)
+                    }
+                }
+            })
         } else if let Some(builtin) = next.maps_to_builtin() {
             self.parser
                 .parse_function_call::<false>(lex, |args| ExprNode::BuiltinCall(builtin, args))
