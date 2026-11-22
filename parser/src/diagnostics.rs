@@ -389,9 +389,3 @@ impl AsRef<str> for InnerSource {
         self.0.as_ref()
     }
 }
-
-impl<T> From<(T, Self)> for ParsingError {
-    fn from(value: (T, Self)) -> Self {
-        value.1
-    }
-}

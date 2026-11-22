@@ -504,7 +504,7 @@ impl<'a> ArrayOperator {
 
 impl<'a> Place<'a> {
     /// Attempts to lower an expression into a place; on error returns it back.
-    pub fn lower_from(expr: Expr<'a>, span: Span) -> Result<Self, (Expr<'a>, ParsingError)> {
+    pub fn try_lower_from(expr: Expr<'a>) -> Result<Self, Expr<'a>> {
         match expr {
             Expr::Leaf(Atom::Variable(var), _) => Ok(Self::Variable(var)),
             Expr::Node(node, _)
@@ -519,7 +519,7 @@ impl<'a> Place<'a> {
                     _ => unreachable!("Box is magic; handled awkwardly in the match guard."),
                 }
             }
-            _ => Err((expr, ParsingError::OperatorExpectsVariable(span))),
+            _ => Err(expr),
         }
     }
 }
