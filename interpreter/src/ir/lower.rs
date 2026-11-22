@@ -775,10 +775,6 @@ impl<'a> CodeGen<'a> {
                 let t_arg = TypedPlace::new_user(self, ident);
                 let (var, ty_place) = t_arg.into_place();
 
-                if t_arg.as_reg().is_some_and(|reg| reg == dest) {
-                    return; // Value already on destination.
-                }
-
                 match ty_place {
                     PlaceTy::Reg => {
                         let var_reg = unsafe { var.reg };
