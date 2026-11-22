@@ -350,6 +350,17 @@ impl ExprNode<'_> {
                     p(write_expr_args(f, args, indent, namespace))
                 )
             }
+            Self::PlacingCall(fun, args, place) => {
+                fmt_seq!(
+                    f,
+                    "{fun}",
+                    p(
+                        write_expr_args(f, args, indent, namespace),
+                        ", ",
+                        place.fmt(f, namespace)
+                    )
+                )
+            }
             Self::BuiltinCall(fun, args) => {
                 fmt_seq!(f, "{fun}", p(write_expr_args(f, args, indent, namespace)))
             }

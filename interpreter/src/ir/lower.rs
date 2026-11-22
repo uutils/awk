@@ -15,8 +15,8 @@ use std::{
 use bumpalo::{Bump, collections::Vec};
 use parser::{
     ArrayPlace, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
-    Function as AstFunction, FunctionTable, Getline, Identifier, MetaId, Place, Rule, RulePattern,
-    SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
+    Function as AstFunction, FunctionTable, Getline, Identifier, MetaId, Place, PlacingFunction,
+    Rule, RulePattern, SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
 use smallvec::SmallVec;
 
@@ -655,9 +655,12 @@ impl<'a> CodeGen<'a> {
                         this.regs.free_many(range);
                     }
                     &ExprNode::BuiltinCall(fun, ref args) => {
-                        // Bypass regular variable look-ups on type-info funs.
+                        // Bypasses regular variable look-ups on type-info funs.
                         let (mut this, (start, end)) = this.alloc_reg_range(fun, args);
                         this.emit(Instruction::IntrinsicCall { dest, start, end, fun });
+                    }
+                    &ExprNode::PlacingCall(fun, ref args, ref place) => {
+                        this.lower_placing_call(fun, dest, args, place);
                     }
                     ExprNode::IndirectCall(var, args) => {
                         let range = this.gen_call_convention(RtType::Any, args);
@@ -905,6 +908,43 @@ impl<'a> CodeGen<'a> {
             self.regs.free_many(range);
         } else {
             self.lower_binop_general(BinaryOperator::Concat, lhs, rhs, dest);
+        }
+    }
+
+    fn lower_placing_call(
+        &mut self,
+        fun: PlacingFunction,
+        dest: Reg,
+        args: &[Expr],
+        place: &Place,
+    ) {
+        let (mut this, (start, end)) = self.alloc_reg_range(fun, args);
+        match place {
+            // Variable fast path.
+            Place::Variable(var) => {
+                let (place, ty) = TypedPlace::new_var(&mut this, var).into_place();
+                this.emit(Instruction::PlacingCall { dest, start, end, place, ty, fun });
+            }
+            // General path (explicit record fields, array places). it's a
+            // multi-instruction process we need to branch not to clobber data.
+            _ => this.with_resolved_place(place, |this, resolved| {
+                let (mut this, tmp) = this.alloc_reg();
+                let src = TypedPlace::new_reg(tmp);
+                let (place_arg, ty) = src.into_place();
+
+                this.load_resolved(resolved, place, tmp);
+                this.emit(Instruction::PlacingCall { dest, start, end, place: place_arg, ty, fun });
+
+                // Branch on `retval > 0`.
+                let (mut this, changed) = this.alloc_reg();
+                let (lhs, tyl) = TypedArg::new_reg(dest).into_arg();
+                let (rhs, tyr) = TypedArg::new_imm(0).into_arg();
+                this.emit(Instruction::Gt { dest: changed, lhs, rhs, tyl, tyr });
+
+                this.emit_branch_reg(changed, |this| {
+                    this.store_resolved(resolved, place, tmp, src.into());
+                });
+            }),
         }
     }
 

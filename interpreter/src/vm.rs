@@ -434,6 +434,7 @@ impl<'a> Interpreter<'a> {
                 Instruction::GetlineFile { .. } => todo!(),
                 Instruction::GetlinePipe { .. } => todo!(),
                 Instruction::GetlineCoproc { .. } => todo!(),
+                Instruction::PlacingCall { .. } => todo!(),
             }
             self.program_counter += 1;
         }

@@ -19,7 +19,7 @@ use std::{
 };
 
 use derive_more::{Debug, Display};
-use parser::{BuiltinFunction, Command, Identifier, Redirection, Variable};
+use parser::{BuiltinFunction, Command, Identifier, PlacingFunction, Redirection, Variable};
 
 /// The bit width (size) of a register offset. That is, `2^RegWidth - 1` is the amount of
 /// addressable registers in our VM. We do the regular hack of having a separate per-call offset so
@@ -105,6 +105,7 @@ pub enum Instruction {
     DeleteP { arg: Arg, start: Reg, end: Reg, ty: PlaceTy },
     ConcatMany { dest: Reg, start: Reg, end: Reg },
     IntrinsicCall { dest: Reg, start: Reg, end: Reg, fun: BuiltinFunction },
+    PlacingCall { dest: Reg, start: Reg, end: Reg, place: Arg, ty: PlaceTy, fun: PlacingFunction },
     OutputCall { start: Reg, end: Reg, cmd: Command, redir: Option<Redirection> },
     UserCall { dest: Reg, start: Reg, end: Reg, name: UserNonLocal },
     IndirectCall { dest: Reg, start: Reg, end: Reg, name: Arg, ty: ArgTy },
@@ -470,6 +471,10 @@ impl Display for Instruction {
             Self::IntrinsicCall { dest, start, end, fun } => {
                 write!(f, "{op} {dest}, {fun}, {start}..{end}")
             }
+            Self::PlacingCall { dest, start, end, place, ty, fun } => {
+                write!(f, "{op} {dest}, {fun}, {start}..{end}")?;
+                fmt_arg(f, place, ty, ", ")
+            }
             Self::IndirectCall { dest, start, end, name, ty } => {
                 write!(f, "{op} {dest}")?;
                 fmt_arg(f, name, ty, ", ")?;
@@ -542,6 +547,7 @@ impl Instruction {
             Self::DeleteP { .. } => "pdel",
             Self::ConcatMany { .. } => "catv",
             Self::IntrinsicCall { .. } => "bcall",
+            Self::PlacingCall { .. } => "pcall",
             Self::UserCall { .. } => "ucall",
             Self::IndirectCall { .. } => "icall",
             Self::OutputCall { .. } => "out",

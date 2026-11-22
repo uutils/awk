@@ -110,6 +110,7 @@ pub enum ExprNode<'a> {
     FunctionCall(Identifier<'a>, Vec<'a, Expr<'a>>),
     IndirectCall(Variable<'a>, Vec<'a, Expr<'a>>),
     BuiltinCall(BuiltinFunction, Vec<'a, Expr<'a>>),
+    PlacingCall(PlacingFunction, Vec<'a, Expr<'a>>, Place<'a>),
     UnaryOperation(UnaryOperator, Expr<'a>),
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
@@ -317,6 +318,14 @@ pub enum BuiltinFunction {
     Compl,
     Lshift,
     Rshift,
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, Display)]
+#[display(rename_all = "lowercase")]
+pub enum PlacingFunction {
+    Sub = BuiltinFunction::Sub as u8,
+    Gsub = BuiltinFunction::Gsub as u8,
 }
 
 #[repr(u8)]
@@ -541,6 +550,35 @@ impl WriteKind {
             Self::Pipe => Getline::PipeOut(var, expr),
             Self::Coprocess => Getline::CoprocessOut(var, expr),
         }
+    }
+}
+
+impl TryFrom<BuiltinFunction> for PlacingFunction {
+    type Error = ();
+
+    fn try_from(value: BuiltinFunction) -> Result<Self, Self::Error> {
+        match value {
+            BuiltinFunction::Sub => Ok(Self::Sub),
+            BuiltinFunction::Gsub => Ok(Self::Gsub),
+            _ => Err(()),
+        }
+    }
+}
+
+impl From<PlacingFunction> for BuiltinFunction {
+    fn from(value: PlacingFunction) -> Self {
+        match value {
+            PlacingFunction::Sub => Self::Sub,
+            PlacingFunction::Gsub => Self::Gsub,
+        }
+    }
+}
+
+impl PlacingFunction {
+    /// The arity of the function before it takes a target place.
+    #[inline(always)]
+    pub const fn reg_arity(self) -> u8 {
+        2
     }
 }
 

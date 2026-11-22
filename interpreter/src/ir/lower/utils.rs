@@ -5,7 +5,7 @@
 
 use std::{iter::repeat, mem::forget, ops::Deref};
 
-use parser::{BuiltinFunction, Expr, ExprNode, Identifier, Variable};
+use parser::{BuiltinFunction, Expr, ExprNode, Identifier, PlacingFunction, Variable};
 use smallvec::SmallVec;
 
 use crate::{
@@ -107,10 +107,6 @@ impl TypedPlace {
 
     pub fn new_reg(reg: impl Into<Reg>) -> Self {
         Self(Arg { reg: reg.into() }, PlaceTy::Reg)
-    }
-
-    pub fn as_reg(self) -> Option<Reg> {
-        TypedArg::from(self).as_reg()
     }
 }
 
@@ -394,6 +390,13 @@ impl CallConv for BuiltinFunction {
             .0
             .into_iter()
             .chain(repeat(RtType::Any))
+    }
+}
+
+impl CallConv for PlacingFunction {
+    #[inline]
+    fn convention(self, argc: RegWidth) -> impl Iterator<Item = RtType> {
+        BuiltinFunction::from(self).convention(argc)
     }
 }
 
