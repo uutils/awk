@@ -14,6 +14,10 @@ use lexer::{Slice, Span, Token};
 
 use crate::{AriadneSpan, DiagnosticStore, Parser, ParsingError, Result, lex::TokenExt};
 
+/// The AST for an AWK program. It is divided in the different kinds of rules
+/// and the user functions. Also includes metadata and diagnostics. This AST is
+/// incrementally parsed for each file and merged together; AST nodes metadata
+/// allow telling them apart.
 #[derive(Debug)]
 pub struct Ast<'a> {
     pub loads: Vec<'a, Slice<'a>>,
@@ -31,12 +35,15 @@ pub struct Ast<'a> {
 
 pub type FunctionTable<'a> = HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>;
 
+/// An user rule. These are top-level items of the basic form `expr? { body }`
+/// or ranges `expr, expr { body }`.
 #[derive(Debug)]
 pub struct Rule<'a> {
     pub pattern: Option<RulePattern<'a>>,
     pub actions: Option<Body<'a>>,
 }
 
+/// An indivisible part of the syntax. Includes primitives and variables.
 #[derive(Clone)]
 pub enum Atom<'a> {
     Variable(Variable<'a>),
@@ -49,11 +56,14 @@ pub enum Atom<'a> {
     TypedRegex(Slice<'a>),
 }
 
+/// The "trigger" of a rule (simple exprs or ranges).
 pub enum RulePattern<'a> {
     Expression(Expr<'a>),
     Range(Expr<'a>, Expr<'a>),
 }
 
+/// These are the patterns of special rules, which have special semantics.
+/// Includes BEGIN, END, BEGINFILE and ENDFILE.
 #[derive(Debug, Clone)]
 pub enum SpecialPattern {
     Begin,
@@ -62,12 +72,17 @@ pub enum SpecialPattern {
     EndFile,
 }
 
+/// An AWK identifier has two parts, its namespace and literal parts. The
+/// namespace is usually implicit, while the literal is always explicit. These
+/// are separated with a path spec `::` in the grammar.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct Identifier<'a> {
     pub namespace: &'a str,
     pub literal: &'a str,
 }
 
+/// User variables + all native ones. Only useful because some have special
+/// semantics and the VM benefits greatly from filtering them.
 #[repr(u32)]
 #[derive(Clone, Copy, Display)]
 #[display(rename_all = "UPPERCASE")]
@@ -184,7 +199,7 @@ pub enum Place<'a> {
 
 pub struct ArrayPlace<'a>(pub Variable<'a>, pub Vec<'a, Vec<'a, Expr<'a>>>);
 
-/// GNU docs: <https://www.gnu.org/software/gawk/manual/html_node/Redirection.html>
+/// The different kind of redirection I/O that are supported.
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub enum Redirection {
@@ -258,6 +273,8 @@ pub enum Statement<'a> {
     Exit(Option<Expr<'a>>, MetaId),
 }
 
+/// A strict subset of statements that can be executed in for loops initial and
+/// update clauses.
 pub enum SimpleStatement<'a> {
     Expression(Expr<'a>, MetaId),
     Command {
@@ -270,12 +287,16 @@ pub enum SimpleStatement<'a> {
     DeleteElement(ArrayPlace<'a>, MetaId),
 }
 
+/// Our [`Function`] structs are anonymous because the name resides in the
+/// [`FunctionTable`]'s key'.
 #[derive(Debug)]
 pub struct Function<'a> {
     pub args: Vec<'a, Identifier<'a>>,
     pub body: Body<'a>,
 }
 
+/// An exhaustive list of built-in functions, as they have special grammar and
+/// semantics (of course they do).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Display)]
 #[display(rename_all = "lowercase")]
@@ -320,6 +341,9 @@ pub enum BuiltinFunction {
     Rshift,
 }
 
+/// A subset of [`BuiltinFunction`] whose last argument is passed by-reference
+/// and may be written back to. This means the VM must defer operand fetch for
+/// this last argument and execute different code, so they are specialized.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Display)]
 #[display(rename_all = "lowercase")]
@@ -328,6 +352,7 @@ pub enum PlacingFunction {
     Gsub = BuiltinFunction::Gsub as u8,
 }
 
+/// Magic `print`/`printf` statements.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Display)]
 #[display(rename_all = "lowercase")]
