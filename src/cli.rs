@@ -12,12 +12,14 @@ use std::{
 };
 
 use clap::{
-    ArgAction, Error, Parser, ValueEnum,
+    ArgAction, ArgMatches, Error, FromArgMatches, Parser, ValueEnum,
     builder::{TypedValueParser, ValueParserFactory},
     error::ErrorKind,
+    value_parser,
 };
 use lexer::{BlobId, IdentId, StaticInterner, Token};
 use memchr::memchr;
+use parser::ProgramSource;
 
 #[derive(Parser, Debug)]
 #[clap(version, name = "uutils AWK")]
@@ -25,10 +27,10 @@ use memchr::memchr;
 pub struct Args {
     #[arg(required_unless_present_any = ["file", "source"])]
     pub code: Option<OsString>,
+    #[command(flatten)]
+    pub program: ProgramSources,
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub read_queue: Vec<ArgQueueItem>,
-    #[arg(short = 'f', long)]
-    pub file: Vec<PathBuf>,
     #[arg(short = 'F', long)]
     pub field_separator: Option<OsString>,
     #[arg(short = 'v', long)]
@@ -49,8 +51,6 @@ pub struct Args {
     pub dump_variables: Option<PathBuf>,
     #[arg(short = 'D', long, num_args = 0..=1, default_missing_value = "", value_parser = parse_debug_mode)]
     pub debug: Option<DebugMode>,
-    #[arg(short = 'e', long)]
-    pub source: Vec<OsString>,
     #[arg(short = 'E', long)]
     pub exec: Option<PathBuf>,
     #[arg(short = 'g', long)]
@@ -97,6 +97,65 @@ pub struct Args {
     pub lint_old: bool,
     #[arg(short = 'k', long, conflicts_with = "posix")]
     pub csv: bool,
+}
+
+/// The `-f` files and `--source` texts in command-line order, as gawk reads them.
+/// clap keeps each option in its own list, so the order comes from their indices.
+#[derive(Clone, Debug, Default)]
+pub struct ProgramSources(pub Vec<ProgramSource>);
+
+impl FromArgMatches for ProgramSources {
+    fn from_arg_matches(matches: &ArgMatches) -> Result<Self, Error> {
+        let files = matches.indices_of("file").into_iter().flatten().zip(
+            matches
+                .get_many::<PathBuf>("file")
+                .into_iter()
+                .flatten()
+                .map(|path| ProgramSource::File(path.clone())),
+        );
+        let texts = matches.indices_of("source").into_iter().flatten().zip(
+            matches
+                .get_many::<OsString>("source")
+                .into_iter()
+                .flatten()
+                .map(|text| ProgramSource::Text(text.clone())),
+        );
+        let mut sources: Vec<_> = files.chain(texts).collect();
+        sources.sort_by_key(|&(index, _)| index);
+        Ok(Self(
+            sources.into_iter().map(|(_, source)| source).collect(),
+        ))
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), Error> {
+        *self = Self::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl clap::Args for ProgramSources {
+    fn augment_args(cmd: clap::Command) -> clap::Command {
+        cmd.arg(
+            clap::Arg::new("file")
+                .short('f')
+                .long("file")
+                .value_name("FILE")
+                .action(ArgAction::Append)
+                .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(
+            clap::Arg::new("source")
+                .short('e')
+                .long("source")
+                .value_name("SOURCE")
+                .action(ArgAction::Append)
+                .value_parser(value_parser!(OsString)),
+        )
+    }
+
+    fn augment_args_for_update(cmd: clap::Command) -> clap::Command {
+        Self::augment_args(cmd)
+    }
 }
 
 #[derive(Clone, Debug)]

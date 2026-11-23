@@ -14,10 +14,11 @@ mod tests;
 
 use std::{
     borrow::Cow,
+    ffi::OsString,
     fs::File,
     io,
     mem::{replace, take},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
@@ -69,7 +70,7 @@ impl<'a> Parser<'a> {
             ast: Ast::new(arena),
             arena,
             preprocessor: Preprocessor {},
-            file: FileCache(None),
+            file: FileCache::Cli(0),
             namespace: StaticInterner::awk_ident(),
             concurrent: false,
             dry,
@@ -954,11 +955,11 @@ impl<'a> Parser<'a> {
 
     fn enter_file<T>(
         &mut self,
-        path: Rc<Path>,
+        file: FileCache,
         source: &'a [u8],
         f: impl FnOnce(&mut Self, &mut Lexer<'a>) -> T,
     ) -> (T, FileCache) {
-        let old = replace(&mut self.file, FileCache::new_file(path));
+        let old = replace(&mut self.file, file);
         self.ast.diagnostics.cache(self.file.clone(), source);
         let mut lex = Lexer::new(source);
 
@@ -974,19 +975,19 @@ impl<'a> Parser<'a> {
         ns: Option<IdentId>,
     ) -> (Result<()>, FileCache) {
         match self.preprocessor.read_to_arena(&path, self.arena) {
-            Ok(source) => self.include_source(path, source, ns),
+            Ok(source) => self.include_source(FileCache::new_file(path), source, ns),
             Err(err) => {
                 let reason = read_reason(&err).into_owned();
                 let error =
                     ParsingError::CannotOpenSource(span, path.display().to_string(), reason);
-                (Err(error), FileCache(None))
+                (Err(error), self.file.clone())
             }
         }
     }
 
     fn include_source(
         &mut self,
-        path: Rc<Path>,
+        file: FileCache,
         source: &'a [u8],
         ns: Option<IdentId>,
     ) -> (Result<()>, FileCache) {
@@ -996,7 +997,7 @@ impl<'a> Parser<'a> {
             self.namespace = ns;
         }
 
-        let file = match self.enter_file(path, source, |this, lex| {
+        let file = match self.enter_file(file, source, |this, lex| {
             this.parse_top(lex, false).map(|_| ())
         }) {
             (Ok(()), file) => file,
@@ -1007,28 +1008,28 @@ impl<'a> Parser<'a> {
         (Ok(()), file)
     }
 
-    /// Parses the program pieces in command-line order, as gawk reads `-f` files
-    /// and `--source` texts.
+    /// Parses the `-f` files and `--source` texts in command-line order. Like gawk,
+    /// each one is parsed on its own and starts in the `awk` namespace.
     pub fn include_many(
         &mut self,
-        sources: &[ProgramSource<'_>],
+        sources: &'a [ProgramSource],
     ) -> std::result::Result<&mut Ast<'a>, IncludeError> {
+        let mut texts = 0;
         for source in sources {
-            let (path, source): (Rc<Path>, &'a [u8]) = match source {
+            let (file, source) = match source {
                 ProgramSource::File(path) => {
-                    let path = Rc::from(*path);
+                    let path = Rc::from(path.as_path());
                     match self.preprocessor.read_to_arena(&path, self.arena) {
-                        Ok(source) => (path, source),
+                        Ok(source) => (FileCache::new_file(path), source),
                         Err(err) => return Err(IncludeError::CannotOpen { path, err }),
                     }
                 }
-                // gawk names command-line program text this way in its messages.
-                ProgramSource::Text(text) => (
-                    Rc::from(Path::new("cmd. line")),
-                    self.arena.alloc_slice_copy(text),
-                ),
+                ProgramSource::Text(text) => {
+                    texts += 1;
+                    (FileCache::Cli(texts - 1), text.as_encoded_bytes())
+                }
             };
-            let (res, file) = self.include_source(path, source, Some(StaticInterner::awk_ident()));
+            let (res, file) = self.include_source(file, source, Some(StaticInterner::awk_ident()));
 
             if let Err(error) = res {
                 error.add_diagnostic_cached(
@@ -1047,9 +1048,10 @@ impl<'a> Parser<'a> {
 }
 
 /// One piece of the program: a `-f` file, or `--source` text.
-pub enum ProgramSource<'s> {
-    File(&'s Path),
-    Text(std::vec::Vec<u8>),
+#[derive(Clone, Debug)]
+pub enum ProgramSource {
+    File(PathBuf),
+    Text(OsString),
 }
 
 /// Why [`Parser::include_many`] has no program to run.
@@ -1110,8 +1112,6 @@ fn make_path(blob: BlobId) -> Rc<Path> {
 
 #[cfg(not(unix))]
 fn make_path(blob: BlobId) -> Rc<Path> {
-    use std::path::PathBuf;
-
     StaticInterner::resolve(blob, |s| match String::from_utf8_lossy(s) {
         Cow::Borrowed(s) => Rc::from(Path::new(s)),
         Cow::Owned(s) => Rc::from(PathBuf::from(s)),

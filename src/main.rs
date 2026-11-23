@@ -18,9 +18,9 @@ use std::{
 };
 
 use bumpalo::Bump;
-use clap::{CommandFactory, FromArgMatches};
+use clap::Parser as ClapParser;
 use interpreter::{CodeGen, ExecMode, Interpreter};
-use parser::{FileCache, IncludeError, Parser, ProgramSource};
+use parser::{FileCache, IncludeError, Parser};
 
 use crate::{
     cli::{ArgQueueItem, Args, KeyValue},
@@ -35,18 +35,16 @@ fn main() {
 }
 
 fn uu_main() -> Result<(), Box<dyn Error>> {
-    // The matches keep each option's position, which orders -f and --source.
-    let matches = match Args::command().try_get_matches_from(args_os()) {
-        Ok(matches) => matches,
+    let mut args = match Args::try_parse_from(args_os()) {
+        Ok(args) => args,
         Err(msg) => {
             msg.print()?;
             exit_err(Option::<&str>::None, EXIT_FAILURE)
         }
     };
-    let mut args = Args::from_arg_matches(&matches)?;
 
     // With -f or --source there is no program operand: the first operand is an input.
-    if (!args.file.is_empty() || !args.source.is_empty())
+    if !args.program.0.is_empty()
         && let Some(operand) = args.code.take()
     {
         args.read_queue
@@ -56,25 +54,15 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
         args.read_queue.push(ArgQueueItem::Stdio);
     }
 
-    // Like gawk, each --source text is read as if it ended with a newline.
-    let mut source_text = Vec::new();
-    for text in &args.source {
-        source_text.extend_from_slice(text.as_encoded_bytes());
-        source_text.push(b'\n');
-    }
-
     let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
     let (mut cg, metadata, diagnostics) = {
         let ast_arena = Bump::with_capacity(4000);
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
-        let ast = if args.file.is_empty() {
-            let code = match &args.code {
-                Some(code) => code.as_encoded_bytes(),
-                None => &source_text,
-            };
-            parser.parse(FileCache(None), code)
+        let ast = if args.program.0.is_empty() {
+            let code = args.code.as_ref().unwrap();
+            parser.parse(FileCache::Cli(0), code.as_encoded_bytes())
         } else {
-            match parser.include_many(&program_sources(&matches, &args)) {
+            match parser.include_many(&args.program.0) {
                 Ok(ast) => Ok(ast),
                 Err(IncludeError::Invalid(diagnostics)) => Err(diagnostics),
                 Err(err) => exit_fatal(err),
@@ -151,41 +139,4 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
-}
-
-/// The -f files and --source texts in command-line order, as gawk reads them.
-/// Adjacent --source texts stay one piece, so a construct can span them.
-fn program_sources<'a>(matches: &clap::ArgMatches, args: &'a Args) -> Vec<ProgramSource<'a>> {
-    let files = matches
-        .indices_of("file")
-        .into_iter()
-        .flatten()
-        .zip(&args.file);
-    let texts = matches
-        .indices_of("source")
-        .into_iter()
-        .flatten()
-        .zip(&args.source);
-    let mut pieces: Vec<(usize, Option<&'a std::path::Path>, &'a [u8])> = files
-        .map(|(i, path)| (i, Some(path.as_path()), &[][..]))
-        .chain(texts.map(|(i, text)| (i, None, text.as_encoded_bytes())))
-        .collect();
-    pieces.sort_by_key(|&(i, ..)| i);
-
-    let mut sources = Vec::new();
-    for (_, path, text) in pieces {
-        match (path, sources.last_mut()) {
-            (Some(path), _) => sources.push(ProgramSource::File(path)),
-            (None, Some(ProgramSource::Text(joined))) => {
-                joined.extend_from_slice(text);
-                joined.push(b'\n');
-            }
-            (None, _) => {
-                let mut joined = text.to_vec();
-                joined.push(b'\n');
-                sources.push(ProgramSource::Text(joined));
-            }
-        }
-    }
-    sources
 }

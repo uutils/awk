@@ -100,6 +100,39 @@ fn source_texts_end_with_a_newline() {
 }
 
 #[test]
+fn source_texts_are_parsed_one_by_one() {
+    // gawk rejects a rule split across two -e texts too.
+    ucmd()
+        .args(&["-e", "BEGIN {", "-e", "print \"spanned\" }"])
+        .fails_with_code(1)
+        .stderr_contains("Syntax error")
+        .no_stdout();
+}
+
+#[test]
+fn source_text_errors_count_lines_from_their_own_text() {
+    ucmd()
+        .args(&["-e", "BEGIN { print 1 }", "-e", "BEGIN { x = }"])
+        .fails_with_code(1)
+        .stderr_contains("CLI:1:13")
+        .stderr_contains("BEGIN { x = }")
+        .no_stdout();
+}
+
+#[test]
+fn each_source_text_starts_in_the_awk_namespace() {
+    ucmd()
+        .args(&[
+            "-e",
+            "@namespace \"foo\"\nfunction g() { return \"foo\" }",
+            "-e",
+            "function g() { return \"awk\" }\nBEGIN { print g(), foo::g() }",
+        ])
+        .succeeds()
+        .stdout_only("awk foo\n");
+}
+
+#[test]
 fn program_files_and_source_texts_run_in_command_line_order() {
     let ts = uutests::util::TestScenario::new("awk");
     ts.fixtures
