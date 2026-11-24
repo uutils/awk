@@ -231,14 +231,18 @@ impl<'a> Interpreter<'a> {
                     let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| {
                         lhs.matches_regex(rhs, mode)
                     })?;
+                    let val =
+                        val.map_err(|e| InterpreterError::Regex(self.get_span(metadata), e))?;
 
                     self.write_reg(dest, val);
                 }
                 Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
                     let mode = self.mode;
                     let val = self.get_val2(lhs, tyl, rhs, tyr, metadata, |lhs, rhs| {
-                        !lhs.matches_regex(rhs, mode)
+                        lhs.matches_regex(rhs, mode).map(|m| !m)
                     })?;
+                    let val =
+                        val.map_err(|e| InterpreterError::Regex(self.get_span(metadata), e))?;
 
                     self.write_reg(dest, val);
                 }
