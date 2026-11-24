@@ -39,6 +39,10 @@ use crate::{
 
 pub type Result<T, E = InterpreterError> = std::result::Result<T, E>;
 
+/// Different settings for the behavior of the VM, depending on the
+/// compatibility mode. It is likely we're missing some things, since gawk
+/// does make some amount of distinction between "compatibility" and "POSIX
+/// compatibility".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecMode {
     Uu,
@@ -47,6 +51,20 @@ pub enum ExecMode {
 }
 
 // TODO struct ReentrantPoint that contains PC, code_end, offset, frames, regs.
+
+/// An instance of the AWK virtual machine. This is supposed to live for the
+/// whole duration of the program, and is externally driven. That is, the VM
+/// is agnostic to the current state of the program (current rules, if they are
+/// special, etc.). This makes our codebase incredible maintainable and
+/// flexible, as it creates a very composable environment where all the trickery
+/// is conveniently hidden away from our runtime.
+///
+/// Furthermore, this is designed to be fully reentrant and sans-io, so it is
+/// trivial to build a solid concurrency model on top and support different
+/// kinds of I/O models. However, this does introduce the challenge that I/O
+/// signals or other requests to the driver must be atomic with respect to the
+/// triggering instruction, so instructions that need multiple I/O operations
+/// must pass them batched (akin to what `io_uring` offers).
 pub struct Interpreter<'a> {
     program_counter: IxWidth,
     code_end: IxWidth,
@@ -64,6 +82,10 @@ pub struct Interpreter<'a> {
     metadata: MetadataStore<AriadneSpan>,
 }
 
+/// We use a virtual stack because this way we never overflow the stack,
+/// reentrancy is super easy, and our AWK debugger doesn't depend on UB or
+/// inline assembly to pop the stack. Each call frame stores the previous VM
+/// state, and the return address and value register destination.
 pub struct CallFrame {
     ret_addr: IxWidth,
     ret_dest: Reg,
@@ -71,12 +93,23 @@ pub struct CallFrame {
     prev_reg_offset: IxWidth,
 }
 
+/// The VM follows a sans-io model and copies Rust's async model; this means
+/// that it is externally driven by a driver that polls it and all I/O is
+/// modeled in an API between them. [`Signal`] represents each time the VM
+/// halts and asks its driver/harness to do something. This is for a variety of
+/// reasons, but most importantly, maintainability and stateless reentrancy.
+/// This means it is trivially usable in different contexts and OSes with varied
+/// I/O APIs, and concurrency is essentially given for free.
 #[derive(Debug)]
 pub enum Signal {
     Suspend(IoRequest),
     Terminal(CtrlSig),
 }
 
+/// These are the different signals emitted by the VM that cause a control flow
+/// change. These must handled diffently according to the type of rule and other
+/// considerations, so it is convenient to design the driver with different
+/// states and event loops.
 #[derive(Debug)]
 pub enum CtrlSig {
     End,
@@ -89,6 +122,9 @@ pub enum CtrlSig {
 #[derive(Debug)]
 pub struct Registers<'a>(Vec<'a, Value<'a>>);
 
+/// This is the information the VM needs to know ahead-of-time before executing
+/// a call into a user function. Notably, its arity, how many registers to
+/// reserve and its bytecode slice.
 #[derive(Debug)]
 pub struct Function {
     pub arity: RegWidth,
@@ -99,6 +135,8 @@ pub struct Function {
 #[derive(Debug)]
 pub struct Consts<'a>(pub(crate) Vec<'a, Value<'a>>);
 
+/// A valid slice of bytecode into an instruction buffer. We should probably
+/// lifetime-brand it in the future so we can safely avoid checks.
 #[derive(Debug, Clone)]
 pub struct CodeRange(pub(crate) Range<IxWidth>);
 
@@ -136,6 +174,9 @@ impl<'a> Consts<'a> {
 }
 
 impl<'a> Interpreter<'a> {
+    /// This is the entry point the VM offers to the runtime. This function
+    /// executes the given bytecode range and returns each signal or error.
+    /// This is essentially the polling model.
     #[inline(always)]
     pub fn run_code(&mut self, bc: &Bytecode, span: CodeRange) -> Result<Signal> {
         self.program_counter = span.0.start;
@@ -144,6 +185,11 @@ impl<'a> Interpreter<'a> {
         self.run_chunk(&bc.code, &bc.metadata)
     }
 
+    /// This giant function executes instructions. Right now it handles
+    /// instruction fetch and decode; operator fetch and decode; and includes
+    /// all instruction handlers. We really want to move this to computed goto
+    /// by using tail-calls into a handler table, but the feature is yet to be
+    /// finished.
     fn run_chunk(&mut self, bytecode: &[Instruction], metadata: &[MetaId]) -> Result<Signal> {
         while let Some(&instr) = bytecode.get(self.program_counter as usize)
             && self.program_counter < self.code_end
