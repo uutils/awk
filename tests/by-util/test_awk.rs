@@ -1290,9 +1290,50 @@ fn invalid_regex_literal_is_fatal() {
 }
 
 #[test]
+fn next_and_nextfile_from_a_function_in_a_special_rule_are_fatal() {
+    // (rule, statement)
+    let cases = [
+        ("BEGIN", "next"),
+        ("BEGIN", "nextfile"),
+        ("END", "next"),
+        ("END", "nextfile"),
+        ("BEGINFILE", "next"),
+        ("ENDFILE", "next"),
+        ("ENDFILE", "nextfile"),
+    ];
+    for (rule, stmt) in cases {
+        ucmd()
+            .arg(format!("function g() {{ {stmt} }} {rule} {{ g() }}"))
+            .pipe_in("x\n")
+            .fails_with_code(2)
+            .stdout_is("")
+            .stderr_contains(format!("`{stmt}' cannot be called from a `{rule}' rule"))
+            .stderr_does_not_contain("panicked");
+    }
+}
+
+#[test]
 fn bracket_range_ending_in_dash() {
     ucmd()
         .arg(r#"BEGIN { print ("-" ~ /[!---]/) }"#)
         .succeeds()
         .stdout_only("1\n");
+}
+
+#[test]
+fn nextfile_from_a_function_in_beginfile_skips_the_file() {
+    ucmd()
+        .arg("function g() { nextfile } BEGINFILE { g() } { print \"record\" } END { print NR }")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("0\n");
+}
+
+#[test]
+fn next_from_a_function_in_a_rule_skips_the_record() {
+    ucmd()
+        .arg("function g() { next } { g(); print \"after\" } END { print NR }")
+        .pipe_in("x\ny\n")
+        .succeeds()
+        .stdout_is("2\n");
 }
