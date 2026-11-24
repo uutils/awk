@@ -10,6 +10,8 @@ logos = "0.16.1"
 memchr.workspace = true
 thiserror.workspace = true
 bumpalo.workspace = true
+hashbrown.workspace = true
+ahash.workspace = true
 encoding_rs = "0.8.35"
 
 [lints]

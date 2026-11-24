@@ -6,6 +6,7 @@
 #[cfg(test)]
 mod tests;
 
+mod blob;
 mod locale_encoding;
 
 use core::str;
@@ -23,6 +24,8 @@ pub use logos::SpannedIter;
 use logos::{Logos, Skip};
 use memchr::{memchr, memchr3};
 use thiserror::Error;
+
+pub use blob::{BlobId, Interner};
 
 pub type Lexer<'a> = logos::Lexer<'a, Token<'a>>;
 pub type Result<T, E = LexingError> = std::result::Result<T, E>;
