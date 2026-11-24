@@ -164,7 +164,7 @@ fn unreadable_include_is_reported_without_a_panic() {
         .write("prog.awk", "@include \"no-such-include.awk\"\n");
     ts.cmd(crate::TESTS_BINARY)
         .args(&["-f", "prog.awk"])
-        .run()
+        .fails_with_code(1)
         .stderr_contains(
             "cannot open source file `no-such-include.awk' for reading: No such file or directory",
         )
