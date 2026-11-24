@@ -74,7 +74,7 @@ impl<'a> AwkRt<'a> {
         match self.drive(self.bc.begin_code())? {
             CtrlSig::End => Ok(()),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
-            CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
+            sig @ (CtrlSig::Next | CtrlSig::NextFile) => Err(misplaced_ctrl_sig(&sig, "BEGIN")),
         }
     }
 
@@ -94,7 +94,7 @@ impl<'a> AwkRt<'a> {
             CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
-            CtrlSig::Next => unreachable!(),
+            sig @ CtrlSig::Next => Err(misplaced_ctrl_sig(&sig, "BEGINFILE")),
         }
     }
 
@@ -102,7 +102,7 @@ impl<'a> AwkRt<'a> {
         match self.drive(self.bc.end_file_code())? {
             CtrlSig::End => Ok(()),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| ()),
-            CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
+            sig @ (CtrlSig::Next | CtrlSig::NextFile) => Err(misplaced_ctrl_sig(&sig, "ENDFILE")),
         }
     }
 
@@ -112,7 +112,7 @@ impl<'a> AwkRt<'a> {
         match self.drive(self.bc.end_code())? {
             CtrlSig::Exit(end_code) => exit(end_code.or(code).unwrap_or(0)),
             CtrlSig::End => exit(code.unwrap_or(0)),
-            CtrlSig::Next | CtrlSig::NextFile => unreachable!(),
+            sig @ (CtrlSig::Next | CtrlSig::NextFile) => Err(misplaced_ctrl_sig(&sig, "END")),
         }
     }
 
@@ -172,6 +172,19 @@ impl<'a> AwkRt<'a> {
             _ => todo!(),
         }
     }
+}
+
+/// `next` and `nextfile` are rejected by the parser in BEGIN, END, BEGINFILE and ENDFILE, but a
+/// function called from there can still reach one. gawk makes that fatal at run time.
+fn misplaced_ctrl_sig(sig: &CtrlSig, rule: &str) -> io::Error {
+    let stmt = if matches!(sig, CtrlSig::Next) {
+        "next"
+    } else {
+        "nextfile"
+    };
+    io::Error::other(format!(
+        "fatal: `{stmt}' cannot be called from a `{rule}' rule"
+    ))
 }
 
 enum ReadSource<'a> {
