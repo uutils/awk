@@ -186,11 +186,11 @@ impl<'a> Lexer<'a> {
         self.peeked_span().is_ok_and(|x| x.start == self.span.end)
     }
 
-    pub fn span_peeked_since(&mut self, start: usize) -> Span {
+    pub fn span_peeked_since(&mut self, start: u32) -> Span {
         Span::from(start..self.peeked_span().map_or(self.span().end, |s| s.end))
     }
 
-    pub fn span_peeked_up_to(&mut self, start: usize) -> Span {
+    pub fn span_peeked_up_to(&mut self, start: u32) -> Span {
         Span::from(start..self.peeked_span().map_or(self.span().end, |s| s.start))
     }
 
@@ -198,7 +198,7 @@ impl<'a> Lexer<'a> {
     ///
     /// The current token must match UTF-8 source.
     pub unsafe fn src_as_str(&self) -> &'a str {
-        unsafe { str::from_utf8_unchecked(&self.source[self.span()]) }
+        unsafe { str::from_utf8_unchecked(&self.source[self.span().ix()]) }
     }
 }
 
@@ -368,18 +368,18 @@ impl Debug for Lexer<'_> {
 }
 
 pub trait SpanExt: Copy {
-    fn since(self, end: usize) -> Self;
-    fn up_from(self, start: usize) -> Self;
+    fn since(self, end: u32) -> Self;
+    fn up_from(self, start: u32) -> Self;
 }
 
 impl SpanExt for Span {
     #[inline]
-    fn since(self, start: usize) -> Self {
+    fn since(self, start: u32) -> Self {
         Self { start, end: self.end }
     }
 
     #[inline]
-    fn up_from(self, start: usize) -> Self {
+    fn up_from(self, start: u32) -> Self {
         Self { start, end: self.start }
     }
 }

@@ -278,7 +278,7 @@ fn value_bytes(v: &Value) -> Vec<u8> {
 #[allow(clippy::float_cmp)]
 mod tests {
     use bumpalo::Bump;
-    use parser::MetadataStore;
+    use parser::{MetadataStore, Span};
 
     use super::*;
     use crate::{ExecMode, ir::lower::CodeGen, vm::types::Value};
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn builtin_error_converts_with_span() {
         let err = BuiltinError::Arity { expected: 2, given: 1 };
-        let span = AriadneSpan(parser::FileCache(None), (0..1).into());
+        let span = AriadneSpan(parser::FileCache(None), Span::new(0, 1));
         assert!(matches!(
             err.into_interpreter_error(span),
             InterpreterError::ArityMismatch(_, 2, 1)

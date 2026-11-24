@@ -376,11 +376,11 @@ impl ariadne::Span for AriadneSpan {
     }
 
     fn start(&self) -> usize {
-        self.1.start
+        self.1.start as usize
     }
 
     fn end(&self) -> usize {
-        self.1.end
+        self.1.end as usize
     }
 }
 

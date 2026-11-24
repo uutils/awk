@@ -92,7 +92,7 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
 
         let bytecode = bc.code.iter().zip(bc.metadata.iter()).map(|(&x, &m)| {
             let &AriadneSpan(ref file, span) = &metadata[m];
-            let span = source[span].to_string();
+            let span = source[span.ix()].to_string();
 
             let span = source
                 .split_once('\n')

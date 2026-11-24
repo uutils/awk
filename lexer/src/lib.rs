@@ -13,8 +13,9 @@ use core::str;
 use std::{
     cmp::Ordering,
     fmt::{Debug, Display},
+    ops::Range,
     ptr::NonNull,
-    range::Range,
+    range::Range as NewRange,
     slice::SliceIndex,
 };
 
@@ -29,7 +30,6 @@ pub use blob::{BlobId, Interner};
 
 pub type Lexer<'a> = logos::Lexer<'a, Token<'a>>;
 pub type Result<T, E = LexingError> = std::result::Result<T, E>;
-pub type Span = Range<usize>;
 
 #[derive(Logos, Debug, PartialEq)]
 #[logos(utf8 = false)]
@@ -375,6 +375,7 @@ impl<'a> Token<'a> {
         posix_strict: bool,
         gnu_strict: bool,
     ) -> logos::Lexer<'a, Self> {
+        assert!(source.len() < u32::MAX as usize - 1);
         Self::lex_with_encoding(
             source,
             arena,
@@ -659,6 +660,56 @@ fn parse_indirect_call<'a>(lex: &mut Lexer<'a>) -> Result<Identifier<'a>> {
 impl<'a> Identifier<'a> {
     fn parse<const SKIP: usize>(lex: &mut Lexer<'a>) -> Self {
         Self { literal: parse_ident(lex, SKIP..) }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Span {
+    pub const fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    pub const fn ix(self) -> Range<usize> {
+        Range { start: self.start as usize, end: self.end as usize }
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.start >= self.end
+    }
+}
+
+impl From<Range<usize>> for Span {
+    fn from(value: Range<usize>) -> Self {
+        Self { start: value.start as u32, end: value.end as u32 }
+    }
+}
+
+impl From<NewRange<usize>> for Span {
+    fn from(value: NewRange<usize>) -> Self {
+        Self { start: value.start as u32, end: value.end as u32 }
+    }
+}
+
+impl From<Range<u32>> for Span {
+    fn from(value: Range<u32>) -> Self {
+        Self { start: value.start, end: value.end }
+    }
+}
+
+impl From<NewRange<u32>> for Span {
+    fn from(value: NewRange<u32>) -> Self {
+        Self { start: value.start, end: value.end }
+    }
+}
+
+impl From<Span> for Range<usize> {
+    fn from(value: Span) -> Self {
+        value.ix()
     }
 }
 

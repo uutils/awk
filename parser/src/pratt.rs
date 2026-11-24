@@ -70,7 +70,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         &mut self,
         lex: &mut Lexer<'a>,
         op: ArrayOperator,
-        expr_anchor: usize,
+        expr_anchor: u32,
     ) -> Result<Vec<'a, Expr<'a>>> {
         let _bracket = lex.peeked_span()?.start;
         lex.next();
@@ -86,7 +86,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         &mut self,
         lex: &mut Lexer<'a>,
         mut lhs: Expr<'a>,
-        expr_anchor: usize,
+        expr_anchor: u32,
         min_bp: u8,
         delimiter: impl Fn(&Token<'a>) -> bool,
     ) -> Result<Expr<'a>> {
@@ -220,7 +220,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         &mut self,
         lex: &mut Lexer<'a>,
         min_bp: u8,
-        anchor: usize,
+        anchor: u32,
     ) -> Result<Expr<'a>> {
         self.typed_regex = false;
         let inner = self.parse(lex)?;
@@ -337,7 +337,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         &mut self,
         lex: &mut Lexer<'a>,
         next: Token<'a>,
-        anchor: usize,
+        anchor: u32,
     ) -> Result<Expr<'a>> {
         // Only accepts calls if the function name is next to the parenthesis.
         // If there is a space, we interpret it as a concatenation and let the
@@ -414,7 +414,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         lex: &mut Lexer<'a>,
         op: BinaryOperator,
         lhs: Expr<'a>,
-        expr_anchor: usize,
+        expr_anchor: u32,
     ) -> Result<Expr<'a>> {
         // Ensures it's not a typed regex; rejects cases like `x = @/a/ + 1`.
         self.typecheck(lex, &lhs)?;
@@ -445,7 +445,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         lex: &mut Lexer<'a>,
         op: BinaryPlaceOperator,
         place: Place<'a>,
-        expr_anchor: usize,
+        expr_anchor: u32,
     ) -> Result<Expr<'a>> {
         lex.next();
         self.typed_regex = matches!(op, BinaryPlaceOperator::Assignment);
@@ -547,7 +547,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         &mut self,
         lex: &mut Lexer<'a>,
         lhs: Expr<'a>,
-        expr_anchor: usize,
+        expr_anchor: u32,
     ) -> Result<Expr<'a>> {
         // There should be no need to typecheck lhs since there is no way it
         // wasn't caught first, but checking is cheap, so we make sure.
@@ -570,7 +570,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         lex: &mut Lexer<'a>,
         op: WriteKind,
         lhs: Expr<'a>,
-        expr_anchor: usize,
+        expr_anchor: u32,
     ) -> Result<Expr<'a>> {
         lex.next();
         lex.expect(&Token::Getline, |span| {

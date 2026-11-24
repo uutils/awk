@@ -500,7 +500,7 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
         init: Option<SimpleStatement<'a>>,
-        start: usize,
+        start: u32,
     ) -> Result<(Statement<'a>, bool)> {
         lex.consume(&Token::Semicolon);
         lex.consume(&Token::Newline);
@@ -532,7 +532,7 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
         expr: Option<SimpleStatement<'a>>,
-        start: usize,
+        start: u32,
     ) -> Result<(Statement<'a>, bool)> {
         let (variable, array) = match expr {
             Some(SimpleStatement::Expression(Expr::Node(node, _), _))

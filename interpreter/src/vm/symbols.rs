@@ -475,7 +475,7 @@ impl Record {
         buf.extend(
             memchr_iter(last, raw)
                 .map(|i| Span::from(i.saturating_sub(last_i)..i + 1))
-                .filter(|&span| raw[span].ends_with(bytes))
+                .filter(|&span| raw[span.ix()].ends_with(bytes))
                 .split_by(raw.len()),
         );
         buf
@@ -498,7 +498,7 @@ impl Record {
         let (raw, buf) = self.init_fields();
         regex::automaton(fs, mode, false)?
             .find_iter(&raw)
-            .map(|m| m.map(Span::from))
+            .map(|m| m.map(|m| Span::new(m.start as u32, m.end as u32)))
             .process_results(|matches| {
                 let matches = matches.take_while(|s| !s.is_empty());
                 buf.extend(split_by(matches, raw.len()));
@@ -544,7 +544,7 @@ impl Record {
         let (raw, buf) = self.init_fields();
         regex::automaton(fpat, mode, false)?
             .find_iter(&raw)
-            .map(|m| m.map(Span::from))
+            .map(|m| m.map(|m| Span::new(m.start as u32, m.end as u32)))
             .process_results(|matches| buf.extend(matches))?;
         Ok(buf)
     }
@@ -557,7 +557,7 @@ impl Record {
         mode: ExecMode,
     ) -> Result<Option<&[u8]>, RegexError> {
         let span = self.split_fields_raw(symbols, mode)?.get(n).copied();
-        Ok(span.and_then(|span| self.raw.get(span)))
+        Ok(span.and_then(|span| self.raw.get(span.ix())))
     }
 
     /// Materializes the value of the `n`th field. Splits the fields if unsplit.
@@ -660,7 +660,7 @@ impl Record {
             let start = buf.len();
             match new {
                 Some(val) if i == at => val.write_string(&mut buf),
-                _ => buf.extend_from_slice(&self.raw()[*span]),
+                _ => buf.extend_from_slice(&self.raw()[span.ix()]),
             }
             *span = Span::from(start..buf.len());
         }
@@ -716,7 +716,7 @@ where
 }
 
 fn split_by(iter: impl Iterator<Item = Span>, len: usize) -> impl Iterator<Item = Span> {
-    once(Span::from(0..0))
+    once(Span::new(0, 0))
         .chain(iter)
         .chain(once(Span::from(len..len)))
         .tuple_windows()
@@ -725,7 +725,7 @@ fn split_by(iter: impl Iterator<Item = Span>, len: usize) -> impl Iterator<Item 
 
 #[inline]
 const fn to_span(start: usize) -> Span {
-    Span { start, end: start + 1 }
+    Span { start: start as u32, end: start as u32 + 1 }
 }
 
 #[derive(Clone, Copy, Debug)]
