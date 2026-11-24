@@ -1268,3 +1268,31 @@ fn variables_not_clobbered_by_side_effects() {
         .succeeds()
         .stdout_is("6\n");
 }
+
+#[test]
+fn invalid_regex_literal_is_fatal() {
+    // (program, input, stderr)
+    let cases = [
+        (r#"BEGIN { print "a" ~ /(/ }"#, "", "unbalanced ("),
+        (r#"BEGIN { if ("q" ~ /[q/) print 1 }"#, "", "unbalanced ["),
+        (r#"BEGIN { print "q" !~ /[q/ }"#, "", "unbalanced ["),
+        ("/(/ { print }", "a\n", "unbalanced ("),
+    ];
+    for (program, input, stderr) in cases {
+        ucmd()
+            .arg(program)
+            .pipe_in(input)
+            .fails_with_code(2)
+            .stdout_is("")
+            .stderr_contains(stderr)
+            .stderr_does_not_contain("panicked");
+    }
+}
+
+#[test]
+fn bracket_range_ending_in_dash() {
+    ucmd()
+        .arg(r#"BEGIN { print ("-" ~ /[!---]/) }"#)
+        .succeeds()
+        .stdout_only("1\n");
+}
