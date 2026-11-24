@@ -22,7 +22,7 @@ use interpreter::{CodeGen, ExecMode, Interpreter};
 use parser::{FileCache, IncludeError, Parser};
 
 use crate::{
-    cli::{Args, KeyValue},
+    cli::{Args, KeyValue, attach_short_values},
     event::AwkRt,
     utils::{AWK_FATAL_CODE, EXIT_FAILURE, ensure_consistent_panic, exit_err},
 };
@@ -34,7 +34,7 @@ fn main() {
 }
 
 fn uu_main() -> Result<(), Box<dyn Error>> {
-    let args = match Args::try_parse_args(args_os()) {
+    let args = match Args::try_parse_args(attach_short_values(args_os())) {
         Ok(args) => args,
         Err(msg) => {
             msg.print()?;

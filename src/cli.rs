@@ -45,11 +45,12 @@ pub struct Args {
         short = 'd',
         long,
         num_args = 0..=1,
+        require_equals = true,
         default_missing_value = "./awkvars.out",
         help = "[default value, if empty: `./awkvars.out`]"
     )]
     pub dump_variables: Option<PathBuf>,
-    #[arg(short = 'D', long, num_args = 0..=1, default_missing_value = "", value_parser = parse_debug_mode)]
+    #[arg(short = 'D', long, num_args = 0..=1, require_equals = true, default_missing_value = "", value_parser = parse_debug_mode)]
     pub debug: Option<DebugMode>,
     #[arg(short = 'E', long)]
     pub exec: Option<PathBuf>,
@@ -61,7 +62,7 @@ pub struct Args {
     pub trace: bool,
     #[arg(short = 'l', long)]
     pub load: Vec<OsString>,
-    #[arg(short = 'L', long, num_args = 0..=1, default_missing_value = "basic", value_enum)]
+    #[arg(short = 'L', long, num_args = 0..=1, require_equals = true, default_missing_value = "basic", value_enum)]
     pub lint: Vec<LintMode>,
     #[arg(short = 'M', long)]
     pub bignum: bool,
@@ -72,6 +73,7 @@ pub struct Args {
     #[arg(short = 'o',
          long,
          num_args = 0..=1,
+         require_equals = true,
          default_missing_value = "./awkprof.out",
          help = "[default value, if empty: `./awkprof.out`]"
      )]
@@ -83,6 +85,7 @@ pub struct Args {
     #[arg(short = 'p',
         long,
         num_args = 0..=1,
+        require_equals = true,
         default_missing_value = "./awkprof.out",
         help = "[default value, if empty: `./awkprof.out`]"
     )]
@@ -178,6 +181,40 @@ impl clap::Args for ProgramSources {
     fn augment_args_for_update(cmd: clap::Command) -> clap::Command {
         Self::augment_args(cmd)
     }
+}
+
+/// The short options `-d`, `-D`, `-L`, `-o` and `-p` take an optional value, which gawk only
+/// reads when it is attached (`-Lfatal`). clap needs the `=` for that (`-L=fatal`), so add it.
+pub fn attach_short_values(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    // Short options that take their value from the next argument.
+    const TAKES_VALUE: [&[u8]; 7] = [b"-f", b"-F", b"-v", b"-e", b"-E", b"-i", b"-l"];
+
+    let mut args = args.into_iter();
+    let mut out: Vec<OsString> = args.next().into_iter().collect(); // program name
+    while let Some(arg) = args.next() {
+        match arg.as_encoded_bytes() {
+            [b'-', b'd' | b'D' | b'L' | b'o' | b'p', first, ..] if *first != b'=' => {
+                let mut bytes = arg.as_encoded_bytes().to_vec();
+                bytes.insert(2, b'=');
+                // SAFETY: only an ASCII byte was inserted between two ASCII bytes.
+                out.push(unsafe { OsString::from_encoded_bytes_unchecked(bytes) });
+            }
+            bytes @ [b'-', ..] if bytes != b"-" && bytes != b"--" => {
+                let takes_value = TAKES_VALUE.contains(&bytes);
+                out.push(arg);
+                if takes_value {
+                    out.extend(args.next());
+                }
+            }
+            // The program text, an operand or `--`: the rest is not an option.
+            _ => {
+                out.push(arg);
+                break;
+            }
+        }
+    }
+    out.extend(args);
+    out
 }
 
 #[derive(Clone, Debug)]
