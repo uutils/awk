@@ -17,7 +17,7 @@ use std::{
 use ahash::RandomState;
 use derive_more::{Debug, Deref, DerefMut, Display, From};
 use hashbrown::HashMap;
-use minrx::Regex;
+use minrx::{Regex, RegexError};
 use rc_vec::{RcVec, unique_rc::UniqRc};
 use smallvec::SmallVec;
 
@@ -248,7 +248,7 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn matches_regex(&self, pattern: &Self, mode: ExecMode) -> bool {
+    pub fn matches_regex(&self, pattern: &Self, mode: ExecMode) -> Result<bool, RegexError> {
         self.0.matches_regex(&pattern.0, mode)
     }
 
@@ -357,7 +357,7 @@ impl<'a> AwkValue<'a> {
         }
     }
 
-    fn matches_regex(&self, pattern: &Self, mode: ExecMode) -> bool {
+    fn matches_regex(&self, pattern: &Self, mode: ExecMode) -> Result<bool, RegexError> {
         let mut subject = Vec::with_capacity(self.string_size_hint());
         self.write_string(&mut subject);
         let Self::Regex(pattern) = pattern else {
@@ -365,8 +365,11 @@ impl<'a> AwkValue<'a> {
         };
         // TODO: icase wiring
         let mut r = pattern.automaton.borrow_mut();
-        let r = r.get_or_insert_with(|| regex::automaton(pattern, mode, false).unwrap());
-        r.is_match(&subject).unwrap()
+        let r = match &mut *r {
+            Some(r) => r,
+            None => r.insert(regex::automaton(pattern, mode, false)?),
+        };
+        Ok(r.is_match(&subject)?)
     }
 
     fn as_array(&mut self) -> Option<Rc<RefCell<ArrayMap<'a>>>> {
