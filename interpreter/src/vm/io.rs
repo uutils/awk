@@ -12,7 +12,7 @@ use std::{
 };
 
 use atoi::atoi;
-use memchr::memchr;
+use memchr::memmem;
 
 use super::ExecMode;
 use crate::{Interpreter, exactly_one_char, first_char, vm::types::Value};
@@ -348,42 +348,8 @@ fn blank_line_split(buf: &[u8]) -> Option<(usize, usize)> {
 
 /// Byte offset of the first occurrence of `delim` in `haystack`.
 fn find_delim(haystack: &[u8], delim: &[u8]) -> Option<usize> {
-    match *delim {
-        [] => None,
-        [b] => memchr(b, haystack),
-        [a, b] => {
-            let mut i = 0;
-            while let Some(pos) = memchr(a, &haystack[i..]) {
-                let idx = i + pos;
-                if haystack.get(idx + 1) == Some(&b) {
-                    return Some(idx);
-                }
-                i = idx + 1;
-            }
-            None
-        }
-        [a, b, c] => {
-            let mut i = 0;
-            while let Some(pos) = memchr(a, &haystack[i..]) {
-                let idx = i + pos;
-                if haystack.get(idx + 1) == Some(&b) && haystack.get(idx + 2) == Some(&c) {
-                    return Some(idx);
-                }
-                i = idx + 1;
-            }
-            None
-        }
-        ref d => {
-            let first = d[0];
-            let mut i = 0;
-            while let Some(pos) = memchr(first, &haystack[i..]) {
-                let idx = i + pos;
-                if haystack.get(idx..idx + d.len()) == Some(d) {
-                    return Some(idx);
-                }
-                i = idx + 1;
-            }
-            None
-        }
+    if delim.is_empty() {
+        return None;
     }
+    memmem::find(haystack, delim)
 }
