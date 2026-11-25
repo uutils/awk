@@ -92,8 +92,8 @@ impl TypedPlace {
         }
     }
 
-    pub fn new_user(code: &mut CodeGen, ident: &Identifier) -> Self {
-        let usr = code.symbols.register_user_var(ident, code.arena);
+    pub fn new_user(code: &mut CodeGen, ident: Identifier) -> Self {
+        let usr = code.symbols.register_user_var(ident);
         if let Some(reg) = code.get_local_arg(usr) {
             Self(Arg { reg }, PlaceTy::Reg)
         } else {

@@ -88,7 +88,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         mut lhs: Expr<'a>,
         expr_anchor: u32,
         min_bp: u8,
-        delimiter: impl Fn(&Token<'a>) -> bool,
+        delimiter: impl Fn(&Token) -> bool,
     ) -> Result<Expr<'a>> {
         while let Some((next, span)) = lex.peek_with_span() {
             let next = next?;
@@ -336,7 +336,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
     fn parse_atom_or_call(
         &mut self,
         lex: &mut Lexer<'a>,
-        next: Token<'a>,
+        next: Token,
         anchor: u32,
     ) -> Result<Expr<'a>> {
         // Only accepts calls if the function name is next to the parenthesis.

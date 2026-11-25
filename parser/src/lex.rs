@@ -5,8 +5,7 @@
 
 use std::{fmt::Debug, iter::Peekable};
 
-use bumpalo::Bump;
-use lexer::{Identifier, LexingError, Slice, Span, SpannedIter, Token};
+use lexer::{BlobId, IdentId, LexingError, Span, SpannedIter, Token};
 
 use super::Result;
 use crate::{
@@ -15,7 +14,7 @@ use crate::{
 };
 
 pub struct Lexer<'a> {
-    inner: Peekable<SpannedIter<'a, Token<'a>>>,
+    inner: Peekable<SpannedIter<'a, Token>>,
     span: Span,
     source: &'a [u8],
 }
@@ -23,10 +22,10 @@ pub struct Lexer<'a> {
 type LexItem<'a> = <Lexer<'a> as Iterator>::Item;
 
 impl<'a> Lexer<'a> {
-    pub fn new(source: &'a [u8], arena: &'a Bump) -> Self {
+    pub fn new(source: &'a [u8]) -> Self {
         Self {
             // TODO: wire in POSIX & GNU strict conformance.
-            inner: Token::lex(source, arena, false, false).spanned().peekable(),
+            inner: Token::lex(source, false, false).spanned().peekable(),
             span: Span::default(),
             source,
         }
@@ -36,11 +35,11 @@ impl<'a> Lexer<'a> {
         self.inner.peek().map(|(tok, _)| tok)
     }
 
-    pub fn peek_with(&mut self, f: impl FnOnce(&Token<'a>) -> bool) -> bool {
+    pub fn peek_with(&mut self, f: impl FnOnce(&Token) -> bool) -> bool {
         self.peek().is_some_and(|r| r.as_ref().is_ok_and(f))
     }
 
-    pub fn peek_is(&mut self, b: &Token<'a>) -> bool {
+    pub fn peek_is(&mut self, b: &Token) -> bool {
         self.peek()
             .is_some_and(|r| r.as_ref().is_ok_and(|t| t == b))
     }
@@ -49,7 +48,7 @@ impl<'a> Lexer<'a> {
         &mut self,
         expected: &Token,
         err: impl FnOnce(Span) -> ParsingError,
-    ) -> Result<Token<'a>> {
+    ) -> Result<Token> {
         match self.next() {
             Some(Ok(tok)) if expected == &tok => Ok(tok),
             Some(Ok(_)) => Err(err(self.span())),
@@ -60,9 +59,9 @@ impl<'a> Lexer<'a> {
 
     pub fn expect_with(
         &mut self,
-        expected: impl FnOnce(&Token<'a>) -> bool,
+        expected: impl FnOnce(&Token) -> bool,
         err: impl FnOnce(Span) -> ParsingError,
-    ) -> Result<Token<'a>> {
+    ) -> Result<Token> {
         match self.next() {
             Some(Ok(tok)) if expected(&tok) => Ok(tok),
             Some(Ok(_)) => Err(err(self.span())),
@@ -71,7 +70,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn expect_identifier(&mut self) -> Result<Identifier<'a>> {
+    pub fn expect_identifier(&mut self) -> Result<IdentId> {
         if let Some(Token::Identifier(ident)) =
             self.next_if(|t| matches!(t, Token::Identifier(_)))?
         {
@@ -84,7 +83,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn expect_string(&mut self) -> Result<Slice<'a>> {
+    pub fn expect_string(&mut self) -> Result<BlobId> {
         if let Some(Token::String(string)) = self.next_if(|t| matches!(t, Token::String(_)))? {
             Ok(string)
         } else {
@@ -95,15 +94,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn lex_ident(&self, source: &[u8], arena: &'a Bump) -> Result<&'a str> {
-        let Some(Ok(Token::Identifier(ident))) = Token::lex(source, arena, true, true).next()
-        else {
+    pub fn lex_ident(&mut self, source: &[u8]) -> Result<IdentId> {
+        let Some(Ok(Token::Identifier(ident))) = Token::lex(source, true, true).next() else {
             return Err(ParsingError::UnexpectedToken(
                 (self.span().start + 1..self.span().end - 1).into(),
                 "expected a valid, non-qualified identifier.".into(),
             ));
         };
-        Ok(arena.alloc_str(ident.literal))
+        Ok(ident)
     }
 
     pub fn consume(&mut self, token: &Token) -> bool {
@@ -117,7 +115,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn consume_with(&mut self, f: impl FnOnce(&Token<'a>) -> bool) -> bool {
+    pub fn consume_with(&mut self, f: impl FnOnce(&Token) -> bool) -> bool {
         if let Some(Ok(next)) = self.peek()
             && f(next)
         {
@@ -128,15 +126,12 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_if(
-        &mut self,
-        f: impl FnOnce(&Token<'a>) -> bool,
-    ) -> lexer::Result<Option<Token<'a>>> {
+    pub fn next_if(&mut self, f: impl FnOnce(&Token) -> bool) -> lexer::Result<Option<Token>> {
         let next = self.inner.next_if(|(tok, _)| tok.as_ref().is_ok_and(f));
         self.advance_span(next).transpose()
     }
 
-    pub fn expect_next(&mut self) -> Result<Token<'a>> {
+    pub fn expect_next(&mut self) -> Result<Token> {
         match self.next() {
             None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
             Some(Ok(tok)) => Ok(tok),
@@ -144,7 +139,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn expect_peek(&mut self) -> Result<&Token<'a>> {
+    pub fn expect_peek(&mut self) -> Result<&Token> {
         match self.peek() {
             None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
             Some(Ok(tok)) => Ok(tok),
@@ -163,7 +158,7 @@ impl<'a> Lexer<'a> {
             .ok_or(ParsingError::LexingError(LexingError::UnexpectedEof))
     }
 
-    pub fn peek_with_span(&mut self) -> Option<(Result<&Token<'a>>, Span)> {
+    pub fn peek_with_span(&mut self) -> Option<(Result<&Token>, Span)> {
         self.inner.peek().map(|(a, b)| {
             (
                 a.as_ref().map_err(|e| ParsingError::LexingError(e.clone())),
@@ -202,8 +197,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Token<'a>, LexingError>;
+impl Iterator for Lexer<'_> {
+    type Item = Result<Token, LexingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.inner.next();
@@ -226,23 +221,23 @@ pub trait TokenExt {
     fn is_stmnt_or_block_end(&self) -> bool;
 }
 
-impl TokenExt for Token<'_> {
+impl TokenExt for Token {
     fn is_prefix_op(&self) -> bool {
         matches!(
             self,
-            Token::Increment
-                | Token::Decrement
-                | Token::Record
-                | Token::Negation
-                | Token::Minus
-                | Token::Plus
+            Self::Increment
+                | Self::Decrement
+                | Self::Record
+                | Self::Negation
+                | Self::Minus
+                | Self::Plus
         )
     }
     fn is_atom(&self) -> bool {
         matches!(
             self,
-            Token::Number(_) | Token::Integer(_) | Token::String(_) | Token::Regex(_)
-        ) || self.is_place() && self != &Token::Record
+            Self::Number(_) | Self::Integer(_) | Self::String(_) | Self::Regex(_)
+        ) || self.is_place() && self != &Self::Record
     }
     fn is_expr_start(&self) -> bool {
         self.is_atom()
@@ -250,90 +245,90 @@ impl TokenExt for Token<'_> {
             || self.maps_to_builtin().is_some()
             || matches!(
                 self,
-                Token::IndirectCall(_) | Token::Getline | Token::OpenParent
+                Self::IndirectCall(_) | Self::Getline | Self::OpenParent
             )
     }
     fn is_ident_place(&self) -> bool {
         matches!(
             self,
-            Token::Identifier(_)
-                | Token::NrVariable
-                | Token::NfVariable
-                | Token::FsVariable
-                | Token::FpatVariable
-                | Token::FieldwidthsVariable
-                | Token::RsVariable
-                | Token::RtVariable
-                | Token::OfsVariable
-                | Token::OrsVariable
-                | Token::FilenameVariable
-                | Token::ArgcVariable
-                | Token::ArgvVariable
-                | Token::SubsepVariable
-                | Token::FnrVariable
-                | Token::OfmtVariable
-                | Token::RstartVariable
-                | Token::RlengthVariable
-                | Token::EnvironVariable
-                | Token::ProcinfoVariable
-                | Token::SymtabVariable
-                | Token::FunctabVariable
+            Self::Identifier(_)
+                | Self::NrVariable
+                | Self::NfVariable
+                | Self::FsVariable
+                | Self::FpatVariable
+                | Self::FieldwidthsVariable
+                | Self::RsVariable
+                | Self::RtVariable
+                | Self::OfsVariable
+                | Self::OrsVariable
+                | Self::FilenameVariable
+                | Self::ArgcVariable
+                | Self::ArgvVariable
+                | Self::SubsepVariable
+                | Self::FnrVariable
+                | Self::OfmtVariable
+                | Self::RstartVariable
+                | Self::RlengthVariable
+                | Self::EnvironVariable
+                | Self::ProcinfoVariable
+                | Self::SymtabVariable
+                | Self::FunctabVariable
         )
     }
     fn is_place(&self) -> bool {
-        matches!(self, Token::Record) || self.is_ident_place()
+        matches!(self, Self::Record) || self.is_ident_place()
     }
     fn is_pattern_start(&self) -> bool {
         self.is_expr_start() || self.maps_to_special_pat().is_some()
     }
     fn maps_to_command(&self) -> Option<Command> {
         match self {
-            Token::Print => Some(Command::Print),
-            Token::Printf => Some(Command::Printf),
+            Self::Print => Some(Command::Print),
+            Self::Printf => Some(Command::Printf),
             _ => None,
         }
     }
 
     fn maps_to_builtin(&self) -> Option<BuiltinFunction> {
         match self {
-            Token::Length => Some(BuiltinFunction::Length),
-            Token::Substr => Some(BuiltinFunction::Substr),
-            Token::Split => Some(BuiltinFunction::Split),
-            Token::Sub => Some(BuiltinFunction::Sub),
-            Token::Gsub => Some(BuiltinFunction::Gsub),
-            Token::MatchFn => Some(BuiltinFunction::Match),
-            Token::Index => Some(BuiltinFunction::Index),
-            Token::Sprintf => Some(BuiltinFunction::Sprintf),
-            Token::Toupper => Some(BuiltinFunction::Toupper),
-            Token::Tolower => Some(BuiltinFunction::Tolower),
-            Token::Gensub => Some(BuiltinFunction::Gensub),
-            Token::Patsplit => Some(BuiltinFunction::Patsplit),
-            Token::Strtonum => Some(BuiltinFunction::Strtonum),
-            Token::Close => Some(BuiltinFunction::Close),
-            Token::Fflush => Some(BuiltinFunction::Fflush),
-            Token::System => Some(BuiltinFunction::System),
-            Token::Int => Some(BuiltinFunction::Int),
-            Token::Sqrt => Some(BuiltinFunction::Sqrt),
-            Token::Exp => Some(BuiltinFunction::Exp),
-            Token::Log => Some(BuiltinFunction::Log),
-            Token::Sin => Some(BuiltinFunction::Sin),
-            Token::Cos => Some(BuiltinFunction::Cos),
-            Token::Atan2 => Some(BuiltinFunction::Atan2),
-            Token::Rand => Some(BuiltinFunction::Rand),
-            Token::Srand => Some(BuiltinFunction::Srand),
-            Token::Systime => Some(BuiltinFunction::Systime),
-            Token::Mktime => Some(BuiltinFunction::Mktime),
-            Token::Strftime => Some(BuiltinFunction::Strftime),
-            Token::Typeof => Some(BuiltinFunction::Typeof),
-            Token::Isarray => Some(BuiltinFunction::Isarray),
-            Token::Asort => Some(BuiltinFunction::Asort),
-            Token::Asorti => Some(BuiltinFunction::Asorti),
-            Token::And => Some(BuiltinFunction::And),
-            Token::Or => Some(BuiltinFunction::Or),
-            Token::Xor => Some(BuiltinFunction::Xor),
-            Token::Compl => Some(BuiltinFunction::Compl),
-            Token::Lshift => Some(BuiltinFunction::Lshift),
-            Token::Rshift => Some(BuiltinFunction::Rshift),
+            Self::Length => Some(BuiltinFunction::Length),
+            Self::Substr => Some(BuiltinFunction::Substr),
+            Self::Split => Some(BuiltinFunction::Split),
+            Self::Sub => Some(BuiltinFunction::Sub),
+            Self::Gsub => Some(BuiltinFunction::Gsub),
+            Self::MatchFn => Some(BuiltinFunction::Match),
+            Self::Index => Some(BuiltinFunction::Index),
+            Self::Sprintf => Some(BuiltinFunction::Sprintf),
+            Self::Toupper => Some(BuiltinFunction::Toupper),
+            Self::Tolower => Some(BuiltinFunction::Tolower),
+            Self::Gensub => Some(BuiltinFunction::Gensub),
+            Self::Patsplit => Some(BuiltinFunction::Patsplit),
+            Self::Strtonum => Some(BuiltinFunction::Strtonum),
+            Self::Close => Some(BuiltinFunction::Close),
+            Self::Fflush => Some(BuiltinFunction::Fflush),
+            Self::System => Some(BuiltinFunction::System),
+            Self::Int => Some(BuiltinFunction::Int),
+            Self::Sqrt => Some(BuiltinFunction::Sqrt),
+            Self::Exp => Some(BuiltinFunction::Exp),
+            Self::Log => Some(BuiltinFunction::Log),
+            Self::Sin => Some(BuiltinFunction::Sin),
+            Self::Cos => Some(BuiltinFunction::Cos),
+            Self::Atan2 => Some(BuiltinFunction::Atan2),
+            Self::Rand => Some(BuiltinFunction::Rand),
+            Self::Srand => Some(BuiltinFunction::Srand),
+            Self::Systime => Some(BuiltinFunction::Systime),
+            Self::Mktime => Some(BuiltinFunction::Mktime),
+            Self::Strftime => Some(BuiltinFunction::Strftime),
+            Self::Typeof => Some(BuiltinFunction::Typeof),
+            Self::Isarray => Some(BuiltinFunction::Isarray),
+            Self::Asort => Some(BuiltinFunction::Asort),
+            Self::Asorti => Some(BuiltinFunction::Asorti),
+            Self::And => Some(BuiltinFunction::And),
+            Self::Or => Some(BuiltinFunction::Or),
+            Self::Xor => Some(BuiltinFunction::Xor),
+            Self::Compl => Some(BuiltinFunction::Compl),
+            Self::Lshift => Some(BuiltinFunction::Lshift),
+            Self::Rshift => Some(BuiltinFunction::Rshift),
             _ => None,
         }
     }
@@ -354,10 +349,10 @@ impl TokenExt for Token<'_> {
         }
     }
     fn is_stmnt_end(&self) -> bool {
-        matches!(self, Token::Newline | Token::Semicolon)
+        matches!(self, Self::Newline | Self::Semicolon)
     }
     fn is_stmnt_or_block_end(&self) -> bool {
-        self.is_stmnt_end() || self == &Token::ClosedBrace
+        self.is_stmnt_end() || self == &Self::ClosedBrace
     }
 }
 

@@ -19,7 +19,9 @@ pub mod types;
 use std::{io::Result as IoResult, mem::MaybeUninit, ops::Range, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
-use parser::{AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection};
+use parser::{
+    AriadneSpan, Command, Identifier, MetaId, MetadataStore, Redirection, StaticInterner,
+};
 use rc_vec::RcVec;
 use smallvec::SmallVec;
 pub use symbols::SymbolTable;
@@ -444,11 +446,10 @@ impl<'a> Interpreter<'a> {
                     // TODO: Proper parsing, catch indirect calls to built-ins,
                     //       native funs.
                     let (namespace, literal) = name.split_once("::").unwrap_or(("awk", &name));
-                    let Some((name, _)) = self
-                        .symbols
-                        .functions
-                        .lookup(&Identifier { namespace, literal })
-                    else {
+                    let Some((name, _)) = self.symbols.functions.lookup(Identifier {
+                        namespace: StaticInterner::intern_ident(namespace),
+                        literal: StaticInterner::intern_ident(literal),
+                    }) else {
                         return Err(InterpreterError::UnknownIndFunction(
                             self.get_span(metadata),
                             name,

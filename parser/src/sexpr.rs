@@ -267,7 +267,7 @@ impl<T: Debug> Debug for ListLispCasesFmt<'_, T> {
     }
 }
 
-impl Debug for Identifier<'_> {
+impl Debug for Identifier {
     fn fmt(&self, f: &mut Formatter) -> Result {
         write!(f, "{}::{}", self.namespace, self.literal)
     }
@@ -288,7 +288,7 @@ impl Debug for Body<'_> {
     }
 }
 
-impl Debug for Atom<'_> {
+impl Debug for Atom {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Self::Variable(var) => write!(f, "{var:?}"),
@@ -312,7 +312,7 @@ impl Debug for Place<'_> {
     }
 }
 
-impl Debug for Variable<'_> {
+impl Debug for Variable {
     fn fmt(&self, f: &mut Formatter) -> Result {
         <Self as std::fmt::Display>::fmt(self, f)
     }

@@ -10,7 +10,7 @@ use bumpalo::{Bump, boxed::Box, collections::Vec};
 use derive_more::Display;
 use either::Either;
 use hashbrown::HashMap;
-use lexer::{Slice, Span, Token};
+use lexer::{BlobId, IdentId, Span, Token};
 
 use crate::{AriadneSpan, DiagnosticStore, Parser, ParsingError, Result, lex::TokenExt};
 
@@ -20,7 +20,7 @@ use crate::{AriadneSpan, DiagnosticStore, Parser, ParsingError, Result, lex::Tok
 /// allow telling them apart.
 #[derive(Debug)]
 pub struct Ast<'a> {
-    pub loads: Vec<'a, Slice<'a>>,
+    pub loads: Vec<'a, BlobId>,
     pub begin: Vec<'a, Body<'a>>,
     pub end: Vec<'a, Body<'a>>,
     pub begin_file: Vec<'a, Body<'a>>,
@@ -28,12 +28,12 @@ pub struct Ast<'a> {
     pub rules: Vec<'a, Rule<'a>>,
     pub concurrent: Vec<'a, Rule<'a>>,
     pub functions: FunctionTable<'a>,
-    pub ns_metadata: MetadataStore<&'a str, usize>,
+    pub ns_metadata: MetadataStore<IdentId, usize>,
     pub loc_metadata: MetadataStore<AriadneSpan>,
     pub diagnostics: DiagnosticStore,
 }
 
-pub type FunctionTable<'a> = HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>;
+pub type FunctionTable<'a> = HashMap<Identifier, Function<'a>, RandomState, &'a Bump>;
 
 /// An user rule. These are top-level items of the basic form `expr? { body }`
 /// or ranges `expr, expr { body }`.
@@ -45,15 +45,15 @@ pub struct Rule<'a> {
 
 /// An indivisible part of the syntax. Includes primitives and variables.
 #[derive(Clone)]
-pub enum Atom<'a> {
-    Variable(Variable<'a>),
-    String(Slice<'a>),
+pub enum Atom {
+    Variable(Variable),
+    String(BlobId),
     Integer(i32),
     Number(f64),
     BigInt(),
     BigFloat(),
-    Regex(Slice<'a>),
-    TypedRegex(Slice<'a>),
+    Regex(BlobId),
+    TypedRegex(BlobId),
 }
 
 /// The "trigger" of a rule (simple exprs or ranges).
@@ -76,9 +76,9 @@ pub enum SpecialPattern {
 /// namespace is usually implicit, while the literal is always explicit. These
 /// are separated with a path spec `::` in the grammar.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct Identifier<'a> {
-    pub namespace: &'a str,
-    pub literal: &'a str,
+pub struct Identifier {
+    pub namespace: IdentId,
+    pub literal: IdentId,
 }
 
 /// User variables + all native ones. Only useful because some have special
@@ -86,8 +86,8 @@ pub struct Identifier<'a> {
 #[repr(u32)]
 #[derive(Clone, Copy, Display)]
 #[display(rename_all = "UPPERCASE")]
-pub enum Variable<'a> {
-    User(Identifier<'a>) = 0,
+pub enum Variable {
+    User(Identifier) = 0,
     Nr,
     Nf,
     Fs,
@@ -113,7 +113,7 @@ pub enum Variable<'a> {
 }
 
 pub enum Expr<'a> {
-    Leaf(Atom<'a>, MetaId),
+    Leaf(Atom, MetaId),
     Node(Box<'a, ExprNode<'a>>, MetaId),
 }
 
@@ -123,8 +123,8 @@ pub type Pattern<'a> = Either<RulePattern<'a>, SpecialPattern>;
 #[derive(Debug)]
 pub enum ExprNode<'a> {
     Parenthesized(Expr<'a>),
-    FunctionCall(Identifier<'a>, Vec<'a, Expr<'a>>),
-    IndirectCall(Variable<'a>, Vec<'a, Expr<'a>>),
+    FunctionCall(Identifier, Vec<'a, Expr<'a>>),
+    IndirectCall(Variable, Vec<'a, Expr<'a>>),
     BuiltinCall(BuiltinFunction, Vec<'a, Expr<'a>>),
     PlacingCall(PlacingFunction, Vec<'a, Expr<'a>>, Place<'a>),
     UnaryOperation(UnaryOperator, Expr<'a>),
@@ -194,11 +194,11 @@ pub enum ArrayOperator {
 /// get theirs modified. A place is a subset of all expressions.
 pub enum Place<'a> {
     Record(Expr<'a>),
-    Variable(Variable<'a>),
+    Variable(Variable),
     Array(ArrayPlace<'a>),
 }
 
-pub struct ArrayPlace<'a>(pub Variable<'a>, pub Vec<'a, Vec<'a, Expr<'a>>>);
+pub struct ArrayPlace<'a>(pub Variable, pub Vec<'a, Vec<'a, Expr<'a>>>);
 
 /// The different kind of redirection I/O that are supported.
 #[derive(Clone, Copy)]
@@ -255,14 +255,14 @@ pub enum Statement<'a> {
         metadata: MetaId,
     },
     ForEach {
-        variable: Variable<'a>,
+        variable: Variable,
         array: ArrayPlace<'a>,
         body: Body<'a>,
         metadata: MetaId,
     },
     Switch {
         scrutinee: Expr<'a>,
-        branches: Vec<'a, (Atom<'a>, Body<'a>)>,
+        branches: Vec<'a, (Atom, Body<'a>)>,
         default: Option<(Body<'a>, usize)>,
         metadata: MetaId,
     },
@@ -284,7 +284,7 @@ pub enum SimpleStatement<'a> {
         redirection: Option<(Redirection, Expr<'a>)>,
         metadata: MetaId,
     },
-    Delete(Variable<'a>, MetaId),
+    Delete(Variable, MetaId),
     DeleteElement(ArrayPlace<'a>, MetaId),
 }
 
@@ -292,7 +292,7 @@ pub enum SimpleStatement<'a> {
 /// [`FunctionTable`]'s key'.
 #[derive(Debug)]
 pub struct Function<'a> {
-    pub args: Vec<'a, Identifier<'a>>,
+    pub args: Vec<'a, Identifier>,
     pub body: Body<'a>,
 }
 
@@ -363,7 +363,7 @@ pub enum Command {
 }
 
 impl<'a> Expr<'a> {
-    pub fn leaf(from: impl Into<Atom<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
+    pub fn leaf(from: impl Into<Atom>, parser: &mut Parser<'a>, span: Span) -> Self {
         let span = AriadneSpan(parser.file.clone(), span);
         let metadata = parser.ast.loc_metadata.store(span);
         Self::Leaf(from.into(), metadata)
@@ -412,32 +412,32 @@ impl Expr<'_> {
     }
 }
 
-impl<'a> From<Identifier<'a>> for Variable<'a> {
-    fn from(value: Identifier<'a>) -> Self {
+impl From<Identifier> for Variable {
+    fn from(value: Identifier) -> Self {
         Self::User(value)
     }
 }
 
-impl<'a> From<Variable<'a>> for Atom<'a> {
-    fn from(value: Variable<'a>) -> Self {
+impl From<Variable> for Atom {
+    fn from(value: Variable) -> Self {
         Self::Variable(value)
     }
 }
 
-impl<'a> From<Variable<'a>> for Place<'a> {
-    fn from(value: Variable<'a>) -> Self {
+impl From<Variable> for Place<'_> {
+    fn from(value: Variable) -> Self {
         Self::Variable(value)
     }
 }
 
-impl From<f64> for Atom<'_> {
+impl From<f64> for Atom {
     fn from(value: f64) -> Self {
         Self::Number(value)
     }
 }
 
-impl<'a> UnaryOperator {
-    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
+impl UnaryOperator {
+    pub fn parse(value: &Token, span: Span) -> Result<Self> {
         match value {
             Token::Record => Ok(Self::Record),
             Token::Negation => Ok(Self::Negation),
@@ -451,8 +451,8 @@ impl<'a> UnaryOperator {
     }
 }
 
-impl<'a> BinaryOperator {
-    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
+impl BinaryOperator {
+    pub fn parse(value: &Token, span: Span) -> Result<Self> {
         match value {
             Token::EqualTo => Ok(Self::Eq),
             Token::NotEqualTo => Ok(Self::NEq),
@@ -497,8 +497,8 @@ impl UnaryPlaceOperator {
     }
 }
 
-impl<'a> BinaryPlaceOperator {
-    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
+impl BinaryPlaceOperator {
+    pub fn parse(value: &Token, span: Span) -> Result<Self> {
         match value {
             Token::Assignment => Ok(Self::Assignment),
             Token::PlusAssign => Ok(Self::AddAssign),
@@ -515,8 +515,8 @@ impl<'a> BinaryPlaceOperator {
     }
 }
 
-impl<'a> ArrayOperator {
-    pub fn parse(value: &Token<'a>, span: Span) -> Result<Self> {
+impl ArrayOperator {
+    pub fn parse(value: &Token, span: Span) -> Result<Self> {
         match value {
             Token::OpenBracket => Ok(Self::Index),
             Token::In => Ok(Self::In),

@@ -11,13 +11,12 @@ use std::{
     path::PathBuf,
 };
 
-use bumpalo::Bump;
 use clap::{
     ArgAction, Error, Parser, ValueEnum,
     builder::{TypedValueParser, ValueParserFactory},
     error::ErrorKind,
 };
-use lexer::{Identifier, Token};
+use lexer::{BlobId, IdentId, StaticInterner, Token};
 use memchr::memchr;
 
 #[derive(Parser, Debug)]
@@ -137,9 +136,9 @@ fn parse_debug_mode(s: &str) -> Result<DebugMode, Infallible> {
 
 #[derive(Clone, Debug)]
 pub struct KeyValue {
-    namespace: String,
-    ident: String,
-    value: OsString,
+    namespace: IdentId,
+    ident: IdentId,
+    value: BlobId,
 }
 
 impl KeyValue {
@@ -150,30 +149,23 @@ impl KeyValue {
         let Some(del) = memchr(b'=', bytes) else {
             return err("Expected `key=value`");
         };
-        let (k, value) = bytes.split_at(del);
+        let (key, value) = bytes.split_at(del);
 
         // SAFETY: `=` is a valid char boundary; encoded bytes are also valid.
-        let value = unsafe { OsString::from_encoded_bytes_unchecked(value[1..].to_vec()) };
-        let tmp_arena = Bump::with_capacity(32);
-        let mut lex = Token::lex(k, &tmp_arena, false, false);
-        let Some(Ok(Token::Identifier(Identifier { literal }))) = lex.next() else {
+        let value = StaticInterner::intern(&value[1..]);
+        let mut lex = Token::lex(key, false, false);
+        let Some(Ok(Token::Identifier(literal))) = lex.next() else {
             return err("Invalid identifier");
         };
 
         let kv = match lex.next() {
             None => Self {
-                namespace: "awk".to_string(),
-                ident: literal.to_string(),
+                namespace: StaticInterner::awk_ident(),
+                ident: literal,
                 value,
             },
-            Some(Ok(Token::PathSpec))
-                if let Some(Ok(Token::Identifier(Identifier { literal: ident }))) = lex.next() =>
-            {
-                Self {
-                    namespace: literal.to_string(),
-                    ident: ident.to_string(),
-                    value,
-                }
+            Some(Ok(Token::PathSpec)) if let Some(Ok(Token::Identifier(ident))) = lex.next() => {
+                Self { namespace: literal, ident, value }
             }
             _ => return err("Invalid identifier"),
         };

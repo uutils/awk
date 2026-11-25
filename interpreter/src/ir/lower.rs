@@ -16,7 +16,8 @@ use bumpalo::{Bump, collections::Vec};
 use parser::{
     ArrayPlace, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
     Function as AstFunction, FunctionTable, Getline, Identifier, MetaId, Place, PlacingFunction,
-    Rule, RulePattern, SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
+    Rule, RulePattern, SimpleStatement, Statement, StaticInterner, UnaryOperator,
+    UnaryPlaceOperator, Variable,
 };
 use smallvec::SmallVec;
 
@@ -134,14 +135,14 @@ impl<'a> CodeGen<'a> {
     }
 
     fn lower_functions(&mut self, functions: &FunctionTable) {
-        for (name, AstFunction { args, body }) in functions {
+        for (&name, AstFunction { args, body }) in functions {
             let start = self.bc.len();
             let (arity, hwm_regs) = self.lower_fun_body(args, body);
             self.emit(Instruction::ReturnUnassigned);
 
             let code = CodeRange(start..self.bc.len());
             self.symbols
-                .register_user_fun(name, Function { arity, hwm_regs, code }, self.arena);
+                .register_user_fun(name, Function { arity, hwm_regs, code });
         }
     }
 
@@ -153,10 +154,8 @@ impl<'a> CodeGen<'a> {
         let old_hwm = self.regs.hwm;
 
         // intern the arguments
-        self.local_args.extend(
-            args.iter()
-                .map(|arg| self.symbols.register_user_var(arg, self.arena)),
-        );
+        self.local_args
+            .extend(args.iter().map(|&arg| self.symbols.register_user_var(arg)));
 
         let arity = RegWidth::try_from(args.len()).expect("Too many args!");
         self.regs.clone().scope(self, |this| {
@@ -168,8 +167,8 @@ impl<'a> CodeGen<'a> {
         (arity, replace(&mut self.regs.hwm, old_hwm))
     }
 
-    pub fn set_value(&mut self, var: &Identifier, value: &str) {
-        self.symbols.register_user_var_with(var, value, self.arena);
+    pub fn set_value(&mut self, var: Identifier, value: &str) {
+        self.symbols.register_user_var_with(var, value);
     }
 
     fn lower_body(&mut self, body: &Body) {
@@ -410,9 +409,8 @@ impl<'a> CodeGen<'a> {
         let (lhs, tyl) = TypedArg::new_reg(scr).into_arg();
 
         match case {
-            Atom::Regex(r) | Atom::TypedRegex(r) => {
-                let buf = &*self.arena.alloc_slice_copy(r.as_ref());
-                let (rhs, tyr) = TypedArg::new_cnt(self, Value::new_regex(buf.into())).into_arg();
+            &Atom::Regex(r) | &Atom::TypedRegex(r) => {
+                let (rhs, tyr) = TypedArg::new_cnt(self, Value::new_regex_ref(r)).into_arg();
                 self.emit(Instruction::Matches { dest: cmp, lhs, rhs, tyl, tyr });
             }
             atom => {
@@ -491,21 +489,16 @@ impl<'a> CodeGen<'a> {
             Atom::Variable(var) => TypedArg::new_var(self, var),
             &Atom::Integer(n) => TypedArg::new_imm(n),
             &Atom::Number(n) => TypedArg::new_immf(self, n),
-            atom @ (Atom::String(s) | Atom::TypedRegex(s)) => {
-                let val = if matches!(atom, Atom::String(_)) {
-                    Value::new_string
-                } else {
-                    Value::new_regex
-                };
-                let buf = self.arena.alloc_slice_copy(s.as_ref());
-                TypedArg::new_cnt(self, val(buf.into()))
-            }
-            Atom::Regex(r) => {
+            &Atom::String(s) => TypedArg::new_cnt(
+                self,
+                Value::new_string(StaticInterner::resolve(s, |s| s.into())),
+            ),
+            &Atom::TypedRegex(s) => TypedArg::new_cnt(self, Value::new_regex_ref(s)),
+            &Atom::Regex(r) => {
                 // A bare `/re/` is `$0 ~ /re/`
                 let (arg, ty) = TypedArg::new_imm(0).into_arg();
                 self.emit(Instruction::LoadF { dest, arg, ty });
-                let buf = &*self.arena.alloc_slice_copy(r.as_ref());
-                let (rhs, tyr) = TypedArg::new_cnt(self, Value::new_regex(buf.into())).into_arg();
+                let (rhs, tyr) = TypedArg::new_cnt(self, Value::new_regex_ref(r)).into_arg();
                 let (lhs, tyl) = TypedArg::new_reg(dest).into_arg();
                 self.emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
                 TypedArg::new_reg(dest)
@@ -647,8 +640,8 @@ impl<'a> CodeGen<'a> {
                             this.emit(Instruction::InA { dest, arg, start, end, ty });
                         }
                     }
-                    ExprNode::FunctionCall(name, args) => {
-                        let name = this.symbols.get_user_fun(name, this.arena);
+                    &ExprNode::FunctionCall(name, ref args) => {
+                        let name = this.symbols.get_user_fun(name);
                         let range = this.gen_call_convention(RtType::Any, args);
                         let (start, end) = range.as_range();
                         this.emit(Instruction::UserCall { dest, start, end, name });
@@ -774,7 +767,7 @@ impl<'a> CodeGen<'a> {
                 let (src, tys) = rec.into_arg();
                 this.emit(Instruction::StoreF { dest, src, tys, arg, ty });
             }
-            Place::Variable(Variable::User(ident)) => {
+            &Place::Variable(Variable::User(ident)) => {
                 let t_arg = TypedPlace::new_user(self, ident);
                 let (var, ty_place) = t_arg.into_place();
 

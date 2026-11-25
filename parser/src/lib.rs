@@ -24,8 +24,8 @@ use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
 use derive_more::Debug;
 use either::Either::{Left, Right};
 use hashbrown::HashMap;
-pub use lexer::Span;
 use lexer::Token;
+pub use lexer::{BlobId, IdentId, Span, StaticInterner};
 
 pub use crate::{
     ast::*,
@@ -45,7 +45,7 @@ pub struct Parser<'a> {
     preprocessor: Preprocessor,
     #[debug(ignore)]
     file: FileCache,
-    namespace: &'a str,
+    namespace: IdentId,
     concurrent: bool,
     // Disables file include materialization and enables metadata recording.
     dry: bool,
@@ -68,7 +68,7 @@ impl<'a> Parser<'a> {
             arena,
             preprocessor: Preprocessor {},
             file: FileCache(None),
-            namespace: "awk",
+            namespace: StaticInterner::awk_ident(),
             concurrent: false,
             dry,
             break_allowed: false,
@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
     ) -> Result<&mut Ast<'a>, DiagnosticStore> {
         self.file.clone_from(&file);
         self.ast.diagnostics.cache(self.file.clone(), source);
-        let mut lex = Lexer::new(source, self.arena);
+        let mut lex = Lexer::new(source);
         match self.parse_top(&mut lex, true) {
             Ok(_) => Ok(&mut self.ast),
             Err(error) => {
@@ -154,28 +154,30 @@ impl<'a> Parser<'a> {
                     }
                     Token::IncludeDirective => {
                         let path = lex.expect_string()?;
-                        if let (Err(e), _) = self.include(make_path(path.as_ref()), Some("awk")) {
+                        if let (Err(e), _) =
+                            self.include(make_path(path), Some(StaticInterner::awk_ident()))
+                        {
                             return Err(e);
                         }
                         lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
                     }
                     Token::NsIncludeDirective => {
                         let path = lex.expect_string()?;
-                        if let (Err(e), _) = self.include(make_path(path.as_ref()), None) {
+                        if let (Err(e), _) = self.include(make_path(path), None) {
                             return Err(e);
                         }
                         lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
                     }
                     Token::NamespaceDirective => {
-                        let namespace = lex.expect_string()?;
-                        let namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
+                        let ns = StaticInterner::resolve(lex.expect_string()?, <[u8]>::to_vec);
+                        let ns = lex.lex_ident(&ns)?;
                         lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
-                        if self.namespace == namespace {
+                        if self.namespace == ns {
                             continue; // skip counting.
                         }
-                        self.namespace = namespace;
+                        self.namespace = ns;
                         if self.dry {
-                            self.ast.ns_metadata.store(namespace);
+                            self.ast.ns_metadata.store(ns);
                         }
                     }
                     Token::ConcurrentDirective => {
@@ -588,7 +590,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_case(&mut self, lex: &mut Lexer<'a>) -> Result<Atom<'a>> {
+    fn parse_case(&mut self, lex: &mut Lexer<'a>) -> Result<Atom> {
         lex.expect(&Token::Case, ParsingError::MissingSwitchBranch)?;
         let next = lex.expect_next()?;
         let value = self.parse_atom(lex, next, true)?;
@@ -741,7 +743,7 @@ impl<'a> Parser<'a> {
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {
         let start = lex.span().start;
         let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
-        let args = self.parse_signature(lex, &name)?;
+        let args = self.parse_signature(lex, name)?;
         let span = lex.span().since(start);
         lex.consume(&Token::Newline);
         let body = self.with_return_context(|this| this.parse_body(lex))?;
@@ -755,8 +757,8 @@ impl<'a> Parser<'a> {
     fn parse_signature(
         &mut self,
         lex: &mut Lexer<'a>,
-        name: &Identifier<'a>,
-    ) -> Result<Vec<'a, Identifier<'a>>> {
+        name: Identifier,
+    ) -> Result<Vec<'a, Identifier>> {
         let mut args = Vec::new_in(self.arena);
         lex.expect(&Token::OpenParent, |s| {
             ParsingError::NoFunctionSignature(s, format!("{name:?}"))
@@ -859,7 +861,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_user_call(&mut self, fun: Identifier<'a>, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
+    fn parse_user_call(&mut self, fun: Identifier, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
         let ident_span = lex.span();
         let is_juxtaposed = lex.is_juxtaposed();
 
@@ -886,12 +888,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_atom(
-        &self,
-        lex: &mut Lexer<'a>,
-        token: Token<'a>,
-        typed_regex: bool,
-    ) -> Result<Atom<'a>> {
+    fn parse_atom(&self, lex: &mut Lexer<'a>, token: Token, typed_regex: bool) -> Result<Atom> {
         match token {
             Token::Number(n) => Ok(Atom::Number(n)),
             Token::Integer(n) => Ok(Atom::Integer(n)),
@@ -900,13 +897,6 @@ impl<'a> Parser<'a> {
             Token::TypedRegex(r) if typed_regex => Ok(Atom::TypedRegex(r)),
             Token::TypedRegex(_) => Err(ParsingError::UnexpectedTypedRegex(lex.span())),
             token => match self.get_place(lex, token) {
-                Ok(_) if lex.peek_is(&Token::PathSpec) => {
-                    // SAFETY: tokens matching get_place() are UTF-8.
-                    lexer::Identifier { literal: unsafe { lex.src_as_str() } }
-                        .qualify(lex, self.namespace)
-                        .map(Variable::User)
-                        .map(Atom::Variable)
-                }
                 Ok(var) => Ok(Atom::Variable(var)),
                 Err((e, _)) => Err(e),
             },
@@ -916,8 +906,8 @@ impl<'a> Parser<'a> {
     fn get_place(
         &self,
         lex: &mut Lexer<'a>,
-        token: Token<'a>,
-    ) -> Result<Variable<'a>, (ParsingError, Token<'a>)> {
+        token: Token,
+    ) -> Result<Variable, (ParsingError, Token)> {
         match token {
             Token::Identifier(a) if !(lex.peek_is(&Token::OpenParent) && lex.is_juxtaposed()) => {
                 match a.qualify(lex, self.namespace) {
@@ -966,13 +956,13 @@ impl<'a> Parser<'a> {
     ) -> (T, FileCache) {
         let old = replace(&mut self.file, FileCache::new_file(path));
         self.ast.diagnostics.cache(self.file.clone(), source);
-        let mut lex = Lexer::new(source, self.arena);
+        let mut lex = Lexer::new(source);
 
         let ret = f(self, &mut lex);
         (ret, replace(&mut self.file, old))
     }
 
-    fn include(&mut self, path: Rc<Path>, ns: Option<&'static str>) -> (Result<()>, FileCache) {
+    fn include(&mut self, path: Rc<Path>, ns: Option<IdentId>) -> (Result<()>, FileCache) {
         let old_namespace = self.namespace;
         let source = self.preprocessor.read_to_arena(path.clone(), self.arena);
 
@@ -994,7 +984,7 @@ impl<'a> Parser<'a> {
     pub fn include_many(&mut self, files: &[PathBuf]) -> Result<&mut Ast<'a>, DiagnosticStore> {
         for path in files {
             let path = Rc::from(path.as_path());
-            let (res, file) = self.include(path, Some("awk"));
+            let (res, file) = self.include(path, Some(StaticInterner::awk_ident()));
 
             if let Err(error) = res {
                 error.add_diagnostic_cached(
@@ -1043,29 +1033,30 @@ impl Preprocessor {
 }
 
 #[cfg(unix)]
-fn make_path(slice: &[u8]) -> Rc<Path> {
+fn make_path(blob: BlobId) -> Rc<Path> {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-    Rc::from(Path::new(OsStr::from_bytes(slice)))
+
+    StaticInterner::resolve(blob, |s| Rc::from(Path::new(OsStr::from_bytes(s))))
 }
 
 #[cfg(not(unix))]
-fn make_path(slice: &[u8]) -> Rc<Path> {
+fn make_path(blob: BlobId) -> Rc<Path> {
     use std::borrow::Cow;
 
-    match String::from_utf8_lossy(slice) {
+    StaticInterner::resolve(blob, |s| match String::from_utf8_lossy(s) {
         Cow::Borrowed(s) => Rc::from(Path::new(s)),
         Cow::Owned(s) => Rc::from(PathBuf::from(s)),
-    }
+    })
 }
 
 trait IdentifierExt<'a> {
-    fn qualify(self, lex: &mut Lexer<'a>, namespace: &'a str) -> Result<Identifier<'a>>
+    fn qualify(self, lex: &mut Lexer<'a>, namespace: IdentId) -> Result<Identifier>
     where
         Self: 'a;
 }
 
-impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
-    fn qualify(self, lex: &mut Lexer<'a>, mut namespace: &'a str) -> Result<Identifier<'a>>
+impl<'a> IdentifierExt<'a> for IdentId {
+    fn qualify(self, lex: &mut Lexer<'a>, mut namespace: IdentId) -> Result<Identifier>
     where
         Self: 'a,
     {
@@ -1074,10 +1065,10 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
 
         if !lex.consume(&Token::PathSpec) {
             // No explicit namespace; use current namespace or default's.
-            if self.literal.bytes().all(|c| c.is_ascii_uppercase()) {
-                namespace = "awk";
+            if StaticInterner::resolve_ident(self, |s| s.bytes().all(|c| c.is_ascii_uppercase())) {
+                namespace = StaticInterner::awk_ident();
             }
-            Ok(Identifier { namespace, literal: self.literal })
+            Ok(Identifier { namespace, literal: self })
         } else if !no_space {
             // Space between namespace and path specifier.
             let space_span = Some(Left(lex.span().up_from(span.end)));
@@ -1085,10 +1076,13 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
             let ident_span = lex.span().since(span.start);
             Err(ParsingError::ExpectedIdentifier(ident_span, space_span))
         } else if lex.peek_with(Token::is_ident_place) && lex.is_juxtaposed() {
-            lex.next();
-            // SAFETY: the token is ensured to be UTF-8.
-            let literal = unsafe { lex.src_as_str() };
-            Ok(Identifier { namespace: self.literal, literal })
+            let literal = if let Some(Ok(Token::Identifier(literal))) = lex.next() {
+                literal
+            } else {
+                // SAFETY: the token is ensured to be UTF-8.
+                StaticInterner::intern_ident(unsafe { lex.src_as_str() })
+            };
+            Ok(Identifier { namespace: self, literal })
         } else {
             // Try to select space between the path specifier and next one.
             let space_span = (lex.peek().is_none() || !lex.is_juxtaposed())

@@ -11,13 +11,13 @@ use crate::{Ast, Lexer, Parser, Result};
 
 pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> Result<&'a Ast<'a>> {
     let parser = arena.alloc(Parser::new(arena, true));
-    parser.parse_top(&mut Lexer::new(source.as_bytes(), arena), true)
+    parser.parse_top(&mut Lexer::new(source.as_bytes()), true)
 }
 
 pub fn parse_error_span(source: &str) -> std::ops::Range<usize> {
     let arena = Bump::new();
     let parser = arena.alloc(Parser::new(&arena, true));
-    match parser.parse_top(&mut Lexer::new(source.as_bytes(), &arena), true) {
+    match parser.parse_top(&mut Lexer::new(source.as_bytes()), true) {
         Err(err) => err
             .span()
             .expect("expected a span-bearing parse error")
@@ -71,7 +71,10 @@ macro_rules! test_parser {
             $(functions  = &$functions;)?
 
             test_parser!(
-                @internal check |(a, b)| assert_eq!(a.as_bytes(), b.as_ref());
+                @internal check |(&a, &b)| {
+                    let a = ::lexer::StaticInterner::intern(a.as_bytes());
+                    assert_eq!(a, b);
+                };
                 loads => code.loads
             );
             test_parser!(
@@ -163,7 +166,7 @@ pub fn ast_signature(ast: &Ast) -> String {
 
 pub fn parse_top<'a>(source: &'a str, arena: &'a Bump) -> Result<&'a Ast<'a>> {
     let parser = arena.alloc(Parser::new(arena, true));
-    parser.parse_top(&mut Lexer::new(source.as_bytes(), arena), true)
+    parser.parse_top(&mut Lexer::new(source.as_bytes()), true)
 }
 
 /// Pretty-print `ast`, parse the result, and require both signatures to match.

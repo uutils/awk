@@ -26,7 +26,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub(super) struct RawSymbolTable<'a, T>(IndexMap<Identifier<'a>, T, RandomState, &'a Bump>);
+pub(super) struct RawSymbolTable<'a, T>(IndexMap<Identifier, T, RandomState, &'a Bump>);
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -133,19 +133,10 @@ impl<'a, T> RawSymbolTable<'a, T> {
         Self(IndexMap::new_in(arena))
     }
 
-    pub(super) fn register(
-        &mut self,
-        ident: &Identifier,
-        value: T,
-        bump: &'a Bump,
-    ) -> UserNonLocal {
-        if let Some(index) = self.0.get_index_of(ident) {
+    pub(super) fn register(&mut self, ident: Identifier, value: T) -> UserNonLocal {
+        if let Some(index) = self.0.get_index_of(&ident) {
             UserNonLocal(index.try_into().unwrap())
         } else {
-            let ident = Identifier {
-                namespace: bump.alloc_str(ident.namespace),
-                literal: bump.alloc_str(ident.literal),
-            };
             UserNonLocal(self.0.insert_full(ident, value).0.try_into().unwrap())
         }
     }
@@ -161,14 +152,14 @@ impl<'a, T> RawSymbolTable<'a, T> {
     }
 
     #[inline(always)]
-    pub(super) fn insert(&mut self, ident: Identifier<'a>, value: T) -> Option<T> {
+    pub(super) fn insert(&mut self, ident: Identifier, value: T) -> Option<T> {
         self.0.insert(ident, value)
     }
 
     #[inline(always)]
-    pub(super) fn lookup(&mut self, ident: &Identifier) -> Option<(UserNonLocal, &mut T)> {
+    pub(super) fn lookup(&mut self, ident: Identifier) -> Option<(UserNonLocal, &mut T)> {
         self.0
-            .get_index_of(ident)
+            .get_index_of(&ident)
             .map(|ix| (UserNonLocal(ix.try_into().unwrap()), &mut self.0[ix]))
     }
 }
@@ -239,45 +230,36 @@ impl<'a> SymbolTable<'a> {
     }
 
     #[inline(always)]
-    pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> UserNonLocal {
-        self.user.register(var, Value::new_untyped(), bump)
+    pub fn register_user_var(&mut self, var: Identifier) -> UserNonLocal {
+        self.user.register(var, Value::new_untyped())
     }
 
     #[inline(always)]
-    pub fn register_user_var_with(&mut self, var: &Identifier, val: &str, bump: &'a Bump) {
-        let ident = Identifier {
-            namespace: bump.alloc_str(var.namespace),
-            literal: bump.alloc_str(var.literal),
-        };
+    pub fn register_user_var_with(&mut self, var: Identifier, val: &str) {
         self.user.insert(
-            ident,
+            var,
             if let Ok(n) = val.parse::<f64>() {
                 // TODO: use strnum
                 Value::new_num(n)
             } else {
-                Value::new_string(bump.alloc_str(val).as_bytes().into())
+                Value::new_string(val.as_bytes().into())
             },
         );
     }
 
     #[inline(always)]
-    pub fn register_user_fun(
-        &mut self,
-        name: &Identifier,
-        fun: Function,
-        bump: &'a Bump,
-    ) -> UserNonLocal {
+    pub fn register_user_fun(&mut self, name: Identifier, fun: Function) -> UserNonLocal {
         if let Some((nl, f)) = self.functions.lookup(name) {
             *f = Some(fun);
             nl
         } else {
-            self.functions.register(name, Some(fun), bump)
+            self.functions.register(name, Some(fun))
         }
     }
 
     #[inline(always)]
-    pub fn get_user_fun(&mut self, name: &Identifier, bump: &'a Bump) -> UserNonLocal {
-        self.functions.register(name, None, bump)
+    pub fn get_user_fun(&mut self, name: Identifier) -> UserNonLocal {
+        self.functions.register(name, None)
     }
 
     pub fn get_btin(&self, var: BuiltInVar) -> &Value<'a> {

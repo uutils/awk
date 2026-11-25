@@ -306,12 +306,12 @@ impl BuiltInVar {
         )
     }
 }
-impl<'a, 'r> TryFrom<&'r Variable<'a>> for BuiltInVar {
-    type Error = &'r Identifier<'a>;
+impl TryFrom<&Variable> for BuiltInVar {
+    type Error = Identifier;
 
-    fn try_from(value: &'r Variable<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: &Variable) -> Result<Self, Self::Error> {
         match value {
-            Variable::User(ident) => Err(ident),
+            &Variable::User(ident) => Err(ident),
             Variable::Nr => Ok(Self::Nr),
             Variable::Nf => Ok(Self::Nf),
             Variable::Fs => Ok(Self::Fs),

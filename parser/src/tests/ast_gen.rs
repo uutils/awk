@@ -6,6 +6,7 @@
 use std::vec::Vec;
 
 use bumpalo::{Bump, collections::CollectIn};
+use lexer::{BlobId, StaticInterner};
 use proptest::prelude::*;
 
 use crate::{
@@ -70,7 +71,7 @@ pub enum GenPlace {
 }
 
 impl<'a> Expr<'a> {
-    fn leaf_nm(from: impl Into<Atom<'a>>) -> Self {
+    fn leaf_nm(from: impl Into<Atom>) -> Self {
         Self::Leaf(from.into(), MetaId::default())
     }
 
@@ -224,7 +225,7 @@ fn materialize_pattern<'a>(pattern: &GenPattern, arena: &'a Bump) -> RulePattern
     match pattern {
         GenPattern::Expr(expr) => RulePattern::Expression(materialize_expr(expr, arena)),
         GenPattern::Regex(n) => {
-            RulePattern::Expression(Expr::leaf_nm(Atom::Regex(regex_slice(arena, *n))))
+            RulePattern::Expression(Expr::leaf_nm(Atom::Regex(regex_slice(*n))))
         }
     }
 }
@@ -269,22 +270,20 @@ fn materialize_statement<'a>(stmnt: &GenStatement, arena: &'a Bump) -> Statement
 
 fn materialize_expr<'a>(expr: &GenExpr, arena: &'a Bump) -> Expr<'a> {
     match expr {
-        GenExpr::Atom(atom) => Expr::leaf_nm(materialize_atom(atom, arena)),
+        GenExpr::Atom(atom) => Expr::leaf_nm(materialize_atom(atom)),
         GenExpr::Unary(op, inner) => Expr::node_nm(op.expr(materialize_expr(inner, arena)), arena),
         GenExpr::Binary(op, a, b) => Expr::node_nm(
             op.expr(materialize_expr(a, arena), materialize_expr(b, arena)),
             arena,
         ),
         GenExpr::Assign(place, rhs) => Expr::node_nm(
-            BinaryPlaceOperator::Assignment.expr(
-                materialize_place(place, arena),
-                materialize_expr(rhs, arena),
-            ),
+            BinaryPlaceOperator::Assignment
+                .expr(materialize_place(place), materialize_expr(rhs, arena)),
             arena,
         ),
         GenExpr::Index(var, idx) => Expr::node_nm(
             ExprNode::ArrayIndex(ArrayPlace(
-                materialize_var(*var, arena),
+                materialize_var(*var),
                 bumpalo::vec![in arena; bumpalo::vec![in arena; materialize_expr(idx, arena)]],
             )),
             arena,
@@ -292,25 +291,25 @@ fn materialize_expr<'a>(expr: &GenExpr, arena: &'a Bump) -> Expr<'a> {
     }
 }
 
-fn materialize_place<'a>(place: &GenPlace, arena: &'a Bump) -> Place<'a> {
+fn materialize_place<'a>(place: &GenPlace) -> Place<'a> {
     match place {
-        GenPlace::Var(v) => Place::Variable(materialize_var(*v, arena)),
+        GenPlace::Var(v) => Place::Variable(materialize_var(*v)),
     }
 }
 
-fn materialize_atom<'a>(atom: &GenAtom, arena: &'a Bump) -> Atom<'a> {
+fn materialize_atom(atom: &GenAtom) -> Atom {
     match atom {
         GenAtom::SmallInt(n) => Atom::Integer(i32::from(*n)),
-        GenAtom::Var(v) => Atom::Variable(materialize_var(*v, arena)),
-        GenAtom::String(n) => Atom::String(text_slice(arena, &format!("s{n}"))),
+        GenAtom::Var(v) => Atom::Variable(materialize_var(*v)),
+        GenAtom::String(n) => Atom::String(text_slice(&format!("s{n}"))),
     }
 }
 
-fn materialize_var(index: u8, arena: &Bump) -> Variable<'_> {
-    Variable::User(ident(arena, index))
+fn materialize_var(index: u8) -> Variable {
+    Variable::User(ident(index))
 }
 
-fn ident(arena: &Bump, index: u8) -> Identifier<'_> {
+fn ident(index: u8) -> Identifier {
     let literal = match index % 4 {
         0 => "a",
         1 => "b",
@@ -318,15 +317,15 @@ fn ident(arena: &Bump, index: u8) -> Identifier<'_> {
         _ => "d",
     };
     Identifier {
-        namespace: "awk",
-        literal: arena.alloc_str(literal),
+        namespace: StaticInterner::awk_ident(),
+        literal: StaticInterner::intern_ident(literal),
     }
 }
 
-fn text_slice<'a>(arena: &'a Bump, content: &str) -> lexer::Slice<'a> {
-    arena.alloc_str(content).as_bytes().into()
+fn text_slice(content: &str) -> BlobId {
+    StaticInterner::intern(content.as_bytes())
 }
 
-fn regex_slice(arena: &Bump, index: u8) -> lexer::Slice<'_> {
-    text_slice(arena, &format!("p{index}"))
+fn regex_slice(index: u8) -> BlobId {
+    text_slice(&format!("p{index}"))
 }

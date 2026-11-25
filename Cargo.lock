@@ -752,7 +752,6 @@ name = "lexer"
 version = "0.1.0"
 dependencies = [
  "ahash",
- "bumpalo",
  "encoding_rs",
  "hashbrown 0.17.2",
  "logos",

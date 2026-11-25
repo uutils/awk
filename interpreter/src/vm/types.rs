@@ -18,6 +18,7 @@ use ahash::RandomState;
 use derive_more::{Debug, Deref, DerefMut, Display, From};
 use hashbrown::HashMap;
 use minrx::{Regex, RegexError};
+use parser::{BlobId, StaticInterner};
 use rc_vec::{RcVec, unique_rc::UniqRc};
 use smallvec::SmallVec;
 
@@ -171,6 +172,10 @@ impl<'a> Value<'a> {
             automaton: RefCell::new(None),
             src: AwkStr::new_rc(RcVec::into_uniq_slice(vec)).into(),
         })))
+    }
+
+    pub fn new_regex_ref(blob: BlobId) -> Self {
+        Self::new_regex(StaticInterner::resolve(blob, |s| s.into()))
     }
 
     #[inline(always)]

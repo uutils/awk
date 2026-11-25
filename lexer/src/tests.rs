@@ -5,45 +5,60 @@
 
 use std::io::Write;
 
-use bumpalo::{
-    Bump,
-    collections::{CollectIn, Vec},
-};
+use crate::{BlobId, LocaleEncoding, StaticInterner, Token};
 
-use crate::{Identifier, LocaleEncoding, Token};
-
-fn lex<'a>(
-    src: &'a [u8],
-    arena: &'a Bump,
-    posix_strict: bool,
-    gnu_strict: bool,
-) -> Vec<'a, Token<'a>> {
-    lex_with_encoding(src, arena, posix_strict, gnu_strict, LocaleEncoding::utf8())
+fn lex(src: &[u8], posix_strict: bool, gnu_strict: bool) -> Vec<Token> {
+    lex_with_encoding(src, posix_strict, gnu_strict, LocaleEncoding::utf8())
 }
 
-fn lex_with_encoding<'a>(
-    src: &'a [u8],
-    arena: &'a Bump,
+fn lex_with_encoding(
+    src: &[u8],
     posix_strict: bool,
     gnu_strict: bool,
     encoding: LocaleEncoding,
-) -> Vec<'a, Token<'a>> {
-    Token::lex_with_encoding(src, arena, posix_strict, gnu_strict, encoding)
-        .collect_in::<Result<Vec<_>, _>>(arena)
+) -> Vec<Token> {
+    Token::lex_with_encoding(src, posix_strict, gnu_strict, encoding)
+        .collect::<Result<Vec<_>, _>>()
         .unwrap()
+}
+
+// The interner is thread-local and tests run one per thread, so interning the
+// expected value here yields the same ID the lexer produced for equal bytes.
+
+fn blob(bytes: impl AsRef<[u8]>) -> BlobId {
+    StaticInterner::intern(bytes.as_ref())
+}
+
+fn string(bytes: impl AsRef<[u8]>) -> Token {
+    Token::String(blob(bytes))
+}
+
+fn regex(bytes: impl AsRef<[u8]>) -> Token {
+    Token::Regex(blob(bytes))
+}
+
+fn typed_regex(bytes: impl AsRef<[u8]>) -> Token {
+    Token::TypedRegex(blob(bytes))
+}
+
+fn ident(name: &str) -> Token {
+    Token::Identifier(StaticInterner::intern_ident(name))
+}
+
+fn indirect_call(name: &str) -> Token {
+    Token::IndirectCall(StaticInterner::intern_ident(name))
 }
 
 #[test]
 fn lexer_test_newlines_non_posix() {
     let mixed = " \t \n \t\n\n \\\n \t";
-    let arena = Bump::new();
-    let mut str = Vec::new_in(&arena);
+    let mut str: Vec<u8> = Vec::new();
     for tok in ["BEGIN", "{", "else", "do", "&&", "||", "?", ":", ","] {
         write!(str, "{tok}{mixed}").unwrap();
     }
     str.push(b'}');
     assert_eq!(
-        &lex(&str, &arena, false, false),
+        &lex(&str, false, false),
         &[
             Token::BeginPattern,
             Token::Newline,
@@ -65,21 +80,19 @@ fn lexer_test_newlines_non_posix() {
 #[should_panic]
 fn lexer_test_newlines_posix() {
     let mixed = " \t \n \t\n\n \\\n \t";
-    let arena = Bump::new();
-    let mut str = Vec::new_in(&arena);
+    let mut str: Vec<u8> = Vec::new();
     for tok in ["BEGIN", "{", "else", "do", "&&", "||", "?", ":", ","] {
         write!(str, "{tok}{mixed}").unwrap();
     }
     str.push(b'}');
-    lex(&str, &arena, true, false);
+    lex(&str, true, false);
 }
 
 #[test]
 fn lexer_test_collapsible_delimiters() {
-    let arena = Bump::new();
     let str = b";\\\n;\n\n\n\n;;\n\\\n\n";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Semicolon,
             Token::Semicolon,
@@ -94,8 +107,7 @@ fn lexer_test_collapsible_delimiters() {
 
 #[test]
 fn lexer_test_carriage_returns_are_ignored() {
-    let arena = Bump::new();
-    let lf = |src: &'static [u8]| lex(src, &arena, false, false);
+    let lf = |src: &'static [u8]| lex(src, false, false);
     // CRLF line endings
     assert_eq!(
         lf(b"BEGIN {\r\n  x = 1\r\n}\r\n"),
@@ -111,45 +123,34 @@ fn lexer_test_carriage_returns_are_ignored() {
 
 #[test]
 fn lexer_test_multiline() {
-    let arena = Bump::new();
     let str = b"\"apple\\\n orange\", /lemon\\\n fruit/";
     assert_eq!(
-        &lex(str, &arena, false, false),
-        &[
-            Token::String(b"apple orange".into()),
-            Token::Comma,
-            Token::Regex(b"lemon fruit".into())
-        ]
+        &lex(str, false, false),
+        &[string(b"apple orange"), Token::Comma, regex(b"lemon fruit")]
     );
 }
 
 #[test]
 fn lexer_test_uu_extensions() {
-    let arena = Bump::new();
     assert_eq!(
-        lex(b"@concurrent", &arena, false, true),
-        &[Token::IndirectCall(Identifier { literal: "concurrent" })]
+        lex(b"@concurrent", false, true),
+        &[indirect_call("concurrent")]
     );
 }
 
 #[test]
 fn lexer_test_gnu_pattern() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"BEGINFILE ENDFILE", &arena, true, false),
-        &[
-            Token::Identifier(Identifier { literal: "BEGINFILE" }),
-            Token::Identifier(Identifier { literal: "ENDFILE" })
-        ]
+        &lex(b"BEGINFILE ENDFILE", true, false),
+        &[ident("BEGINFILE"), ident("ENDFILE")]
     );
 }
 
 #[test]
 fn lexer_test_nums() {
-    let arena = Bump::new();
     let str = b"1 20. 0. .3 2e4 -3.e2 5e+1 2.1e-3 -2147483649 -128 -0 127 2147483648";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Integer(1),
             Token::Number(20.),
@@ -174,34 +175,32 @@ fn lexer_test_nums() {
 
 #[test]
 fn lexer_test_directive_escaping() {
-    let arena = Bump::new();
     let str = br#" @include "aa\"a\ta" @nsinclude "b\"\nb" "#;
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::IncludeDirective,
-            Token::String(b"aa\"a\ta".into()),
+            string(b"aa\"a\ta"),
             Token::NsIncludeDirective,
-            Token::String(b"b\"\nb".into())
+            string(b"b\"\nb")
         ]
     );
 }
 
 #[test]
 fn lexer_test_ident_rules_non_posix() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"1a::a a::1a _a", &arena, false, false),
+        &lex(b"1a::a a::1a _a", false, false),
         &[
             Token::Integer(1),
-            Token::Identifier(Identifier { literal: "a" }),
+            ident("a"),
             Token::PathSpec,
-            Token::Identifier(Identifier { literal: "a" }),
-            Token::Identifier(Identifier { literal: "a" }),
+            ident("a"),
+            ident("a"),
             Token::PathSpec,
             Token::Integer(1),
-            Token::Identifier(Identifier { literal: "a" }),
-            Token::Identifier(Identifier { literal: "_a" })
+            ident("a"),
+            ident("_a")
         ]
     );
 }
@@ -209,13 +208,11 @@ fn lexer_test_ident_rules_non_posix() {
 #[test]
 #[should_panic]
 fn lexer_test_ident_rules_posix() {
-    let arena = Bump::new();
-    lex(b"@namespace \"foo\"; foo::a", &arena, true, false);
+    lex(b"@namespace \"foo\"; foo::a", true, false);
 }
 
 #[test]
 fn lexer_test_general_tokens() {
-    let arena = Bump::new();
     let str = br#"
         @load "lib1.so.1"
         BEGIN { print a + 1 }
@@ -223,21 +220,21 @@ fn lexer_test_general_tokens() {
         END { $1 == foo::bar }
     "#;
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Newline,
             Token::LoadDirective,
-            Token::String(b"lib1.so.1".into()),
+            string(b"lib1.so.1"),
             Token::Newline,
             Token::BeginPattern,
             Token::OpenBrace,
             Token::Print,
-            Token::Identifier(Identifier { literal: "a" }),
+            ident("a"),
             Token::Plus,
             Token::Integer(1),
             Token::ClosedBrace,
             Token::Newline,
-            Token::Regex(b"2\\..*".into()),
+            regex(b"2\\..*"),
             Token::Semicolon,
             Token::Newline,
             Token::EndPattern,
@@ -245,9 +242,9 @@ fn lexer_test_general_tokens() {
             Token::Record,
             Token::Integer(1),
             Token::EqualTo,
-            Token::Identifier(Identifier { literal: "foo" }),
+            ident("foo"),
             Token::PathSpec,
-            Token::Identifier(Identifier { literal: "bar" }),
+            ident("bar"),
             Token::ClosedBrace,
             Token::Newline
         ]
@@ -256,14 +253,13 @@ fn lexer_test_general_tokens() {
 
 #[test]
 fn lexer_test_regex_ambiguity() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"1/=1. a/=1 NR/=1", &arena, false, false),
+        &lex(b"1/=1. a/=1 NR/=1", false, false),
         &[
             Token::Integer(1),
             Token::SlashAssign,
             Token::Number(1.),
-            Token::Identifier(Identifier { literal: "a" }),
+            ident("a"),
             Token::SlashAssign,
             Token::Integer(1),
             Token::NrVariable,
@@ -275,197 +271,115 @@ fn lexer_test_regex_ambiguity() {
 
 #[test]
 fn lexer_test_hex_escape() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\x41\"", &arena, false, false),
-        &[Token::String(b"A".into())]
-    );
+    assert_eq!(&lex(b"\"\\x41\"", false, false), &[string(b"A")]);
 }
 
 #[test]
 fn lexer_test_hex_escape_uppercase() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\x4F\"", &arena, false, false),
-        &[Token::String(b"O".into())]
-    );
+    assert_eq!(&lex(b"\"\\x4F\"", false, false), &[string(b"O")]);
 }
 
 #[test]
 fn lexer_test_hex_escape_single_digit() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\x9\"", &arena, false, false),
-        &[Token::String(b"\x09".into())]
-    );
+    assert_eq!(&lex(b"\"\\x9\"", false, false), &[string(b"\x09")]);
 }
 
 #[test]
 fn lexer_test_hex_escape_posix_strict() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\x41\"", &arena, true, false),
-        &[Token::String(b"x41".into())]
-    );
+    assert_eq!(&lex(b"\"\\x41\"", true, false), &[string(b"x41")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_posix_strict() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\u0041\"", &arena, true, false),
-        &[Token::String(b"u0041".into())]
-    );
+    assert_eq!(&lex(b"\"\\u0041\"", true, false), &[string(b"u0041")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_ascii() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\u0041\"", &arena, false, false),
-        &[Token::String(b"A".into())]
-    );
+    assert_eq!(&lex(b"\"\\u0041\"", false, false), &[string(b"A")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_two_byte() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"\"\\u00e9\"", &arena, false, false),
-        &[Token::String("\u{00e9}".as_bytes().into())]
+        &lex(b"\"\\u00e9\"", false, false),
+        &[string("\u{00e9}".as_bytes())]
     );
 }
 
 #[test]
 fn lexer_test_unicode_escape_three_byte() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"\"\\u4e2d\"", &arena, false, false),
-        &[Token::String("\u{4e2d}".as_bytes().into())]
+        &lex(b"\"\\u4e2d\"", false, false),
+        &[string("\u{4e2d}".as_bytes())]
     );
 }
 
 #[test]
 fn lexer_test_unicode_escape_uppercase() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\u004F\"", &arena, false, false),
-        &[Token::String(b"O".into())]
-    );
+    assert_eq!(&lex(b"\"\\u004F\"", false, false), &[string(b"O")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_single_digit() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"\"\\u9\"", &arena, false, false),
-        &[Token::String("\u{9}".as_bytes().into())]
+        &lex(b"\"\\u9\"", false, false),
+        &[string("\u{9}".as_bytes())]
     );
 }
 
 #[test]
 fn lexer_test_hex_escape_no_digits() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\x\"", &arena, false, false),
-        &[Token::String(b"x".into())]
-    );
+    assert_eq!(&lex(b"\"\\x\"", false, false), &[string(b"x")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_no_digits() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\u\"", &arena, false, false),
-        &[Token::String(b"u".into())]
-    );
+    assert_eq!(&lex(b"\"\\u\"", false, false), &[string(b"u")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_eight_digits() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\u00000032\"", &arena, false, false),
-        &[Token::String(b"2".into())]
-    );
+    assert_eq!(&lex(b"\"\\u00000032\"", false, false), &[string(b"2")]);
 }
 
 #[test]
 fn lexer_test_unicode_escape_iso8859_1() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex_with_encoding(
-            b"\"\\u00e9\"",
-            &arena,
-            false,
-            false,
-            LocaleEncoding::iso_8859_1()
-        ),
-        &[Token::String(b"\xe9".into())]
+        &lex_with_encoding(b"\"\\u00e9\"", false, false, LocaleEncoding::iso_8859_1()),
+        &[string(b"\xe9")]
     );
     assert_eq!(
-        &lex_with_encoding(
-            b"\"\\u0041\"",
-            &arena,
-            false,
-            false,
-            LocaleEncoding::iso_8859_1()
-        ),
-        &[Token::String(b"A".into())]
+        &lex_with_encoding(b"\"\\u0041\"", false, false, LocaleEncoding::iso_8859_1()),
+        &[string(b"A")]
     );
     assert_eq!(
-        &lex_with_encoding(
-            b"\"\\u4e2d\"",
-            &arena,
-            false,
-            false,
-            LocaleEncoding::iso_8859_1()
-        ),
-        &[Token::String(b"?".into())]
+        &lex_with_encoding(b"\"\\u4e2d\"", false, false, LocaleEncoding::iso_8859_1()),
+        &[string(b"?")]
     );
 }
 
 #[test]
 fn lexer_test_unicode_escape_ascii_locale() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex_with_encoding(
-            b"\"\\u0041\"",
-            &arena,
-            false,
-            false,
-            LocaleEncoding::ascii()
-        ),
-        &[Token::String(b"A".into())]
+        &lex_with_encoding(b"\"\\u0041\"", false, false, LocaleEncoding::ascii()),
+        &[string(b"A")]
     );
     assert_eq!(
-        &lex_with_encoding(
-            b"\"\\u00e9\"",
-            &arena,
-            false,
-            false,
-            LocaleEncoding::ascii()
-        ),
-        &[Token::String(b"?".into())]
+        &lex_with_encoding(b"\"\\u00e9\"", false, false, LocaleEncoding::ascii()),
+        &[string(b"?")]
     );
 }
 
 #[test]
 fn lexer_test_unicode_escape_invalid_codepoint() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex_with_encoding(
-            b"\"\\u110000\"",
-            &arena,
-            false,
-            false,
-            LocaleEncoding::utf8()
-        ),
-        &[Token::String(b"?".into())]
+        &lex_with_encoding(b"\"\\u110000\"", false, false, LocaleEncoding::utf8()),
+        &[string(b"?")]
     );
     assert_eq!(
-        &lex_with_encoding(b"\"\\uD800\"", &arena, false, false, LocaleEncoding::utf8()),
-        &[Token::String(b"?".into())]
+        &lex_with_encoding(b"\"\\uD800\"", false, false, LocaleEncoding::utf8()),
+        &[string(b"?")]
     );
 }
 
@@ -491,10 +405,9 @@ fn locale_encoding_from_locale_name() {
 
 #[test]
 fn lexer_test_operators() {
-    let arena = Bump::new();
     let str = b"~ !~ | |& >> ** **= ^= += -= *= %= == != <= >= < > && || !";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Matching,
             Token::NotMatching,
@@ -523,23 +436,88 @@ fn lexer_test_operators() {
 
 #[test]
 fn lexer_test_slash_assign() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"a/=1", &arena, false, false),
+        &lex(b"a/=1", false, false),
+        &[ident("a"), Token::SlashAssign, Token::Integer(1),]
+    );
+}
+
+#[test]
+fn lexer_test_slash_after_number_divides() {
+    // A number is an operand, so a following `/` is division, not a regex.
+    assert_eq!(
+        &lex(b"1 / 2 / 3", false, false),
         &[
-            Token::Identifier(Identifier { literal: "a" }),
-            Token::SlashAssign,
             Token::Integer(1),
+            Token::Slash,
+            Token::Integer(2),
+            Token::Slash,
+            Token::Integer(3),
+        ]
+    );
+    assert_eq!(
+        &lex(b"1./2 .5/2 2e3/4", false, false),
+        &[
+            Token::Number(1.),
+            Token::Slash,
+            Token::Integer(2),
+            Token::Number(0.5),
+            Token::Slash,
+            Token::Integer(2),
+            Token::Number(2e3),
+            Token::Slash,
+            Token::Integer(4),
+        ]
+    );
+    // The field index in `$1 / 0` is a number too.
+    assert_eq!(
+        &lex(b"$1 / 0", false, false),
+        &[
+            Token::Record,
+            Token::Integer(1),
+            Token::Slash,
+            Token::Integer(0),
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_slash_after_special_variable_divides() {
+    assert_eq!(
+        &lex(b"NR / 2, NF/NR", false, false),
+        &[
+            Token::NrVariable,
+            Token::Slash,
+            Token::Integer(2),
+            Token::Comma,
+            Token::NfVariable,
+            Token::Slash,
+            Token::NrVariable,
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_regex_after_operator_is_terminated() {
+    // After an operator `/` opens a regex that ends at the next unescaped `/`,
+    // and the lexer is back in operator context afterwards.
+    assert_eq!(
+        &lex(b"x ~ /a/ / 2", false, false),
+        &[
+            ident("x"),
+            Token::Matching,
+            regex("a"),
+            Token::Slash,
+            Token::Integer(2),
         ]
     );
 }
 
 #[test]
 fn lexer_test_control_flow_keywords() {
-    let arena = Bump::new();
     let str = b"switch case default getline printf next nextfile exit return continue break";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Switch,
             Token::Case,
@@ -558,11 +536,10 @@ fn lexer_test_control_flow_keywords() {
 
 #[test]
 fn lexer_test_builtin_variables() {
-    let arena = Bump::new();
     let str = b"NR FNR NF FS FPAT FIELDWIDTHS RS RT OFS ORS FILENAME ARGC ARGV SUBSEP ARGIND OFMT \
                 RSTART RLENGTH ENVIRON PROCINFO SYMTAB FUNCTAB";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::NrVariable,
             Token::FnrVariable,
@@ -592,19 +569,14 @@ fn lexer_test_builtin_variables() {
 
 #[test]
 fn lexer_test_typed_regex() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"@/pat/", &arena, false, false),
-        &[Token::TypedRegex(b"pat".into())]
-    );
+    assert_eq!(&lex(b"@/pat/", false, false), &[typed_regex(b"pat")]);
 }
 
 #[test]
 fn lexer_test_comments() {
-    let arena = Bump::new();
     let str = b"print 1 # comment\nprint 2";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Print,
             Token::Integer(1),
@@ -617,14 +589,13 @@ fn lexer_test_comments() {
 
 #[test]
 fn lexer_test_indirect_call() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"@foo @ns::bar", &arena, false, false),
+        &lex(b"@foo @ns::bar", false, false),
         &[
-            Token::IndirectCall(Identifier { literal: "foo" }),
-            Token::IndirectCall(Identifier { literal: "ns" }),
+            indirect_call("foo"),
+            indirect_call("ns"),
             Token::PathSpec,
-            Token::Identifier(Identifier { literal: "bar" })
+            ident("bar")
         ]
     );
 }
@@ -632,64 +603,49 @@ fn lexer_test_indirect_call() {
 #[test]
 #[should_panic]
 fn lexer_test_indirect_call_posix() {
-    let arena = Bump::new();
-    lex(b"@foo", &arena, true, false);
+    lex(b"@foo", true, false);
 }
 
 #[test]
 fn lexer_test_concurrent_directive() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"@concurrent", &arena, false, false),
+        &lex(b"@concurrent", false, false),
         &[Token::ConcurrentDirective]
     );
 }
 
 #[test]
 fn lexer_test_load_and_namespace_directives() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(br#"@load "lib.so" @namespace "ns""#, &arena, false, false),
+        &lex(br#"@load "lib.so" @namespace "ns""#, false, false),
         &[
             Token::LoadDirective,
-            Token::String(b"lib.so".into()),
+            string(b"lib.so"),
             Token::NamespaceDirective,
-            Token::String(b"ns".into()),
+            string(b"ns"),
         ]
     );
 }
 
 #[test]
 fn lexer_test_regex_literals() {
-    let arena = Bump::new();
+    assert_eq!(&lex(b"/abc/", false, false), &[regex(b"abc")]);
+    assert_eq!(&lex(b"/a\\/b/", false, false), &[regex(b"a/b")]);
     assert_eq!(
-        &lex(b"/abc/", &arena, false, false),
-        &[Token::Regex(b"abc".into())]
-    );
-    assert_eq!(
-        &lex(b"/a\\/b/", &arena, false, false),
-        &[Token::Regex(b"a/b".into())]
-    );
-    assert_eq!(
-        &lex(b"x~/dot+/", &arena, false, false),
-        &[
-            Token::Identifier(Identifier { literal: "x" }),
-            Token::Matching,
-            Token::Regex(b"dot+".into()),
-        ]
+        &lex(b"x~/dot+/", false, false),
+        &[ident("x"), Token::Matching, regex(b"dot+"),]
     );
 }
 
 #[test]
 fn lexer_test_switch_snippet() {
-    let arena = Bump::new();
     let str = br"switch (x) { case 1: print; default: break }";
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Switch,
             Token::OpenParent,
-            Token::Identifier(Identifier { literal: "x" }),
+            ident("x"),
             Token::ClosedParent,
             Token::OpenBrace,
             Token::Case,
@@ -707,20 +663,19 @@ fn lexer_test_switch_snippet() {
 
 #[test]
 fn lexer_test_getline_redirection() {
-    let arena = Bump::new();
     let str = br#"getline getline x < "f" "cmd" | getline "cmd" |& getline"#;
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Getline,
             Token::Getline,
-            Token::Identifier(Identifier { literal: "x" }),
+            ident("x"),
             Token::LesserThan,
-            Token::String(b"f".into()),
-            Token::String(b"cmd".into()),
+            string(b"f"),
+            string(b"cmd"),
             Token::Pipe,
             Token::Getline,
-            Token::String(b"cmd".into()),
+            string(b"cmd"),
             Token::DoublePipe,
             Token::Getline,
         ]
@@ -729,50 +684,40 @@ fn lexer_test_getline_redirection() {
 
 #[test]
 fn lexer_test_print_redirection() {
-    let arena = Bump::new();
     let str = br#"print > "out" print >> "out" print | "cmd" print |& "cmd""#;
     assert_eq!(
-        &lex(str, &arena, false, false),
+        &lex(str, false, false),
         &[
             Token::Print,
             Token::GreaterThan,
-            Token::String(b"out".into()),
+            string(b"out"),
             Token::Print,
             Token::AppendPipe,
-            Token::String(b"out".into()),
+            string(b"out"),
             Token::Print,
             Token::Pipe,
-            Token::String(b"cmd".into()),
+            string(b"cmd"),
             Token::Print,
             Token::DoublePipe,
-            Token::String(b"cmd".into()),
+            string(b"cmd"),
         ]
     );
 }
 
 #[test]
 fn lexer_test_func_keyword() {
-    let arena = Bump::new();
     assert_eq!(
-        &lex(b"func function", &arena, false, false),
+        &lex(b"func function", false, false),
         &[Token::Function, Token::Function]
     );
 }
 
 #[test]
 fn lexer_test_func_keyword_posix() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"func", &arena, true, false),
-        &[Token::Identifier(Identifier { literal: "func" })]
-    );
+    assert_eq!(&lex(b"func", true, false), &[ident("func")]);
 }
 
 #[test]
 fn lexer_test_backslash_escape_in_string() {
-    let arena = Bump::new();
-    assert_eq!(
-        &lex(b"\"\\n\\t\\\\\"", &arena, false, false),
-        &[Token::String(b"\n\t\\".into())]
-    );
+    assert_eq!(&lex(b"\"\\n\\t\\\\\"", false, false), &[string(b"\n\t\\")]);
 }
