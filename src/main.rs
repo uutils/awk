@@ -25,7 +25,7 @@ use parser::{FileCache, IncludeError, Parser};
 use crate::{
     cli::{ArgQueueItem, Args, KeyValue},
     event::AwkRt,
-    utils::{AWK_FATAL_CODE, EXIT_FAILURE, ensure_consistent_panic, exit_err, exit_fatal},
+    utils::{AWK_FATAL_CODE, EXIT_FAILURE, ensure_consistent_panic, exit_err},
 };
 
 fn main() {
@@ -65,7 +65,7 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
             match parser.include_many(&args.program.0) {
                 Ok(ast) => Ok(ast),
                 Err(IncludeError::Invalid(diagnostics)) => Err(diagnostics),
-                Err(err) => exit_fatal(err),
+                Err(err) => exit_err(Some(format!("awk: fatal: {err}")), AWK_FATAL_CODE),
             }
         };
         let ast = match ast {

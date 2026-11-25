@@ -32,7 +32,9 @@ pub use lexer::{BlobId, IdentId, Span, StaticInterner};
 
 pub use crate::{
     ast::*,
-    diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError},
+    diagnostics::{
+        AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError, cannot_open_source,
+    },
     lex::{Lexer, SpanExt},
 };
 use crate::{lex::TokenExt, pratt::Pratt};
@@ -1057,7 +1059,7 @@ pub enum ProgramSource {
 /// Why [`Parser::include_many`] has no program to run.
 #[derive(Debug, thiserror::Error)]
 pub enum IncludeError {
-    #[error("cannot open source file `{}' for reading: {}", .path.display(), read_reason(.err))]
+    #[error("{}", cannot_open_source(.path.display(), read_reason(.err)))]
     CannotOpen { path: Rc<Path>, err: io::Error },
     #[error("the program has errors")]
     Invalid(DiagnosticStore),

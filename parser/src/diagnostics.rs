@@ -177,8 +177,13 @@ pub enum ParsingError {
     NextInForbiddenCtx(Span),
     #[error("`nextfile` is forbidden in BEGIN, END, and ENDFILE rules!")]
     NextFileInForbiddenCtx(Span),
-    #[error("cannot open source file `{}' for reading: {}", .1, .2)]
+    #[error("{}", cannot_open_source(.1, .2))]
     CannotOpenSource(Span, String, String),
+}
+
+/// The message for a source file that cannot be read.
+pub fn cannot_open_source(path: impl Display, reason: impl Display) -> String {
+    format!("cannot open source file `{path}' for reading: {reason}")
 }
 
 impl ParsingError {

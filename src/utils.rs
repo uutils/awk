@@ -65,9 +65,3 @@ pub fn exit_err(err: Option<impl Display + Debug>, code: i32) -> ! {
     }
     exit(code)
 }
-
-/// Prints a fatal error and exits with 2, gawk's status for fatal errors.
-pub fn exit_fatal(msg: impl Display) -> ! {
-    let _ = writeln!(io::stderr(), "awk: fatal: {msg}");
-    exit(AWK_FATAL_CODE)
-}
