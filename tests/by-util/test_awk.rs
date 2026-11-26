@@ -1474,3 +1474,11 @@ fn next_from_a_function_in_a_rule_skips_the_record() {
         .succeeds()
         .stdout_is("2\n");
 }
+
+#[test]
+fn fatal_error_skips_end() {
+    ucmd()
+        .arg("BEGIN { v[0] = 0; print v } END { print \"not reached\" }")
+        .fails_with_code(2)
+        .no_stdout();
+}
