@@ -1442,6 +1442,7 @@ fn next_and_nextfile_from_a_function_in_a_special_rule_are_fatal() {
         ucmd()
             .arg(format!("function g() {{ {stmt} }} {rule} {{ g() }}"))
             .pipe_in("x\n")
+            .ignore_stdin_write_error()
             .fails_with_code(2)
             .stdout_is("")
             .stderr_contains(format!("`{stmt}' cannot be called from a `{rule}' rule"))
