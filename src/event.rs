@@ -86,15 +86,14 @@ impl<'a> AwkRt<'a> {
     pub fn begin_file_event_loop(
         &mut self,
         path: Option<&Path>,
-        res: Option<&io::Error>,
+        res: Option<io::Error>,
     ) -> Result<bool> {
         let code = self.bc.begin_file_code();
-        let opened = self.intrp.begin_file_prelude(path, res, !code.is_empty());
+        let open_res = self.intrp.begin_file_prelude(path, res, !code.is_empty());
         match self.drive(code)? {
             // Like gawk, BEGINFILE may skip a file that didn't open; if it doesn't, that's fatal.
-            CtrlSig::End if let Err(e) = opened => Err(e.kind().into()),
-            CtrlSig::End => Ok(false),
             CtrlSig::NextFile => Ok(true),
+            CtrlSig::End => open_res.map(|_| false),
             CtrlSig::Exit(code) => self.end_event_loop(code).map(|_| false),
             sig @ CtrlSig::Next => Err(misplaced_ctrl_sig(&sig, "BEGINFILE").into()),
         }
@@ -147,14 +146,21 @@ impl<'a> AwkRt<'a> {
                     continue;
                 }
             };
-            let skip_file = self.begin_file_event_loop(path, res.as_ref().err())?;
-
-            if skip_file {
-                continue;
-            }
+            let src = match res {
+                Ok(src) => {
+                    if self.begin_file_event_loop(path, None)? {
+                        continue;
+                    }
+                    src
+                }
+                Err(err) => {
+                    self.begin_file_event_loop(path, Some(err))?;
+                    continue; // it not returning an error here implies `Ok(true)`.
+                }
+            };
 
             reader.consume(reader.buffer().len());
-            *reader.get_mut() = res?; // Propagate open errors.
+            *reader.get_mut() = src;
 
             // File event loop: read record, wrap rule event loop, endfile.
             while self.intrp.read_record(&mut reader)? {

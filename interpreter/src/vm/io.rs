@@ -63,15 +63,18 @@ impl Interpreter<'_> {
     /// appropriately. Note that the VM is sans-io, so such logic lives separated here.
     ///
     /// Gives `res` back when the open error is fatal.
-    pub fn begin_file_prelude<'e>(
+    pub fn begin_file_prelude(
         &mut self,
         f: Option<&Path>,
-        res: Option<&'e io::Error>,
+        res: Option<io::Error>,
         has_begin_file: bool,
-    ) -> Result<(), &'e io::Error> {
+    ) -> io::Result<()> {
         // If path is none, this is stdin (filename `-`).
         let name = f.map_or(b"-".as_slice(), |p| p.as_os_str().as_encoded_bytes());
-        let errno = res.map_or(0, |e| e.raw_os_error().unwrap_or(-1) as _);
+        let errno = match res {
+            Some(ref e) => e.raw_os_error().unwrap_or(-1) as _,
+            None => 0,
+        };
 
         self.symbols.filename = Value::new_string(name.into());
         self.symbols.errno = Value::new_int(errno);
