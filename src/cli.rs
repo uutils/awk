@@ -99,6 +99,28 @@ pub struct Args {
     pub csv: bool,
 }
 
+impl Args {
+    /// Parses the command line like `try_parse_from`, then settles the operands:
+    /// with -f or --source the first operand is an input, and no inputs means stdin.
+    pub fn try_parse_args<I, T>(itr: I) -> Result<Self, Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut args = Self::try_parse_from(itr)?;
+        if !args.program.0.is_empty()
+            && let Some(operand) = args.code.take()
+        {
+            args.read_queue
+                .insert(0, ArgQueueItem::from_operand(&operand));
+        }
+        if args.read_queue.is_empty() {
+            args.read_queue.push(ArgQueueItem::Stdio);
+        }
+        Ok(args)
+    }
+}
+
 /// The `-f` files and `--source` texts in command-line order, as gawk reads them.
 /// clap keeps each option in its own list, so the order comes from their indices.
 #[derive(Clone, Debug, Default)]

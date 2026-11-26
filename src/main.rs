@@ -18,12 +18,11 @@ use std::{
 };
 
 use bumpalo::Bump;
-use clap::Parser as ClapParser;
 use interpreter::{CodeGen, ExecMode, Interpreter};
 use parser::{FileCache, IncludeError, Parser};
 
 use crate::{
-    cli::{ArgQueueItem, Args, KeyValue},
+    cli::{Args, KeyValue},
     event::AwkRt,
     utils::{AWK_FATAL_CODE, EXIT_FAILURE, ensure_consistent_panic, exit_err},
 };
@@ -35,24 +34,13 @@ fn main() {
 }
 
 fn uu_main() -> Result<(), Box<dyn Error>> {
-    let mut args = match Args::try_parse_from(args_os()) {
+    let args = match Args::try_parse_args(args_os()) {
         Ok(args) => args,
         Err(msg) => {
             msg.print()?;
             exit_err(Option::<&str>::None, EXIT_FAILURE)
         }
     };
-
-    // With -f or --source there is no program operand: the first operand is an input.
-    if !args.program.0.is_empty()
-        && let Some(operand) = args.code.take()
-    {
-        args.read_queue
-            .insert(0, ArgQueueItem::from_operand(&operand));
-    }
-    if args.read_queue.is_empty() {
-        args.read_queue.push(ArgQueueItem::Stdio);
-    }
 
     let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
     let (mut cg, metadata, diagnostics) = {
