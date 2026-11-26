@@ -177,6 +177,10 @@ pub enum ParsingError {
     NextInForbiddenCtx(Span),
     #[error("`nextfile` is forbidden in BEGIN, END, and ENDFILE rules!")]
     NextFileInForbiddenCtx(Span),
+    #[error("Function name `{}` cannot be used as a variable or array.", .1)]
+    FunctionNameAsVariable(Span, String),
+    #[error("Function name `{}` cannot be used as a parameter of function `{}`.", .1, .2)]
+    FunctionNameAsParameter(Span, String, String),
 }
 
 impl ParsingError {
@@ -226,7 +230,9 @@ impl ParsingError {
             | &Self::ReturnOutsideFunction(span)
             | &Self::CommandDoubleCall(span, _)
             | &Self::NextInForbiddenCtx(span)
-            | &Self::NextFileInForbiddenCtx(span) => Some(span),
+            | &Self::NextFileInForbiddenCtx(span)
+            | &Self::FunctionNameAsVariable(span, _)
+            | &Self::FunctionNameAsParameter(span, _, _) => Some(span),
         }
     }
     const fn hint(&self) -> Option<&'static str> {

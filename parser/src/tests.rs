@@ -559,6 +559,44 @@ fn test_parser_pratt_error_spans() {
 }
 
 #[test]
+fn test_function_name_cannot_be_used_as_variable() {
+    for source in [
+        "function f() { return 1 } BEGIN { f = 2; print f }",
+        "BEGIN { g[1] = 1 } function g() { }",
+        "function h() { } BEGIN { h += 1 }",
+    ] {
+        assert!(
+            matches!(
+                parse(source, &Bump::new()),
+                Err(ParsingError::FunctionNameAsVariable(_, _))
+            ),
+            "expected function name to be rejected: {source}"
+        );
+    }
+
+    // A plain variable that happens to share no function name stays valid.
+    assert!(parse("BEGIN { x = 2; print x }", &Bump::new()).is_ok());
+}
+
+#[test]
+fn test_function_name_cannot_be_used_as_parameter() {
+    let source = "function f(f) { return f } BEGIN { print f(3) }";
+    assert!(matches!(
+        parse(source, &Bump::new()),
+        Err(ParsingError::FunctionNameAsParameter(_, _, _))
+    ));
+
+    // Parameter names of other functions are unaffected.
+    assert!(
+        parse(
+            "function f(x) { return x } function g(y) { return f(y) }",
+            &Bump::new()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn test_parser_switch() {
     let source = r#"
         { switch (x) { case 1: print; case "a": print 2; default: print 3 } }

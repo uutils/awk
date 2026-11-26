@@ -11,6 +11,7 @@ mod pratt;
 mod sexpr;
 #[cfg(test)]
 mod tests;
+mod validate;
 
 use std::{
     fs::File,
@@ -207,6 +208,7 @@ impl<'a> Parser<'a> {
             }
             self.ast.ns_metadata.tick();
         }
+        validate::validate(&self.ast)?;
         Ok(&self.ast)
     }
 
