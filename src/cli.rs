@@ -29,7 +29,10 @@ pub struct Args {
     pub code: Option<OsString>,
     #[command(flatten)]
     pub program: ProgramSources,
+    /// Input files and assignments as typed, kept raw for `ARGV`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub operands: Vec<OsString>,
+    #[arg(skip)]
     pub read_queue: Vec<ArgQueueItem>,
     #[arg(short = 'F', long)]
     pub field_separator: Option<OsString>,
@@ -111,9 +114,13 @@ impl Args {
         if !args.program.0.is_empty()
             && let Some(operand) = args.code.take()
         {
-            args.read_queue
-                .insert(0, ArgQueueItem::from_operand(&operand));
+            args.operands.insert(0, operand);
         }
+        args.read_queue = args
+            .operands
+            .iter()
+            .map(|operand| ArgQueueItem::from_operand(operand))
+            .collect();
         if args.read_queue.is_empty() {
             args.read_queue.push(ArgQueueItem::Stdio);
         }
@@ -276,30 +283,6 @@ impl TypedValueParser for KeyValueFactory {
         value: &OsStr,
     ) -> Result<Self::Value, Error> {
         KeyValue::parse_from(value)
-    }
-}
-
-impl TypedValueParser for ArgQueueItemFactory {
-    type Value = ArgQueueItem;
-
-    fn parse_ref(
-        &self,
-        _cmd: &clap::Command,
-        _arg: Option<&clap::Arg>,
-        value: &OsStr,
-    ) -> Result<Self::Value, Error> {
-        Ok(ArgQueueItem::from_operand(value))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ArgQueueItemFactory;
-
-impl ValueParserFactory for ArgQueueItem {
-    type Parser = ArgQueueItemFactory;
-
-    fn value_parser() -> Self::Parser {
-        ArgQueueItemFactory
     }
 }
 

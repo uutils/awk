@@ -12,9 +12,12 @@ mod utils;
 use std::{
     env::args_os,
     error::Error,
+    ffi::{OsStr, OsString},
     fs,
     io::{BufWriter, Write, stdout},
+    iter::once,
     mem::take,
+    path::Path,
 };
 
 use bumpalo::Bump;
@@ -119,7 +122,13 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
     } else {
         ExecMode::Uu
     };
-    let intrp = Interpreter::new(mode, cg, metadata);
+    let mut intrp = Interpreter::new(mode, cg, metadata);
+    let name = program_name();
+    intrp.set_argv(
+        once(name.as_os_str())
+            .chain(args.operands.iter().map(OsString::as_os_str))
+            .map(OsStr::as_encoded_bytes),
+    );
     let res = AwkRt::new(intrp, bc, &args.read_queue, diagnostics).main_event_loop();
 
     if let Err(err) = res {
@@ -127,4 +136,13 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+/// `ARGV[0]`: the name awk was run as, without its directory, like gawk.
+fn program_name() -> OsString {
+    args_os()
+        .next()
+        .as_deref()
+        .and_then(|arg| Path::new(arg).file_name())
+        .map_or_else(|| "awk".into(), OsStr::to_os_string)
 }

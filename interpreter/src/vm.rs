@@ -167,6 +167,15 @@ impl<'a> Interpreter<'a> {
             metadata,
         }
     }
+
+    /// Sets `ARGC` and `ARGV` before the program runs. `ARGV[0]` is the program name.
+    pub fn set_argv<I, S>(&mut self, args: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        self.symbols.set_argc_argv(args);
+    }
 }
 
 impl<'a> Consts<'a> {
