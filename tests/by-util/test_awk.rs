@@ -1586,6 +1586,7 @@ fn nextfile_from_a_function_in_beginfile_skips_the_file() {
     ucmd()
         .arg("function g() { nextfile } BEGINFILE { g() } { print \"record\" } END { print NR }")
         .pipe_in("x\n")
+        .ignore_stdin_write_error()
         .succeeds()
         .stdout_is("0\n");
 }
@@ -1595,6 +1596,7 @@ fn next_from_a_function_in_a_rule_skips_the_record() {
     ucmd()
         .arg("function g() { next } { g(); print \"after\" } END { print NR }")
         .pipe_in("x\ny\n")
+        .ignore_stdin_write_error()
         .succeeds()
         .stdout_is("2\n");
 }
