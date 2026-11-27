@@ -1387,6 +1387,47 @@ fn syntax_error_does_not_run_the_program() {
 }
 
 #[test]
+fn function_name_as_variable_exits_one() {
+    // Function and variable names share one namespace; gawk rejects these.
+    ucmd()
+        .arg("function f() { return 1 } BEGIN { f = 2; print f }")
+        .fails_with_code(1)
+        .no_stdout()
+        .stderr_contains("cannot be used as a variable");
+    ucmd()
+        .arg("BEGIN { g[1] = 1 } function g() { }")
+        .fails_with_code(1)
+        .no_stdout()
+        .stderr_contains("cannot be used as a variable");
+    ucmd()
+        .arg("function h() { } BEGIN { h += 1 }")
+        .fails_with_code(1)
+        .no_stdout();
+}
+
+#[test]
+fn function_name_as_parameter_exits_one() {
+    ucmd()
+        .arg("function f(f) { return f } BEGIN { print f(3) }")
+        .fails_with_code(1)
+        .no_stdout()
+        .stderr_contains("cannot be used as a parameter");
+    ucmd()
+        .arg("function h(h) { } BEGIN { }")
+        .fails_with_code(1)
+        .no_stdout();
+}
+
+#[test]
+fn function_name_as_foreach_variable_exits_one() {
+    ucmd()
+        .arg("function f() { } BEGIN { for (f in a) { print } }")
+        .fails_with_code(1)
+        .no_stdout()
+        .stderr_contains("cannot be used as a variable");
+}
+
+#[test]
 fn variables_not_clobbered_by_side_effects() {
     ucmd()
         .arg("BEGIN { x = 1; print x + f() } function f() { x = 10; return 1 }")

@@ -238,6 +238,9 @@ impl ParsingError {
     const fn hint(&self) -> Option<&'static str> {
         match self {
             Self::DuplicatedArgument(_, _, _) => Some("Consider giving the argument another name."),
+            Self::FunctionNameAsParameter(_, _, _) => {
+                Some("Consider giving the parameter another name.")
+            }
             Self::ExpectedStatementEnd(_) => Some(
                 "Valid statement ends are newlines, semicolons `;` and right brackets `}` if on a block.",
             ),

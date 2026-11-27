@@ -7,17 +7,17 @@ mod utils;
 
 use std::{
     fmt::{self, Display},
-    mem::{DropGuard, replace},
+    mem::{DropGuard, replace, take},
     ops::{Deref, DerefMut},
     vec::Vec as StdVec,
 };
 
 use bumpalo::{Bump, collections::Vec};
 use parser::{
-    ArrayPlace, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode,
-    Function as AstFunction, FunctionTable, Getline, Identifier, MetaId, Place, PlacingFunction,
-    Rule, RulePattern, SimpleStatement, Statement, StaticInterner, UnaryOperator,
-    UnaryPlaceOperator, Variable,
+    AriadneSpan, ArrayPlace, Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command,
+    Diagnostic, Expr, ExprNode, Function as AstFunction, FunctionTable, Getline, Identifier,
+    MetaId, ParsingError, Place, PlacingFunction, Rule, RulePattern, SimpleStatement, Statement,
+    StaticInterner, UnaryOperator, UnaryPlaceOperator, Variable,
 };
 use smallvec::SmallVec;
 
@@ -56,6 +56,10 @@ pub struct CodeGen<'a> {
     break_exits: Option<SmallVec<[Label; 4]>>,
     continue_label: Option<Label>,
     local_args: SmallVec<[UserNonLocal; 4]>,
+    /// Uses of a function name as a variable (they share a namespace), found
+    /// while lowering. Each is the name and the metadata of the statement that
+    /// used it; reported as diagnostics once lowering finishes.
+    name_conflicts: StdVec<(Identifier, MetaId)>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -76,11 +80,19 @@ impl<'a> CodeGen<'a> {
             break_exits: None,
             continue_label: None,
             local_args: SmallVec::new(),
+            name_conflicts: StdVec::new(),
         }
     }
 
-    pub fn lower_ast(&mut self, ast: &Ast) {
+    pub fn lower_ast(&mut self, ast: &mut Ast) {
         self.bc.funs_label = Label(self.bc.len());
+        // Function names must all be registered before any body is lowered, so
+        // that `TypedPlace::new_user` can detect a function name used as a
+        // variable no matter where the function is declared. The bodies are
+        // lowered right after, filling in each function's bytecode location.
+        for &name in ast.functions.keys() {
+            self.symbols.get_user_fun(name);
+        }
         self.lower_functions(&ast.functions);
 
         self.bc.begin_label = self.lower_special_rules(&ast.begin);
@@ -91,6 +103,17 @@ impl<'a> CodeGen<'a> {
 
         for rule in &ast.rules {
             self.lower_rule(rule);
+        }
+
+        // Function names and variable names share a single namespace (like
+        // gawk's "function `f' used as variable name"). Report every conflict
+        // found while lowering, pointing at the offending statement's span.
+        let Ast { loc_metadata, diagnostics, .. } = ast;
+        for (ident, meta) in take(&mut self.name_conflicts) {
+            if let Some((_, AriadneSpan(file, span))) = loc_metadata.get(meta) {
+                ParsingError::FunctionNameAsVariable(*span, format!("{ident:?}"))
+                    .add_diagnostic_cached(diagnostics, AriadneSpan(file.clone(), *span));
+            }
         }
     }
 
@@ -107,7 +130,14 @@ impl<'a> CodeGen<'a> {
         if let Some(pattern) = pattern {
             match pattern {
                 RulePattern::Expression(expr) => {
-                    self.emit_branch(expr, |this| this.lower_actions(actions.as_ref()));
+                    // Statements carry their own metadata, but a bare pattern
+                    // is lowered without one; use the pattern's span so name
+                    // conflicts (and bytecode metadata) point at it.
+                    let meta = match expr {
+                        Expr::Leaf(_, meta) | Expr::Node(_, meta) => *meta,
+                    };
+                    let this = &mut *self.with_metadata(meta);
+                    this.emit_branch(expr, |this| this.lower_actions(actions.as_ref()));
                 }
                 RulePattern::Range(_, _) => todo!(),
             }

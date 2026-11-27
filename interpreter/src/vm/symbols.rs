@@ -162,6 +162,11 @@ impl<'a, T> RawSymbolTable<'a, T> {
             .get_index_of(&ident)
             .map(|ix| (UserNonLocal(ix.try_into().unwrap()), &mut self.0[ix]))
     }
+
+    #[inline(always)]
+    pub(super) fn contains(&self, ident: Identifier) -> bool {
+        self.0.get_index_of(&ident).is_some()
+    }
 }
 
 impl<'a> SymbolTable<'a> {
@@ -260,6 +265,15 @@ impl<'a> SymbolTable<'a> {
     #[inline(always)]
     pub fn get_user_fun(&mut self, name: Identifier) -> UserNonLocal {
         self.functions.register(name, None)
+    }
+
+    /// Whether `name` is a user function name, either already defined or
+    /// referenced by a call. Function names and variable names share a single
+    /// namespace, so [`Self::register_user_var`] must never be fed one of
+    /// these without reporting a name conflict first.
+    #[inline(always)]
+    pub fn is_user_fun(&self, name: Identifier) -> bool {
+        self.functions.contains(name)
     }
 
     pub fn get_btin(&self, var: BuiltInVar) -> &Value<'a> {

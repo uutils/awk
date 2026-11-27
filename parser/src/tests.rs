@@ -559,30 +559,16 @@ fn test_parser_pratt_error_spans() {
 }
 
 #[test]
-fn test_function_name_cannot_be_used_as_variable() {
-    for source in [
-        "function f() { return 1 } BEGIN { f = 2; print f }",
-        "BEGIN { g[1] = 1 } function g() { }",
-        "function h() { } BEGIN { h += 1 }",
-    ] {
-        assert!(
-            matches!(
-                parse(source, &Bump::new()),
-                Err(ParsingError::FunctionNameAsVariable(_, _))
-            ),
-            "expected function name to be rejected: {source}"
-        );
-    }
-
-    // A plain variable that happens to share no function name stays valid.
-    assert!(parse("BEGIN { x = 2; print x }", &Bump::new()).is_ok());
-}
-
-#[test]
 fn test_function_name_cannot_be_used_as_parameter() {
     let source = "function f(f) { return f } BEGIN { print f(3) }";
     assert!(matches!(
         parse(source, &Bump::new()),
+        Err(ParsingError::FunctionNameAsParameter(_, _, _))
+    ));
+
+    // A parameter reusing an already declared function name is rejected too.
+    assert!(matches!(
+        parse("function g() { } function h(g) { return g }", &Bump::new()),
         Err(ParsingError::FunctionNameAsParameter(_, _, _))
     ));
 
@@ -594,6 +580,18 @@ fn test_function_name_cannot_be_used_as_parameter() {
         )
         .is_ok()
     );
+}
+
+#[test]
+fn test_function_name_cannot_be_used_as_foreach_variable() {
+    let source = "function f() { } BEGIN { for (f in a) { print } }";
+    assert!(matches!(
+        parse(source, &Bump::new()),
+        Err(ParsingError::FunctionNameAsVariable(_, _))
+    ));
+
+    // A regular variable as the loop variable stays valid.
+    assert!(parse("BEGIN { for (x in a) { print } }", &Bump::new()).is_ok());
 }
 
 #[test]

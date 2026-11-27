@@ -93,6 +93,15 @@ impl TypedPlace {
     }
 
     pub fn new_user(code: &mut CodeGen, ident: Identifier) -> Self {
+        // Function names and variable names share a single namespace, so a
+        // declared function name may not be used as a variable or array (like
+        // gawk's "function `f' used as variable name"). All function names are
+        // registered up-front in `CodeGen::lower_ast`, so this catches uses in
+        // every rule and function body without another AST walk; the conflict
+        // is reported once lowering finishes.
+        if code.symbols.is_user_fun(ident) {
+            code.name_conflicts.push((ident, code.current_metadata));
+        }
         let usr = code.symbols.register_user_var(ident);
         if let Some(reg) = code.get_local_arg(usr) {
             Self(Arg { reg }, PlaceTy::Reg)

@@ -70,6 +70,13 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
 
         let mut cg = CodeGen::new(&rt_arena);
         cg.lower_ast(ast);
+        // Lowering reports uses of a function name as a variable (function and
+        // variable names share one namespace) before the program gets to run.
+        if ast.diagnostics.is_unrecoverable() {
+            ast.diagnostics.flush()?;
+            // The program is invalid: exit like on any parse error.
+            exit_err(Option::<&str>::None, EXIT_FAILURE)
+        }
         (cg, take(&mut ast.loc_metadata), take(&mut ast.diagnostics))
     };
 

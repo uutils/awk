@@ -11,7 +11,6 @@ mod pratt;
 mod sexpr;
 #[cfg(test)]
 mod tests;
-mod validate;
 
 use std::{
     fs::File,
@@ -208,7 +207,6 @@ impl<'a> Parser<'a> {
             }
             self.ast.ns_metadata.tick();
         }
-        validate::validate(&self.ast)?;
         Ok(&self.ast)
     }
 
@@ -544,8 +542,20 @@ impl<'a> Parser<'a> {
             {
                 let node = Box::into_inner(node);
                 if let ExprNode::InArray(array, expr) = node
-                    && let [Expr::Leaf(Atom::Variable(var), _)] = expr.as_slice()
+                    && let [Expr::Leaf(Atom::Variable(var), meta)] = expr.as_slice()
                 {
+                    // `for (var in array)` may not reuse a function name as
+                    // the loop variable (gawk rejects it too). Report it at
+                    // the span stored for the variable.
+                    if let Variable::User(ident) = var
+                        && self.ast.functions.contains_key(ident)
+                    {
+                        let AriadneSpan(_, span) = &self.ast.loc_metadata[*meta];
+                        return Err(ParsingError::FunctionNameAsVariable(
+                            *span,
+                            format!("{ident:?}"),
+                        ));
+                    }
                     (*var, array)
                 } else {
                     return Err(ParsingError::InvalidForLoop(lex.span()));
@@ -775,6 +785,16 @@ impl<'a> Parser<'a> {
             // Linear search is fine for the numbers we are working with.
             if args.contains(&arg) {
                 return Err(ParsingError::DuplicatedArgument(
+                    lex.span(),
+                    format!("{arg:?}"),
+                    format!("{name:?}"),
+                ));
+            }
+            // Function names and variable names share a single namespace, so a
+            // function name is not a valid parameter name (like gawk's
+            // "cannot use function name as parameter name").
+            if arg == name || self.ast.functions.contains_key(&arg) {
+                return Err(ParsingError::FunctionNameAsParameter(
                     lex.span(),
                     format!("{arg:?}"),
                     format!("{name:?}"),

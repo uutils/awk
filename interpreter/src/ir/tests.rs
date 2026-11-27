@@ -14,6 +14,46 @@ fn with_lower(source: &str, f: impl FnOnce(&CodeGen)) {
     f(&cg);
 }
 
+/// Function names and variable names share a single namespace: using a
+/// declared function name as a variable or array is reported while lowering,
+/// wherever the name is used, like gawk's "used as variable name" error.
+#[test]
+fn function_name_used_as_variable_is_reported_while_lowering() {
+    for source in [
+        "function f() { return 1 } BEGIN { f = 2; print f }",
+        "BEGIN { g[1] = 1 } function g() { }",
+        "function h() { } BEGIN { h += 1 }",
+        "function i() { } $0 == i { print }",
+    ] {
+        let arena = Bump::new();
+        let mut parser = Parser::new(&arena, false);
+        let ast = parser
+            .parse(FileCache(None), source.as_bytes())
+            .expect("parse must succeed; the conflict is found while lowering");
+        let mut cg = CodeGen::new(&arena);
+        cg.lower_ast(ast);
+        assert!(
+            ast.diagnostics.is_unrecoverable(),
+            "expected a function name used as a variable to be reported: {source}"
+        );
+    }
+}
+
+#[test]
+fn lowering_a_program_without_name_conflicts_reports_nothing() {
+    let arena = Bump::new();
+    let mut parser = Parser::new(&arena, false);
+    let ast = parser
+        .parse(
+            FileCache(None),
+            b"function f(x) { return x } BEGIN { y = f(3); print y }",
+        )
+        .expect("parse");
+    let mut cg = CodeGen::new(&arena);
+    cg.lower_ast(ast);
+    assert!(!ast.diagnostics.is_unrecoverable());
+}
+
 #[test]
 fn switch_lowers_case_comparisons() {
     with_lower(
