@@ -177,6 +177,13 @@ pub enum ParsingError {
     NextInForbiddenCtx(Span),
     #[error("`nextfile` is forbidden in BEGIN, END, and ENDFILE rules!")]
     NextFileInForbiddenCtx(Span),
+    #[error("{}", cannot_open_source(.1, .2))]
+    CannotOpenSource(Span, String, String),
+}
+
+/// The message for a source file that cannot be read.
+pub fn cannot_open_source(path: impl Display, reason: impl Display) -> String {
+    format!("cannot open source file `{path}' for reading: {reason}")
 }
 
 impl ParsingError {
@@ -226,6 +233,7 @@ impl ParsingError {
             | &Self::ReturnOutsideFunction(span)
             | &Self::CommandDoubleCall(span, _)
             | &Self::NextInForbiddenCtx(span)
+            | &Self::CannotOpenSource(span, ..)
             | &Self::NextFileInForbiddenCtx(span) => Some(span),
         }
     }
@@ -294,19 +302,23 @@ impl ParsingError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FileCache(pub Option<Rc<Path>>);
+pub enum FileCache {
+    /// Program text from the command line: the program operand, or the nth `--source`.
+    Cli(usize),
+    File(Rc<Path>),
+}
 
 impl FileCache {
     pub const fn new_file(f: Rc<Path>) -> Self {
-        Self(Some(f))
+        Self::File(f)
     }
 }
 
 impl Display for FileCache {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match &self.0 {
-            Some(p) => write!(f, "{}", p.display()),
-            None => f.write_str("CLI"),
+        match self {
+            Self::File(p) => write!(f, "{}", p.display()),
+            Self::Cli(_) => f.write_str("CLI"),
         }
     }
 }

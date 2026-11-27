@@ -13,7 +13,10 @@ mod sexpr;
 mod tests;
 
 use std::{
+    borrow::Cow,
+    ffi::OsString,
     fs::File,
+    io,
     mem::{replace, take},
     path::{Path, PathBuf},
     rc::Rc,
@@ -29,7 +32,9 @@ pub use lexer::{BlobId, IdentId, Span, StaticInterner};
 
 pub use crate::{
     ast::*,
-    diagnostics::{AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError},
+    diagnostics::{
+        AriadneSpan, Diagnostic, DiagnosticStore, FileCache, ParsingError, cannot_open_source,
+    },
     lex::{Lexer, SpanExt},
 };
 use crate::{lex::TokenExt, pratt::Pratt};
@@ -67,7 +72,7 @@ impl<'a> Parser<'a> {
             ast: Ast::new(arena),
             arena,
             preprocessor: Preprocessor {},
-            file: FileCache(None),
+            file: FileCache::Cli(0),
             namespace: StaticInterner::awk_ident(),
             concurrent: false,
             dry,
@@ -154,8 +159,9 @@ impl<'a> Parser<'a> {
                     }
                     Token::IncludeDirective => {
                         let path = lex.expect_string()?;
+                        let span = lex.span();
                         if let (Err(e), _) =
-                            self.include(make_path(path), Some(StaticInterner::awk_ident()))
+                            self.include(make_path(path), span, Some(StaticInterner::awk_ident()))
                         {
                             return Err(e);
                         }
@@ -163,7 +169,8 @@ impl<'a> Parser<'a> {
                     }
                     Token::NsIncludeDirective => {
                         let path = lex.expect_string()?;
-                        if let (Err(e), _) = self.include(make_path(path), None) {
+                        let span = lex.span();
+                        if let (Err(e), _) = self.include(make_path(path), span, None) {
                             return Err(e);
                         }
                         lex.expect_with(Token::is_stmnt_end, ParsingError::ExpectedStatementEnd)?;
@@ -950,11 +957,11 @@ impl<'a> Parser<'a> {
 
     fn enter_file<T>(
         &mut self,
-        path: Rc<Path>,
+        file: FileCache,
         source: &'a [u8],
         f: impl FnOnce(&mut Self, &mut Lexer<'a>) -> T,
     ) -> (T, FileCache) {
-        let old = replace(&mut self.file, FileCache::new_file(path));
+        let old = replace(&mut self.file, file);
         self.ast.diagnostics.cache(self.file.clone(), source);
         let mut lex = Lexer::new(source);
 
@@ -962,15 +969,37 @@ impl<'a> Parser<'a> {
         (ret, replace(&mut self.file, old))
     }
 
-    fn include(&mut self, path: Rc<Path>, ns: Option<IdentId>) -> (Result<()>, FileCache) {
+    /// `span` is the `@include` path's string, where a read error is reported.
+    fn include(
+        &mut self,
+        path: Rc<Path>,
+        span: Span,
+        ns: Option<IdentId>,
+    ) -> (Result<()>, FileCache) {
+        match self.preprocessor.read_to_arena(&path, self.arena) {
+            Ok(source) => self.include_source(FileCache::new_file(path), source, ns),
+            Err(err) => {
+                let reason = read_reason(&err).into_owned();
+                let error =
+                    ParsingError::CannotOpenSource(span, path.display().to_string(), reason);
+                (Err(error), self.file.clone())
+            }
+        }
+    }
+
+    fn include_source(
+        &mut self,
+        file: FileCache,
+        source: &'a [u8],
+        ns: Option<IdentId>,
+    ) -> (Result<()>, FileCache) {
         let old_namespace = self.namespace;
-        let source = self.preprocessor.read_to_arena(path.clone(), self.arena);
 
         if let Some(ns) = ns {
             self.namespace = ns;
         }
 
-        let file = match self.enter_file(path, source, |this, lex| {
+        let file = match self.enter_file(file, source, |this, lex| {
             this.parse_top(lex, false).map(|_| ())
         }) {
             (Ok(()), file) => file,
@@ -981,10 +1010,28 @@ impl<'a> Parser<'a> {
         (Ok(()), file)
     }
 
-    pub fn include_many(&mut self, files: &[PathBuf]) -> Result<&mut Ast<'a>, DiagnosticStore> {
-        for path in files {
-            let path = Rc::from(path.as_path());
-            let (res, file) = self.include(path, Some(StaticInterner::awk_ident()));
+    /// Parses the `-f` files and `--source` texts in command-line order. Like gawk,
+    /// each one is parsed on its own and starts in the `awk` namespace.
+    pub fn include_many(
+        &mut self,
+        sources: &'a [ProgramSource],
+    ) -> std::result::Result<&mut Ast<'a>, IncludeError> {
+        let mut texts = 0;
+        for source in sources {
+            let (file, source) = match source {
+                ProgramSource::File(path) => {
+                    let path = Rc::from(path.as_path());
+                    match self.preprocessor.read_to_arena(&path, self.arena) {
+                        Ok(source) => (FileCache::new_file(path), source),
+                        Err(err) => return Err(IncludeError::CannotOpen { path, err }),
+                    }
+                }
+                ProgramSource::Text(text) => {
+                    texts += 1;
+                    (FileCache::Cli(texts - 1), text.as_encoded_bytes())
+                }
+            };
+            let (res, file) = self.include_source(file, source, Some(StaticInterner::awk_ident()));
 
             if let Err(error) = res {
                 error.add_diagnostic_cached(
@@ -995,10 +1042,36 @@ impl<'a> Parser<'a> {
         }
 
         if self.ast.diagnostics.is_unrecoverable() {
-            Err(take(&mut self.ast.diagnostics))
+            Err(IncludeError::Invalid(take(&mut self.ast.diagnostics)))
         } else {
             Ok(&mut self.ast)
         }
+    }
+}
+
+/// One piece of the program: a `-f` file, or `--source` text.
+#[derive(Clone, Debug)]
+pub enum ProgramSource {
+    File(PathBuf),
+    Text(OsString),
+}
+
+/// Why [`Parser::include_many`] has no program to run.
+#[derive(Debug, thiserror::Error)]
+pub enum IncludeError {
+    #[error("{}", cannot_open_source(.path.display(), read_reason(.err)))]
+    CannotOpen { path: Rc<Path>, err: io::Error },
+    #[error("the program has errors")]
+    Invalid(DiagnosticStore),
+}
+
+/// GNU's wording for the errors reading a source file can hit, which Rust words differently.
+fn read_reason(err: &io::Error) -> Cow<'static, str> {
+    match err.kind() {
+        io::ErrorKind::NotFound => "No such file or directory".into(),
+        io::ErrorKind::PermissionDenied => "Permission denied".into(),
+        io::ErrorKind::IsADirectory => "Is a directory".into(),
+        _ => err.to_string().into(),
     }
 }
 
@@ -1024,11 +1097,11 @@ impl<'a> Ast<'a> {
 struct Preprocessor {}
 
 impl Preprocessor {
-    fn read_to_arena<'a>(&self, path: impl AsRef<Path>, arena: &'a Bump) -> &'a [u8] {
-        let mut f = File::open(path).unwrap();
-        let mut buf = Vec::with_capacity_in(f.metadata().unwrap().len() as _, arena);
-        std::io::copy(&mut f, &mut buf).unwrap();
-        buf.into_bump_slice()
+    fn read_to_arena<'a>(&self, path: impl AsRef<Path>, arena: &'a Bump) -> io::Result<&'a [u8]> {
+        let mut f = File::open(path)?;
+        let mut buf = Vec::with_capacity_in(f.metadata()?.len() as _, arena);
+        io::copy(&mut f, &mut buf)?;
+        Ok(buf.into_bump_slice())
     }
 }
 
@@ -1041,8 +1114,6 @@ fn make_path(blob: BlobId) -> Rc<Path> {
 
 #[cfg(not(unix))]
 fn make_path(blob: BlobId) -> Rc<Path> {
-    use std::borrow::Cow;
-
     StaticInterner::resolve(blob, |s| match String::from_utf8_lossy(s) {
         Cow::Borrowed(s) => Rc::from(Path::new(s)),
         Cow::Owned(s) => Rc::from(PathBuf::from(s)),

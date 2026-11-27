@@ -937,7 +937,7 @@ fn test_pretty_print_omits_default_namespace() {
     let arena = Bump::new();
     let parser = arena.alloc(Parser::new(&arena, true));
     let source = "{ print a + b }";
-    let ast = parser.parse(FileCache(None), source.as_bytes()).unwrap();
+    let ast = parser.parse(FileCache::Cli(0), source.as_bytes()).unwrap();
     let mut printed = String::new();
     write!(printed, "{ast}").unwrap();
     assert!(
@@ -957,7 +957,7 @@ fn test_pretty_print_namespace_directive() {
         @namespace "my_ns";
         function bar(x) { print x }
     "#;
-    let ast = parser.parse(FileCache(None), source.as_bytes()).unwrap();
+    let ast = parser.parse(FileCache::Cli(0), source.as_bytes()).unwrap();
     let mut printed = String::new();
     write!(printed, "{ast}").unwrap();
     assert!(
@@ -981,13 +981,15 @@ fn test_pretty_print_namespace_roundtrip() {
         function bar() { x = 1 }
         { print y }
     "#;
-    let ast = parser.parse(FileCache(None), source.as_bytes()).unwrap();
+    let ast = parser.parse(FileCache::Cli(0), source.as_bytes()).unwrap();
     let mut printed = String::new();
     write!(printed, "{ast}").unwrap();
 
     let arena2 = Bump::new();
     let parser2 = arena2.alloc(Parser::new(&arena2, true));
-    let reparsed = parser2.parse(FileCache(None), printed.as_bytes()).unwrap();
+    let reparsed = parser2
+        .parse(FileCache::Cli(0), printed.as_bytes())
+        .unwrap();
     assert_eq!(ast.functions.len(), reparsed.functions.len());
     assert_eq!(ast.rules.len(), reparsed.rules.len());
 }

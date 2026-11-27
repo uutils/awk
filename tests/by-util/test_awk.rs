@@ -60,6 +60,129 @@ fn no_args_fails_code_one() {
 }
 
 #[test]
+fn missing_program_file_is_fatal() {
+    ucmd()
+        .args(&["-f", "no-such-prog.awk"])
+        .fails_with_code(2)
+        .stderr_contains(
+            "awk: fatal: cannot open source file `no-such-prog.awk' for reading: No such file or directory",
+        )
+        .stderr_does_not_contain("panicked")
+        .no_stdout();
+}
+
+#[test]
+fn program_file_takes_the_first_operand_as_input() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("prog.awk", "{ print FILENAME, $0 }\n");
+    ts.fixtures.write("in.txt", "one\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["-f", "prog.awk", "in.txt"])
+        .succeeds()
+        .stdout_only("in.txt one\n");
+}
+
+#[test]
+fn source_option_is_the_program() {
+    ucmd()
+        .args(&["--source", "BEGIN { print \"via --source\" }"])
+        .succeeds()
+        .stdout_only("via --source\n");
+}
+
+#[test]
+fn source_texts_end_with_a_newline() {
+    ucmd()
+        .args(&["-e", "NR == 1", "-e", "{ print \"every\" }"])
+        .pipe_in("first\nsecond\n")
+        .succeeds()
+        .stdout_only("first\nevery\nevery\n");
+}
+
+#[test]
+fn source_texts_are_parsed_one_by_one() {
+    // gawk rejects a rule split across two -e texts too.
+    ucmd()
+        .args(&["-e", "BEGIN {", "-e", "print \"spanned\" }"])
+        .fails_with_code(1)
+        .stderr_contains("Syntax error")
+        .no_stdout();
+}
+
+#[test]
+fn source_text_errors_count_lines_from_their_own_text() {
+    ucmd()
+        .args(&["-e", "BEGIN { print 1 }", "-e", "BEGIN { x = }"])
+        .fails_with_code(1)
+        .stderr_contains("CLI:1:13")
+        .stderr_contains("BEGIN { x = }")
+        .no_stdout();
+}
+
+#[test]
+fn each_source_text_starts_in_the_awk_namespace() {
+    ucmd()
+        .args(&[
+            "-e",
+            "@namespace \"foo\"\nfunction g() { return \"foo\" }",
+            "-e",
+            "function g() { return \"awk\" }\nBEGIN { print g(), foo::g() }",
+        ])
+        .succeeds()
+        .stdout_only("awk foo\n");
+}
+
+#[test]
+fn program_files_and_source_texts_run_in_command_line_order() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures
+        .write("prog.awk", "BEGIN { print \"from -f\" }\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&[
+            "--source",
+            "BEGIN { print \"from --source\" }",
+            "-f",
+            "prog.awk",
+        ])
+        .succeeds()
+        .stdout_only("from --source\nfrom -f\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&[
+            "-f",
+            "prog.awk",
+            "--source",
+            "BEGIN { print \"from --source\" }",
+        ])
+        .succeeds()
+        .stdout_only("from -f\nfrom --source\n");
+}
+
+#[test]
+fn unreadable_include_is_reported_without_a_panic() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures
+        .write("prog.awk", "@include \"no-such-include.awk\"\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["-f", "prog.awk"])
+        .fails_with_code(1)
+        .stderr_contains(
+            "cannot open source file `no-such-include.awk' for reading: No such file or directory",
+        )
+        .stderr_does_not_contain("panicked")
+        .no_stdout();
+}
+
+#[test]
+fn source_option_takes_the_first_operand_as_input() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write("in.txt", "one\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["--source", "{ print FILENAME, $0 }", "in.txt"])
+        .succeeds()
+        .stdout_only("in.txt one\n");
+}
+
+#[test]
 fn switch_default_in_middle_fallthrough() {
     ucmd()
         .arg("BEGIN { x = 1; switch (x) { case 1: print 1; default: print 2; case 3: print 3 } }")

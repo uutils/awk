@@ -18,9 +18,8 @@ use std::{
 };
 
 use bumpalo::Bump;
-use clap::Parser as ClapParser;
 use interpreter::{CodeGen, ExecMode, Interpreter};
-use parser::{FileCache, Parser};
+use parser::{FileCache, IncludeError, Parser};
 
 use crate::{
     cli::{Args, KeyValue},
@@ -35,7 +34,7 @@ fn main() {
 }
 
 fn uu_main() -> Result<(), Box<dyn Error>> {
-    let args = match Args::try_parse_from(args_os()) {
+    let args = match Args::try_parse_args(args_os()) {
         Ok(args) => args,
         Err(msg) => {
             msg.print()?;
@@ -47,11 +46,15 @@ fn uu_main() -> Result<(), Box<dyn Error>> {
     let (mut cg, metadata, diagnostics) = {
         let ast_arena = Bump::with_capacity(4000);
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
-        let ast = if args.file.is_empty() {
+        let ast = if args.program.0.is_empty() {
             let code = args.code.as_ref().unwrap();
-            parser.parse(FileCache(None), code.as_encoded_bytes())
+            parser.parse(FileCache::Cli(0), code.as_encoded_bytes())
         } else {
-            parser.include_many(&args.file)
+            match parser.include_many(&args.program.0) {
+                Ok(ast) => Ok(ast),
+                Err(IncludeError::Invalid(diagnostics)) => Err(diagnostics),
+                Err(err) => exit_err(Some(format!("awk: fatal: {err}")), AWK_FATAL_CODE),
+            }
         };
         let ast = match ast {
             Ok(ast) => ast,

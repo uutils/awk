@@ -7,7 +7,7 @@ fn with_lower(source: &str, f: impl FnOnce(&CodeGen)) {
     let arena = Bump::new();
     let mut parser = Parser::new(&arena, false);
     let ast = parser
-        .parse(FileCache(None), source.as_bytes())
+        .parse(FileCache::Cli(0), source.as_bytes())
         .expect("parse");
     let mut cg = CodeGen::new(&arena);
     cg.lower_ast(ast);
