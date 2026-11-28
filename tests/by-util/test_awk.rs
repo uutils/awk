@@ -183,6 +183,89 @@ fn source_option_takes_the_first_operand_as_input() {
 }
 
 #[test]
+fn argv_and_argc_are_set() {
+    ucmd()
+        .args(&["BEGIN { print ARGC, ARGV[1], ARGV[2] }", "first", "x=1"])
+        .succeeds()
+        .stdout_only("3 first x=1\n");
+}
+
+#[test]
+fn argv_zero_is_the_program_name() {
+    ucmd()
+        .arg("BEGIN { print ARGC, ARGV[0] }")
+        .succeeds()
+        .stdout_only("1 awk\n");
+}
+
+#[test]
+fn argv_leaves_out_options_and_the_program_text() {
+    ucmd()
+        .args(&[
+            "-F",
+            ":",
+            "--",
+            "BEGIN { print ARGC, ARGV[1], ARGV[2], ARGV[3] }",
+            "in.txt",
+            "-",
+            "n=2",
+        ])
+        .succeeds()
+        .stdout_only("4 in.txt - n=2\n");
+}
+
+#[test]
+fn argv_starts_at_the_first_operand_with_a_program_file() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures
+        .write("args.awk", "BEGIN { print ARGC, ARGV[1], ARGV[2] }\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["-f", "args.awk", "data", "more"])
+        .succeeds()
+        .stdout_only("3 data more\n");
+}
+
+#[test]
+fn argv_keeps_a_double_dash_after_the_program_text() {
+    ucmd()
+        .args(&["BEGIN { print ARGC, ARGV[1], ARGV[2] }", "--", "x"])
+        .succeeds()
+        .stdout_only("3 -- x\n");
+}
+
+#[test]
+fn argv_keeps_options_after_the_program_text() {
+    ucmd()
+        .args(&["BEGIN { print ARGC, ARGV[1], ARGV[2] }", "-v", "x=1"])
+        .succeeds()
+        .stdout_only("3 -v x=1\n");
+}
+
+#[test]
+fn argv_keeps_a_double_dash_after_the_first_operand_with_a_program_file() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures.write(
+        "args.awk",
+        "BEGIN { print ARGC, ARGV[1], ARGV[2], ARGV[3] }\n",
+    );
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["-f", "args.awk", "data", "--", "-v"])
+        .succeeds()
+        .stdout_only("4 data -- -v\n");
+}
+
+#[test]
+fn argv_drops_a_double_dash_before_the_first_operand_with_a_program_file() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures
+        .write("args.awk", "BEGIN { print ARGC, ARGV[1] }\n");
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["--file", "args.awk", "--", "data"])
+        .succeeds()
+        .stdout_only("2 data\n");
+}
+
+#[test]
 fn switch_default_in_middle_fallthrough() {
     ucmd()
         .arg("BEGIN { x = 1; switch (x) { case 1: print 1; default: print 2; case 3: print 3 } }")
