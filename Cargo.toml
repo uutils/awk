@@ -8,6 +8,13 @@ license.workspace = true
 name = "awk"
 path = "src/main.rs"
 
+[[bin]]
+name = "pwcat"
+path = "src/bin/pwcat.rs"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [workspace.package]
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
