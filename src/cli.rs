@@ -12,7 +12,7 @@ use std::{
 };
 
 use clap::{
-    ArgAction, ArgMatches, Error, FromArgMatches, Parser, ValueEnum,
+    ArgAction, ArgMatches, CommandFactory, Error, FromArgMatches, Parser, ValueEnum,
     builder::{TypedValueParser, ValueParserFactory},
     error::ErrorKind,
     value_parser,
@@ -110,7 +110,9 @@ impl Args {
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        let mut args = Self::try_parse_from(itr)?;
+        let mut args = Self::try_parse_from(end_options_at_first_operand(
+            itr.into_iter().map(Into::into).collect(),
+        ))?;
         if !args.program.0.is_empty()
             && let Some(operand) = args.code.take()
         {
@@ -126,6 +128,69 @@ impl Args {
         }
         Ok(args)
     }
+}
+
+/// gawk reads options only up to the first operand (the program text, or the first input
+/// with -f) and keeps the rest as typed. A `--` there stops clap parsing them.
+fn end_options_at_first_operand(mut args: Vec<OsString>) -> Vec<OsString> {
+    let mut cmd = Args::command();
+    cmd.build();
+    let mut i = 1;
+    while let Some(arg) = args.get(i) {
+        let bytes = arg.as_encoded_bytes();
+        if bytes == b"--" {
+            // clap ends the options there itself and keeps the rest as typed.
+            return args;
+        }
+        if bytes == b"-" || !bytes.starts_with(b"-") {
+            args.insert(i, "--".into());
+            break;
+        }
+        i += 1;
+        let option = if let Some(long) = bytes.strip_prefix(b"--") {
+            if long.contains(&b'=') {
+                continue;
+            }
+            cmd.get_arguments().find(|option| {
+                option
+                    .get_long()
+                    .is_some_and(|name| name.as_bytes() == long)
+            })
+        } else {
+            // In a cluster such as `-bF:`, the first option that takes a value ends it.
+            let mut options = bytes[1..].iter().map(|&c| {
+                cmd.get_arguments()
+                    .find(|option| option.get_short() == Some(char::from(c)))
+            });
+            let Some(option) = options.find(|option| option.is_some_and(takes_value)) else {
+                continue;
+            };
+            if options.next().is_some() {
+                continue; // the value is attached
+            }
+            option
+        };
+        if option.is_some_and(|option| takes_next_argument(option, args.get(i))) {
+            i += 1;
+        }
+    }
+    args
+}
+
+fn takes_value(option: &clap::Arg) -> bool {
+    option.get_num_args().is_some_and(|n| n.max_values() > 0)
+}
+
+/// Whether an option written without a value takes the next argument, as clap decides:
+/// an optional value only takes it if it doesn't look like an option.
+fn takes_next_argument(option: &clap::Arg, next: Option<&OsString>) -> bool {
+    let Some(num_args) = option.get_num_args() else {
+        return false;
+    };
+    num_args.min_values() > 0
+        || (num_args.max_values() > 0
+            && !option.is_require_equals_set()
+            && next.is_some_and(|next| next == "-" || !next.as_encoded_bytes().starts_with(b"-")))
 }
 
 /// The `-f` files and `--source` texts in command-line order, as gawk reads them.
