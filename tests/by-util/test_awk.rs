@@ -1608,3 +1608,50 @@ fn fatal_error_skips_end() {
         .fails_with_code(2)
         .no_stdout();
 }
+
+#[test]
+fn optional_option_values_must_be_attached() {
+    for opt in ["--lint", "--profile", "--dump-variables", "-L", "-p", "-d"] {
+        ucmd()
+            .args(&[opt, r#"BEGIN { print "prog" }"#])
+            .succeeds()
+            .stdout_only("prog\n");
+    }
+}
+
+#[test]
+fn optional_option_values_can_be_attached() {
+    for opt in [
+        "--lint=fatal",
+        "-Lfatal",
+        "-L=fatal",
+        "--profile=prof.out",
+        "-pprof.out",
+        "--dump-variables=vars.out",
+        "-dvars.out",
+    ] {
+        ucmd()
+            .args(&[opt, r#"BEGIN { print "prog" }"#])
+            .succeeds()
+            .stdout_only("prog\n");
+    }
+}
+
+#[test]
+fn attached_optional_value_with_a_program_file() {
+    let ts = uutests::util::TestScenario::new("awk");
+    ts.fixtures
+        .write("prog.awk", r#"BEGIN { print "from file" }"#);
+    ts.cmd(crate::TESTS_BINARY)
+        .args(&["-Lfatal", "-f", "prog.awk"])
+        .succeeds()
+        .stdout_only("from file\n");
+}
+
+#[test]
+fn invalid_lint_value_is_rejected() {
+    ucmd()
+        .args(&["--lint=bogus", "BEGIN { }"])
+        .fails_with_code(1)
+        .stderr_contains("invalid value 'bogus'");
+}
